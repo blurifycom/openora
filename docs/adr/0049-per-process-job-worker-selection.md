@@ -4,6 +4,8 @@
 **Status**: Proposed
 **Relates to**: ADR-0014 (job-queue seam), ADR-0017 (service manifest), ADR-0030 (`SERVICE_NAME`), ADR-0038 (routers before workers), ADR-0042 (MCP kernel).
 
+> **Update (2026-11-17)**: `notifications` also declares `AUDIT_WRITER` (bound by `audit`) as a control port: without it a KYC resubmission notice whose notify job exhausts its retries before reaching the mail queue goes unaudited. A `SERVICE_MANIFEST` that loads notifications therefore needs audit whenever the plugin list has it. `AUDIT_WRITER` is now declared by mail and notifications.
+
 ## Context
 
 `createApp` registers a worker for every queue a loaded module declares, so every process

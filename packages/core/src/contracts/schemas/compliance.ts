@@ -15,6 +15,7 @@ export const GeoRuleActionSchema = z.enum(geoRuleActions);
 export type GeoRuleAction = z.infer<typeof GeoRuleActionSchema>;
 
 export const NonEmptyReasonSchema = z.string().trim().min(1);
+export const BoundedReasonSchema = NonEmptyReasonSchema.max(500);
 
 // Who owns a game geo rule: the backoffice, or the named background sync that wrote it.
 export const GEO_RULE_ADMIN_SOURCE = 'admin';

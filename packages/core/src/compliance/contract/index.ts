@@ -13,6 +13,7 @@ import {
   hasGameBulkTarget,
   GeoRuleActionSchema,
   GeoRuleSourceSchema,
+  BoundedReasonSchema,
   NonEmptyReasonSchema,
   PageQuerySchema,
   paginated,
@@ -122,7 +123,7 @@ export type KycStatusUpdate = z.infer<typeof KycStatusUpdateSchema>;
 export const RequestKycResubmissionInputSchema = z.object({
   userId: UuidSchema,
   tier: KycTierSchema,
-  reason: NonEmptyReasonSchema,
+  reason: BoundedReasonSchema,
 });
 export type RequestKycResubmissionInput = z.infer<typeof RequestKycResubmissionInputSchema>;
 
@@ -327,7 +328,7 @@ export type GetBlockedCountriesOutput = z.infer<typeof GetBlockedCountriesOutput
 
 export const BulkGameGeoRuleInputSchema = GameBulkTargetFieldsSchema.extend({
   countryCode: CountryCodeSchema,
-  reason: NonEmptyReasonSchema.max(500),
+  reason: BoundedReasonSchema,
 }).refine(hasGameBulkTarget, gameBulkTargetRefinement);
 export type BulkGameGeoRuleInput = z.infer<typeof BulkGameGeoRuleInputSchema>;
 

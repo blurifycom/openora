@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { MailTemplate } from '@openora/core/contracts';
+import { MailTemplateSchema, type MailTemplate } from '@openora/core/contracts';
 import { DefaultEmailTemplateRenderer } from '../adapters/default-email-template-renderer.js';
 
 describe('DefaultEmailTemplateRenderer', () => {
@@ -12,6 +12,33 @@ describe('DefaultEmailTemplateRenderer', () => {
     expect(result.text).toBe('Your email verification code is: 123456');
     expect(result.html).toContain('123456');
     expect(result.html).toMatch(/^<p>/);
+  });
+
+  it('reads kycResubmissionRequested data without a tier as basic and renders the basic copy', () => {
+    const template = MailTemplateSchema.parse({
+      key: 'kycResubmissionRequested',
+      data: { reason: null },
+    });
+
+    expect(template).toEqual({
+      key: 'kycResubmissionRequested',
+      data: { reason: null, tier: 'basic' },
+    });
+    const result = renderer.render(template, 'en');
+    expect(result.subject).toBe('Document resubmission required');
+    expect(result.text).toBe('An admin has requested you resubmit your verification documents.');
+  });
+
+  it('renders the advanced kycResubmissionRequested copy with its reason', () => {
+    const result = renderer.render(
+      { key: 'kycResubmissionRequested', data: { reason: 'Source of funds', tier: 'advanced' } },
+      'en',
+    );
+
+    expect(result.subject).toBe('Additional verification required');
+    expect(result.text).toBe(
+      'An admin has requested you complete enhanced verification. Reason: Source of funds.',
+    );
   });
 
   it('renders the resetPasswordOtp template with the otp interpolated', () => {
@@ -91,7 +118,7 @@ describe('DefaultEmailTemplateRenderer', () => {
           reason: 'AML review',
         },
       },
-      { key: 'kycResubmissionRequested', data: { reason: null } },
+      { key: 'kycResubmissionRequested', data: { reason: null, tier: 'basic' } },
       { key: 'adminInvitation', data: { token: 'tok', expiresAt: '2026-01-01T00:00:00.000Z' } },
       { key: 'welcome', data: {} },
       {

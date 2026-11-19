@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import {
+  AUDIT_WRITER,
   GEO_CHECK_COMMANDS,
   IDENTITY_READER,
   JOB_QUEUE,
@@ -14,9 +15,11 @@ import {
   queue,
   type DomainEventName,
   type DomainEventPayload,
+  type AuditWritePort,
   type GeoCheckCommands,
   type IdentityReader,
   type JobQueueAdapter,
+  type KycTier,
   type MailDispatchPort,
   type MailTemplate,
   type PlayEligibilityPort,
@@ -37,20 +40,20 @@ import {
   type NotificationData,
   type NotificationType,
 } from './contract/index.js';
+import {
+  isStaffKycResubmissionRequest,
+  KycResubmissionNotifyJobSchema,
+} from './shared/kyc-resubmission-request.js';
 
 const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
 const NOTIFICATIONS_RETENTION_PURGE_QUEUE = queue('notifications-retention-purge');
 const NOTIFICATIONS_DISPATCH_QUEUE = queue('notifications-dispatch');
 const SECURITY_ALERT_DISPATCH_QUEUE = queue('security-alert-dispatch');
 
+const RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
+
 const DEFAULT_NOTIFICATIONS_RETENTION_DAYS = 30;
 const DEFAULT_NOTIFICATIONS_RETENTION_CRON = '0 3 * * *';
-
-const KycResubmissionNotifyJobSchema = z.object({
-  userId: UuidSchema,
-  reason: z.string().nullable(),
-  eventId: UuidSchema.optional(),
-});
 
 const NotificationDispatchJobSchema = z.object({
   event: z.string(),
@@ -524,12 +527,18 @@ export const notificationEventMap: NotificationMapEntry[] = [
 export function buildKycResubmissionNotification(payload: {
   userId: string;
   reason: string | null;
+  tier: KycTier;
+  eventId?: string;
 }): CreateNotificationInput {
-  return notification({
-    userId: payload.userId,
-    type: 'kyc.resubmission_requested',
-    params: { reason: payload.reason || null },
-  });
+  return {
+    ...notification({
+      userId: payload.userId,
+      type: 'kyc.resubmission_requested',
+      params: { reason: payload.reason || null, tier: payload.tier },
+    }),
+    // The notification's unique eventId makes a redelivered job a no-op insert.
+    eventId: payload.eventId ?? null,
+  };
 }
 
 export function buildChatRoomScheduledForDeletionNotification(payload: {
@@ -571,6 +580,11 @@ export default {
   id: 'notifications',
   controlPorts: [
     {
+      port: AUDIT_WRITER,
+      without: 'a KYC resubmission notice that never reaches the mail queue goes unaudited',
+      boundBy: 'audit',
+    },
+    {
       port: GEO_CHECK_COMMANDS,
       without: 'welcome mails offer promotions without the country check',
       boundBy: 'compliance',
@@ -586,6 +600,7 @@ export default {
     let realtimeRef: RealtimeTransport | null = null;
     let playEligibilityRef: PlayEligibilityPort | null = null;
     let geoCheckRef: GeoCheckCommands | null = null;
+    let auditRef: AuditWritePort | null = null;
     let retentionDaysRef = DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
 
     const dispatchMail = async (
@@ -698,8 +713,7 @@ export default {
           },
           {
             idempotencyKey: `notifications-dispatch:${envelope.eventId}`,
-            attempts: 5,
-            backoff: { type: 'exponential', delayMs: 1000 },
+            ...RETRY,
           },
         );
       });
@@ -772,8 +786,7 @@ export default {
         { userId: parsed.data.userId, eventId: envelope.eventId, occurredAt: envelope.occurredAt },
         {
           idempotencyKey: `security-login-alert:${envelope.eventId}`,
-          attempts: 5,
-          backoff: { type: 'exponential', delayMs: 1000 },
+          ...RETRY,
         },
       );
     });
@@ -823,8 +836,7 @@ export default {
           },
           {
             idempotencyKey: `notifications-dispatch:${eventId}:${userId}`,
-            attempts: 5,
-            backoff: { type: 'exponential', delayMs: 1000 },
+            ...RETRY,
           },
         );
       }
@@ -836,10 +848,7 @@ export default {
         return;
       }
       const p = parsed.data;
-      // Generic copy below assumes basic-tier document requirements; advanced-tier
-      // resubmission has no tier-specific copy yet (see tag-evaluation.service.ts's
-      // same guard).
-      if (p.status !== 'resubmission_requested' || p.source !== 'manual' || p.tier !== 'basic') {
+      if (!isStaffKycResubmissionRequest(p)) {
         return;
       }
       if (!envelope?.eventId) {
@@ -851,8 +860,11 @@ export default {
       }
       await requireJobQueue().enqueue(
         KYC_RESUBMISSION_NOTIFY_QUEUE,
-        { userId: p.userId, reason: p.reason, eventId: envelope.eventId },
-        { idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}` },
+        { userId: p.userId, reason: p.reason, tier: p.tier, eventId: envelope.eventId },
+        {
+          idempotencyKey: `kyc-resubmission-notify:${envelope.eventId}`,
+          ...RETRY,
+        },
       );
     });
 
@@ -863,18 +875,42 @@ export default {
         if (!svcRef) {
           return;
         }
-        const input = buildKycResubmissionNotification(payload);
-        const record = await svcRef.create(input);
-        if (!record) {
+        // A null result is a retry after a prior attempt stored the in-app row; the mail still
+        // goes out, deduped by its eventId-keyed idempotency key.
+        await svcRef.create(buildKycResubmissionNotification(payload));
+        if (!payload.eventId || !mailDispatchRef) {
           return;
         }
-        if (payload.eventId) {
-          await dispatchMail(
-            payload.userId,
-            { key: 'kycResubmissionRequested', data: { reason: payload.reason } },
-            payload.eventId,
+        // The regulatory notice: an enqueue failure throws so this job's retry policy covers it.
+        await mailDispatchRef.toUser({
+          userId: payload.userId,
+          template: {
+            key: 'kycResubmissionRequested',
+            data: { reason: payload.reason, tier: payload.tier },
+          },
+          idempotencyKey: `notifications-mail:${payload.eventId}`,
+        });
+      },
+      onDeadLetter: async (jobCtx, error) => {
+        logger.error(
+          { err: error, userId: jobCtx.payload.userId, jobId: jobCtx.id },
+          'kyc resubmission notice exhausted retries',
+        );
+        await auditRef
+          ?.record({
+            actorType: 'system',
+            action: 'mail.regulatory_delivery.failed',
+            resourceType: 'email',
+            resourceId: jobCtx.payload.userId,
+            after: {
+              templateKey: 'kycResubmissionRequested',
+              reason: 'enqueue_exhausted',
+              attempt: jobCtx.attempt,
+            },
+          })
+          .catch((err: unknown) =>
+            logger.error({ err }, 'kyc resubmission notice audit write failed'),
           );
-        }
       },
     });
 
@@ -952,6 +988,7 @@ export default {
       realtimeRef = c.get(REALTIME_TRANSPORT);
       playEligibilityRef = c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : null;
       geoCheckRef = c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : null;
+      auditRef = c.has(AUDIT_WRITER) ? c.get(AUDIT_WRITER) : null;
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       retentionDaysRef =
         platformConfig?.notifications?.retention?.days ?? DEFAULT_NOTIFICATIONS_RETENTION_DAYS;

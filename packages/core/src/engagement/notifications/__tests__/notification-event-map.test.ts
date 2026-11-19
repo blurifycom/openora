@@ -8,6 +8,10 @@ import {
   buildRgLimitAdminUpdatedNotification,
   notificationEventMap,
 } from '../plugin.js';
+import {
+  isStaffKycResubmissionRequest,
+  KycResubmissionNotifyJobSchema,
+} from '../shared/kyc-resubmission-request.js';
 
 function entryFor(event: (typeof notificationEventMap)[number]['event']) {
   const entry = notificationEventMap.find((e) => e.event === event);
@@ -198,19 +202,64 @@ describe('notificationEventMap', () => {
   });
 
   it('leaves data null for kyc.resubmission_requested (no linkable entity in the source payload)', () => {
-    const input = buildKycResubmissionNotification({ userId: randomUUID(), reason: 'blurry' });
+    const input = buildKycResubmissionNotification({
+      userId: randomUUID(),
+      reason: 'blurry',
+      tier: 'basic',
+    });
 
     expect(input.data).toBeNull();
-    expect(input.params).toEqual({ reason: 'blurry' });
+    expect(input.params).toEqual({ reason: 'blurry', tier: 'basic' });
   });
 
-  it('leaves the reason out of a kyc.resubmission_requested notification that has none', () => {
+  it('carries the advanced tier and the eventId into a kyc.resubmission_requested notification', () => {
+    const eventId = randomUUID();
+    const input = buildKycResubmissionNotification({
+      userId: randomUUID(),
+      reason: 'source of funds',
+      tier: 'advanced',
+      eventId,
+    });
+
+    expect(input.params).toEqual({ reason: 'source of funds', tier: 'advanced' });
+    expect(input.eventId).toBe(eventId);
+  });
+
+  it('leaves an empty reason out of a kyc.resubmission_requested notification but keeps the tier', () => {
     expect(
-      buildKycResubmissionNotification({ userId: randomUUID(), reason: null }).params,
-    ).toBeNull();
+      buildKycResubmissionNotification({ userId: randomUUID(), reason: null, tier: 'advanced' })
+        .params,
+    ).toEqual({ tier: 'advanced' });
     expect(
-      buildKycResubmissionNotification({ userId: randomUUID(), reason: '' }).params,
-    ).toBeNull();
+      buildKycResubmissionNotification({ userId: randomUUID(), reason: '', tier: 'advanced' })
+        .params,
+    ).toEqual({ tier: 'advanced' });
+  });
+
+  it('notifies a manual resubmission request and no automatic one', () => {
+    expect(
+      isStaffKycResubmissionRequest({ status: 'resubmission_requested', source: 'manual' }),
+    ).toBe(true);
+    for (const source of ['vendor', 'webhook', 'reverify', 'exemption'] as const) {
+      expect(isStaffKycResubmissionRequest({ status: 'resubmission_requested', source })).toBe(
+        false,
+      );
+    }
+    expect(isStaffKycResubmissionRequest({ status: 'rejected', source: 'manual' })).toBe(false);
+  });
+
+  it('reads a kyc-resubmission-notify job queued without a tier as a basic request', () => {
+    const job = KycResubmissionNotifyJobSchema.parse({
+      userId: randomUUID(),
+      reason: 'blurry',
+      eventId: randomUUID(),
+    });
+
+    expect(job.tier).toBe('basic');
+    expect(buildKycResubmissionNotification(job).params).toEqual({
+      reason: 'blurry',
+      tier: 'basic',
+    });
   });
 
   it('leaves an empty rejection reason out of a withdrawal.rejected notification', () => {
@@ -901,7 +950,7 @@ describe('notificationEventMap', () => {
 
     const coreCreated = [
       ...notificationEventMap.map((entry) => entry.buildNotification(payloads[entry.event])),
-      buildKycResubmissionNotification({ userId: id(), reason: 'blurry' }),
+      buildKycResubmissionNotification({ userId: id(), reason: 'blurry', tier: 'advanced' }),
       buildChatRoomScheduledForDeletionNotification({ userId: id(), roomId: id(), roomName: 'R' }),
       buildRgLimitAdminUpdatedNotification({
         userId: id(),

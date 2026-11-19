@@ -101,7 +101,8 @@ export const NOTIFICATION_PARAM_KEYS = {
   'social.friend_request.accepted': { required: ['accepterUsername'], optional: [] },
   'chat.room.ownership_transferred': { required: ['roomName'], optional: [] },
   'chat.room.scheduled_for_deletion': { required: ['roomName'], optional: [] },
-  'kyc.resubmission_requested': { required: [], optional: ['reason'] },
+  // A missing tier (rows written before the tier param existed) means basic.
+  'kyc.resubmission_requested': { required: [], optional: ['reason', 'tier'] },
   'rg.limit.admin_updated': {
     required: ['period', 'limitType'],
     optional: [
