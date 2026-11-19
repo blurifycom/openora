@@ -212,7 +212,7 @@ describe('notificationEventMap', () => {
     expect(input.params).toEqual({ reason: 'blurry', tier: 'basic' });
   });
 
-  it('carries the advanced tier and the eventId into a kyc.resubmission_requested notification', () => {
+  it('carries the advanced tier and the eventId into a kyc.resubmission_requested notification without the reason', () => {
     const eventId = randomUUID();
     const input = buildKycResubmissionNotification({
       userId: randomUUID(),
@@ -221,7 +221,7 @@ describe('notificationEventMap', () => {
       eventId,
     });
 
-    expect(input.params).toEqual({ reason: 'source of funds', tier: 'advanced' });
+    expect(input.params).toEqual({ tier: 'advanced' });
     expect(input.eventId).toBe(eventId);
   });
 
@@ -950,7 +950,7 @@ describe('notificationEventMap', () => {
 
     const coreCreated = [
       ...notificationEventMap.map((entry) => entry.buildNotification(payloads[entry.event])),
-      buildKycResubmissionNotification({ userId: id(), reason: 'blurry', tier: 'advanced' }),
+      buildKycResubmissionNotification({ userId: id(), reason: 'blurry', tier: 'basic' }),
       buildChatRoomScheduledForDeletionNotification({ userId: id(), roomId: id(), roomName: 'R' }),
       buildRgLimitAdminUpdatedNotification({
         userId: id(),
