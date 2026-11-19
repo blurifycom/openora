@@ -400,6 +400,30 @@ describe('WalletCommandsService.credit (real PG)', () => {
     expect(await balanceOf(userId)).toBe(20);
   });
 
+  it('credits a referral reward as a completed real-money credit on a new wallet and currency', async () => {
+    const userId = randomUUID();
+
+    const res = await svc.credit(db.drizzle.db, {
+      userId,
+      amount: '12.5',
+      currency: 'USDT',
+      type: 'referral_reward',
+      allowNewCurrency: true,
+      allowNewWallet: true,
+    });
+
+    expect(res).toMatchObject({ ok: true, moved: true });
+    expect(await balanceOf(userId)).toBe(12.5);
+    const [opened] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+    const [row] = await txRows(opened?.id ?? '');
+    expect(row).toMatchObject({
+      type: 'referral_reward',
+      direction: 'credit',
+      status: 'completed',
+    });
+    expect(Number(row?.amount)).toBe(12.5);
+  });
+
   it('rejects a non-positive credit', async () => {
     const w = await seedWallet({ balance: '100' });
 
