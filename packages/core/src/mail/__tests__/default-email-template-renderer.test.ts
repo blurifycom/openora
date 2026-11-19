@@ -29,16 +29,14 @@ describe('DefaultEmailTemplateRenderer', () => {
     expect(result.text).toBe('An admin has requested you resubmit your verification documents.');
   });
 
-  it('renders the advanced kycResubmissionRequested copy with its reason', () => {
+  it('renders the advanced kycResubmissionRequested copy without its reason', () => {
     const result = renderer.render(
       { key: 'kycResubmissionRequested', data: { reason: 'Source of funds', tier: 'advanced' } },
       'en',
     );
 
     expect(result.subject).toBe('Additional verification required');
-    expect(result.text).toBe(
-      'An admin has requested you complete enhanced verification. Reason: Source of funds.',
-    );
+    expect(result.text).toBe('An admin has requested you complete enhanced verification.');
   });
 
   it('renders the resetPasswordOtp template with the otp interpolated', () => {

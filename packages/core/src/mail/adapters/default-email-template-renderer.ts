@@ -137,15 +137,17 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
   }),
   kycResubmissionRequested: (data) => {
-    const reason = data.reason ? ` Reason: ${data.reason}.` : '';
+    // An advanced request's reason is internal and never rendered.
     return data.tier === 'advanced'
       ? {
           subject: 'Additional verification required',
-          text: `An admin has requested you complete enhanced verification.${reason}`,
+          text: 'An admin has requested you complete enhanced verification.',
         }
       : {
           subject: 'Document resubmission required',
-          text: `An admin has requested you resubmit your verification documents.${reason}`,
+          text: `An admin has requested you resubmit your verification documents.${
+            data.reason ? ` Reason: ${data.reason}.` : ''
+          }`,
         };
   },
   adminInvitation: (data, locale) => ({

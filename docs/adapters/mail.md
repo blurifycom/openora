@@ -71,7 +71,9 @@ Compliance and security: `kycResubmissionRequested`, `securityLoginAlert`,
 `'basic'`) next to `reason`, so a renderer can word a document resubmission differently from
 a request for enhanced verification. The template is sent for both tiers, so an overlay renderer
 of its own for this key must read `tier`; one that ignores it words an advanced request as a
-document resubmission.
+document resubmission. The advanced tier's `reason` is internal and never reaches the player:
+the notification worker nulls it, and the default renderer does not print it. A basic-tier
+reason is shown.
 
 An overlay renderer receives every built-in template key and owns the rendered result for each key;
 there is no automatic fallback to the platform's English renderer.

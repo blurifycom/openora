@@ -534,7 +534,11 @@ export function buildKycResubmissionNotification(payload: {
     ...notification({
       userId: payload.userId,
       type: 'kyc.resubmission_requested',
-      params: { reason: payload.reason || null, tier: payload.tier },
+      // An advanced request's reason is internal: dropped here too, whatever the job carries.
+      params: {
+        reason: payload.tier === 'advanced' ? null : payload.reason || null,
+        tier: payload.tier,
+      },
     }),
     // The notification's unique eventId makes a redelivered job a no-op insert.
     eventId: payload.eventId ?? null,
@@ -892,7 +896,10 @@ export default {
           userId: payload.userId,
           template: {
             key: 'kycResubmissionRequested',
-            data: { reason: payload.reason, tier: payload.tier },
+            data: {
+              reason: payload.tier === 'advanced' ? null : payload.reason,
+              tier: payload.tier,
+            },
           },
           idempotencyKey: `notifications-mail:${payload.eventId}`,
         });
