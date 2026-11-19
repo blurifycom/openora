@@ -5,6 +5,19 @@
 
 > **Update (2026-11-06)**: the margin basis no longer pays `houseEdge × (tier + boost) / 100`. The additive streak boost is retired; a streak milestone now multiplies the rank rate, and a player with no rank earns a streak rate on the house edge. See [ADR-0051](./0051-streak-milestone-rakeback-rate.md).
 
+> **Update (2026-11-10)**: a sportsbook bet now earns rakeback when it settles other than void,
+> through `recordSettledWager`, rather than when its stake is reserved, so a rejected, cancelled
+> or voided bet earns nothing. Each bet pays once: the instant credit is keyed to the bet and
+> writes a `claimed` accrual with no claim, and nothing is paid or accrued again while the bet has
+> an accrued, claimed or voided one. A reopen reverses an unclaimed accrual through the new
+> `reopenSettledWager`, and paid rakeback still stays final: a void after a reopen audits it as
+> `promo.rakeback.kept_on_void` for a manual adjustment. A sportsbook bet carries no `rtp`, so it
+> pays nothing under `margin`, nor at a streak's unranked rate. Under `instant`, a bet reserved
+> before this change was paid at reserve without a key to the bet, so its settle pays again; an
+> operator counting sportsbook settles its open bets before upgrading. A rolling deploy cannot
+> tell such a bet apart either: while old and new releases run side by side, keep `sportsbook` out
+> of the rakeback products or have no sportsbook bets open.
+
 ## Context
 
 Rank rakeback paid a percentage of every qualifying own-money stake, credited with the bet. Two

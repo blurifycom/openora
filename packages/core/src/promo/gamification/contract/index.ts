@@ -206,8 +206,12 @@ export const DEFAULT_RANK_PERK_PRODUCTS = [
   'pvp',
 ] as const satisfies readonly WagerProduct[];
 
-/** Empty counts every product. */
 const RankPerkProductsSchema = z.array(z.enum(WAGER_PRODUCTS)).max(WAGER_PRODUCTS.length);
+
+const EligibleProductsInputSchema = z
+  .array(WagerProductSchema)
+  .min(1, 'select at least one product')
+  .refine((products) => new Set(products).size === products.length, 'products must not repeat');
 
 export const RankConfigSchema = z.object({
   /**
@@ -241,7 +245,7 @@ export const RankConfigSchema = z.object({
     isAbsentOrPositive,
     'must be above zero',
   ).nullish(),
-  /** Products whose stakes count toward a rank. Empty counts every product. */
+  /** Products whose stakes count toward a rank. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
   /** Products whose stakes earn rakeback. A stake must count toward the rank as well. */
   rakebackEligibleProducts: RankPerkProductsSchema,
@@ -265,8 +269,9 @@ export type RankConfig = z.infer<typeof RankConfigSchema>;
  * `periodicMinimumWager` left out keeps what is stored, or `null`.
  */
 export const SetRankConfigInputSchema = RankConfigSchema.extend({
-  rakebackEligibleProducts: RankPerkProductsSchema.optional(),
-  rankChallengeEligibleProducts: RankPerkProductsSchema.optional(),
+  eligibleProducts: EligibleProductsInputSchema,
+  rakebackEligibleProducts: EligibleProductsInputSchema.optional(),
+  rankChallengeEligibleProducts: EligibleProductsInputSchema.optional(),
 });
 export type SetRankConfigInput = z.infer<typeof SetRankConfigInputSchema>;
 export type RankConfigInput = z.input<typeof SetRankConfigInputSchema>;
@@ -361,7 +366,7 @@ export const StreakConfigSchema = z.object({
    * it can be read but not saved, and a streak with it counts nothing.
    */
   dailyMinWager: MoneyAmountSchema,
-  /** Products whose stakes count toward the streak. Empty counts every product. */
+  /** Products whose stakes count toward the streak. */
   eligibleProducts: z.array(z.string().trim().min(1).max(64)).max(50),
   rakebackMilestones: dayOrdered(StreakRakebackMilestoneSchema),
   fixedRewards: dayOrdered(StreakFixedRewardSchema),
@@ -370,7 +375,9 @@ export type StreakConfig = z.infer<typeof StreakConfigSchema>;
 
 export const SetStreakConfigInputSchema = StreakConfigSchema.extend({
   dailyMinWager: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero'),
+  eligibleProducts: EligibleProductsInputSchema,
 });
+export type StreakConfigInput = z.input<typeof SetStreakConfigInputSchema>;
 
 export const StreakActiveRateSchema = z.object({
   mode: StreakRakebackModeSchema,
@@ -484,11 +491,6 @@ export type RacePositions = z.infer<typeof RacePositionsSchema>;
 export const RaceEligibleProductsSchema = z.array(z.string().trim().min(1).max(64)).max(50);
 export type RaceEligibleProducts = z.infer<typeof RaceEligibleProductsSchema>;
 
-const RaceEligibleProductsInputSchema = z
-  .array(WagerProductSchema)
-  .min(1, 'select at least one product')
-  .refine((products) => new Set(products).size === products.length, 'products must not repeat');
-
 const RaceFieldsShape = {
   name: z.string().min(1).max(200),
   currency: CurrencyTickerSchema,
@@ -500,7 +502,7 @@ const RaceFieldsShape = {
   eligibleProducts: RaceEligibleProductsSchema,
 } as const;
 
-const RaceInputShape = { ...RaceFieldsShape, eligibleProducts: RaceEligibleProductsInputSchema };
+const RaceInputShape = { ...RaceFieldsShape, eligibleProducts: EligibleProductsInputSchema };
 
 const raceDatesOrdered = (v: { startAt: string; endAt: string }) =>
   new Date(v.endAt).getTime() > new Date(v.startAt).getTime();

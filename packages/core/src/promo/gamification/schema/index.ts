@@ -155,15 +155,24 @@ export const promoRankConfig = pgTable('promo_rank_config', {
   id: uuid().primaryKey().defaultRandom(),
   // Unique, so the table can only ever hold the one row.
   singletonKey: text().notNull().unique().default('global'),
-  /** Products whose stakes count toward a rank. Empty counts every product. */
-  eligibleProducts: text().array().notNull().default([]),
-  /** Products whose stakes earn rakeback. A stake must count toward the rank as well. Empty counts every product. */
+  /**
+   * Products whose stakes count toward a rank.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
+  eligibleProducts: text().array().notNull(),
+  /**
+   * Products whose stakes earn rakeback. A stake must count toward the rank as well.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
   rakebackEligibleProducts: text()
     .array()
     .$type<WagerProduct[]>()
     .notNull()
     .default([...DEFAULT_RANK_PERK_PRODUCTS]),
-  /** Products whose stakes count toward the rank challenge. Empty counts every product. */
+  /**
+   * Products whose stakes count toward the rank challenge.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
   rankChallengeEligibleProducts: text()
     .array()
     .$type<WagerProduct[]>()
@@ -317,8 +326,11 @@ export const promoStreakConfig = pgTable('promo_streak_config', {
   enabled: boolean().notNull().default(false),
   currency: text().notNull().default(STREAK_CURRENCY),
   dailyMinWager: money().notNull(),
-  /** Products whose stakes count toward the streak. Empty counts every product. */
-  eligibleProducts: text().array().notNull().default([]),
+  /**
+   * Products whose stakes count toward the streak.
+   * Legacy empty lists still count every product; saves require at least one product.
+   */
+  eligibleProducts: text().array().notNull(),
   rakebackMilestones: jsonb().$type<StreakRakebackMilestone[]>().notNull().default([]),
   fixedRewards: jsonb().$type<StreakFixedReward[]>().notNull().default([]),
   /** Retired by `rakebackMilestones` and `fixedRewards`: nothing reads or writes it; a later release drops it. */
@@ -728,7 +740,8 @@ export const promoRakebackClaimOutcomeEnum = pgEnum(
 
 /**
  * One bet's rakeback under the claim payout, in the bet's own currency. Nothing reaches the
- * balance until a claim flips the row to `claimed`. The rate, streak rate and rtp it was priced
+ * balance until a claim flips the row to `claimed`. An instant sportsbook credit is written as a
+ * `claimed` row with no claim, so a re-settle after a reopen finds the bet already paid. The rate, streak rate and rtp it was priced
  * at are kept so the amount can be reproduced after the ladder or the streak config changes.
  * `boostPercent` is retired and written as zero; it stays for rows priced before.
  */
@@ -785,7 +798,7 @@ export const promoRakebackAccrual = pgTable(
     ),
     check(
       'promo_rakeback_accrual_settlement',
-      sql`(${t.status} = 'claimed') = (${t.claimId} is not null)
+      sql`(${t.claimId} is null OR ${t.status} = 'claimed')
         AND (${t.status} = 'voided') = (${t.voidReason} is not null)`,
     ),
   ],

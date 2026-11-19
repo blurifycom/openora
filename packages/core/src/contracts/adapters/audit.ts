@@ -97,6 +97,7 @@ export type DirectAuditAction =
   | 'promo.rakeback.claimed'
   | 'promo.rakeback.auto_paid'
   | 'promo.rakeback.voided'
+  | 'promo.rakeback.kept_on_void'
   | 'mcp.tool.invoked'
   | 'mcp.tool.failed'
   | 'mcp.action.executed'

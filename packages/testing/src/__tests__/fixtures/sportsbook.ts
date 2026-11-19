@@ -27,10 +27,16 @@ const pluginPath = (file: string) => fileURLToPath(new URL(`../../${file}`, impo
 export async function bootSportsbookApp({
   provider = 'scripted',
   without = [],
-}: { provider?: 'scripted' | 'without-status'; without?: readonly string[] } = {}): Promise<E2e> {
+  fixtures = [],
+}: {
+  provider?: 'scripted' | 'without-status';
+  without?: readonly string[];
+  fixtures?: readonly { id: string; file: string }[];
+} = {}): Promise<E2e> {
   return bootE2e({
     plugins: [
       ...(await loadExtensions((entries) => entries.filter((e) => !without.includes(e.id)))),
+      ...fixtures.map(({ id, file }) => ({ id, path: pluginPath(`__tests__/fixtures/${file}`) })),
       { id: 'testing-geo-ip', path: pluginPath('test-geo-ip-plugin.ts') },
       {
         id: 'testing-exchange-rate-provider',

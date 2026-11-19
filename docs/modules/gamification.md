@@ -44,15 +44,20 @@ belongs to a bonus a player happens to hold; a player's standing must not depend
 they are carrying. `promo.ranks.progressBasis` in platform config sets how much of that stake
 counts: `total`, the default, counts all of it, bonus-funded part included, and `real` counts only
 the own-money part, toward lifetime and period wagered alike. The periodic margin is the same under
-both. Which products count - casino, live casino, sportsbook - is the operator's setting, and an
-empty setting counts every bet.
+both. Which products count - casino, live casino, sportsbook - is the operator's setting.
 
 Rakeback and the rank challenge each have a product list of their own, and a new ladder's lists
-leave sportsbook out until the operator adds it. A ladder configured before these lists existed
-was upgraded to empty ones, so it keeps paying on every product it did. Rakeback pays only on a
-stake both the rank's list and the rakeback list admit. The rank challenge does not need the
-ladder's settings row: without one it counts the default list. An empty list counts every
-product here too. Both lists are set on `PUT /backoffice/promo/ranks/config`, so changing one
+leave sportsbook out until the operator adds it. Rakeback pays only on a stake both the rank's
+list and the rakeback list admit. The rank challenge does not need the ladder's settings row:
+without one it counts the default list. Every product list - the rank's, rakeback's, the rank
+challenge's and the streak's - names its products, and a save with an empty list, a repeated
+product or an unknown one is refused. An empty list used to count every product, so a list saved
+empty before that rule was given all four on upgrade and keeps counting what it did. An instance
+still on the previous release can save an empty list during a rolling upgrade, so a stored empty
+list still counts every product; a later release backfills those and refuses them in the
+database. A list naming only unknown products was kept and counts nothing until the operator
+saves a valid one.
+Both lists are set on `PUT /backoffice/promo/ranks/config`, so changing one
 writes the ladder's settings row with it; a save that leaves a list or `periodicMinimumWager` out
 keeps the stored one, and only an explicit `null` clears the minimum.
 
@@ -210,6 +215,28 @@ shape it, and both default to the original behaviour.
 - **`payout`**. `instant` credits it in the bet's own currency, in the bet's own transaction.
   `claim` writes each bet's rakeback to `promo_rakeback_accrual` and moves no money until the
   player claims it, with `claimMinimum` in the wallet reference currency.
+
+A sportsbook bet, once the operator adds `sportsbook` to `rakebackEligibleProducts`, earns
+rakeback when it settles other than void, not when its stake is reserved. A bet the provider
+rejects or cancels earns nothing, and neither does a free bet's promotion-paid stake. The
+sportsbook ledger reports the settle through `recordSettledWager`, so this works without the bonus
+plugin, at the tier the player holds when the bet settles. A bet pays once. Its instant credit
+is keyed to the bet and writes a `claimed` accrual with no claim, and no accrual or credit is
+written while the bet already has an accrued, claimed or voided one, so a re-settle after a
+reopen pays nothing even when the rate has changed. A reopen reverses an unclaimed accrual, so
+the re-settle accrues afresh. A claimed accrual or an instant credit stays, as all paid rakeback
+does; when the bet is then voided, each paid row is audited as `promo.rakeback.kept_on_void`
+(system actor, with the player, bet and amount) so staff can adjust it by hand. A sportsbook bet carries no `rtp`, so it pays nothing under `margin`, nor at a streak's
+unranked rate for a player with no rank. A `sportsbook` wager reported through `recordWager`,
+rather than the sportsbook ledger's settle, earns no rakeback.
+
+Upgrading: under `instant`, a sportsbook bet reserved before the upgrade was paid at reserve, and
+that credit carries no key to the bet, so its settle after the upgrade pays it again. An operator
+that counts `sportsbook` toward rakeback, or whose list is empty, settles or voids its open bets
+before upgrading. During a rolling deploy a bet reserved on the old release and settled on the
+new one is paid twice the same way, so keep `sportsbook` out of the rakeback products, or have no
+sportsbook bets open, until every instance runs the new release. Under `claim` the reserve-time
+accrual already blocks a second one.
 
 A claim pays every unclaimed row in one transaction, one `cashback` credit per currency. The
 `(userId, idempotencyKey)` claim row makes a retry replay the first result, and a second claim
