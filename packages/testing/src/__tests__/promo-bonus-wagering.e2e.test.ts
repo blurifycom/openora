@@ -11,6 +11,8 @@ import type {
   WalletDebitOutcome,
 } from '@openora/core/contracts';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
+import { user } from '@openora/core/pam/schema/identity';
+import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import {
   promoGrant,
   promoGrantEntry,
@@ -90,6 +92,19 @@ async function grantBonus(
     throw new Error('grantBonus: grant was refused');
   }
   return outcome.grantId;
+}
+
+async function staffViewer() {
+  const { client, userId } = await registerAndMaterializePlayer(app, {
+    email: `wagering-staff-${randomUUID()}@example.test`,
+  });
+  await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, userId));
+  const [role] = await drizzle().select().from(adminRole).where(eq(adminRole.key, 'super-admin'));
+  if (!role) {
+    throw new Error('staffViewer: no seeded super-admin role');
+  }
+  await drizzle().insert(adminRoleAssignment).values({ userId, roleId: role.id });
+  return client;
 }
 
 async function grantWithBuckets(
@@ -273,6 +288,36 @@ describe('a bet against a bonus', () => {
     await lose(userId, round);
 
     expect((await grantRow(grantId)).wageringProgress).toBe('40.000000000000000000');
+  });
+
+  it('shows an open round as pending on the player and staff reads, then as progress once it settles', async () => {
+    const { client, userId } = await player('100');
+    const grantId = await grantBonus(userId, '100', '10');
+    const staff = await staffViewer();
+    const reads = async () => {
+      const own = await readJson(await client.get(`/promo/grants/${grantId}`));
+      const listed: { id: string; pendingWagered: string; wageringProgress: string }[] =
+        await readJson(await staff.get(`/backoffice/promo/players/${userId}/grants`));
+      const seen = listed.find((grant) => grant.id === grantId);
+      return [
+        own.pendingWagered,
+        own.wageringProgress,
+        seen?.pendingWagered,
+        seen?.wageringProgress,
+      ];
+    };
+    const zero = '0.000000000000000000';
+    const forty = '40.000000000000000000';
+    const round = randomUUID();
+
+    expect(await reads()).toEqual([zero, zero, zero, zero]);
+    await bet(userId, '40', round);
+    expect(await reads()).toEqual([forty, zero, forty, zero]);
+    await lose(userId, round);
+    expect(await reads()).toEqual([zero, forty, zero, forty]);
+
+    const other = await player('0');
+    expect((await other.client.get(`/promo/grants/${grantId}`)).status).toBe(404);
   });
 
   it('refuses a stake neither balance can cover and moves nothing', async () => {
