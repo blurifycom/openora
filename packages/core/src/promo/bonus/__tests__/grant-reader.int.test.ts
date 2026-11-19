@@ -10,6 +10,7 @@ import { promoOffer, promoWeight, promoWeightProfile } from '../schema/index.js'
 import { GrantLifecycleService } from '../service/grant-lifecycle.service.js';
 import { GrantReaderService } from '../service/grant-reader.service.js';
 import { GrantService } from '../service/grant.service.js';
+import { WageringService } from '../service/wagering.service.js';
 
 let db: TestDb;
 let weightProfileId: string;
@@ -214,5 +215,59 @@ describe('GrantReaderService', () => {
 
       expect(await reader.balances(randomUUID())).toEqual([]);
     });
+  });
+
+  it('shows progress open rounds hold as pending, and moves it into progress once they settle', async () => {
+    const service = new GrantService(makeAuditWriter());
+    const wagering = new WageringService(makeAuditWriter());
+    const reader = new GrantReaderService(db.drizzle);
+    const userId = randomUUID();
+    const issued = await db.drizzle.db.transaction((tx) =>
+      service.grant(tx, {
+        userId,
+        currency: 'USD',
+        amount: '100',
+        source: 'deposit',
+        sourceRef: randomUUID(),
+        actor: { type: 'system' },
+        terms: { wageringMultiplier: '5', expiryDays: 14, weightProfileId },
+      }),
+    );
+    if (!issued.ok) {
+      throw new Error('grant was refused');
+    }
+    const round = { providerName: 'aggregator', externalRoundId: randomUUID() };
+    const read = async () => {
+      const own = await reader.get(userId, issued.grantId);
+      const staff = await reader.getForAdmin(issued.grantId);
+      return [own, staff].map((g) => [Number(g.pendingWagered), Number(g.wageringProgress)]);
+    };
+    expect(await read()).toEqual([
+      [0, 0],
+      [0, 0],
+    ]);
+
+    await db.drizzle.db.transaction((tx) =>
+      wagering.wager(tx, {
+        userId,
+        currency: 'USD',
+        stake: '30',
+        realAvailable: '0',
+        context: { provider: 'aggregator', product: 'casino' },
+        ...round,
+      }),
+    );
+    expect(await read()).toEqual([
+      [30, 0],
+      [30, 0],
+    ]);
+
+    await db.drizzle.db.transaction((tx) =>
+      wagering.closeRound(tx, { userId, currency: 'USD', realBalance: '0', ...round }),
+    );
+    expect(await read()).toEqual([
+      [0, 30],
+      [0, 30],
+    ]);
   });
 });

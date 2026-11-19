@@ -12,7 +12,13 @@ import {
   type DrizzleService,
 } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
-import { promoGrant, promoGrantEntry, promoOffer, type PromoGrant } from '../schema/index.js';
+import {
+  promoGrant,
+  promoGrantEntry,
+  promoGrantRound,
+  promoOffer,
+  type PromoGrant,
+} from '../schema/index.js';
 import type { AdminGrant, BonusBalance, PlayerGrant, PlayerGrantEntry } from '../contract/index.js';
 
 export const GrantNotFoundError = makeNotFoundError('Grant');
@@ -23,6 +29,7 @@ const MONEY_FIELDS = [
   'bonusBalance',
   'wageringRequired',
   'wageringProgress',
+  'pendingWagered',
   'linkedCash',
   'unlinkedCash',
 ] as const;
@@ -40,6 +47,12 @@ const GRANT_COLUMNS = {
   bonusBalance: promoGrant.bonusBalance,
   wageringRequired: promoGrant.wageringRequired,
   wageringProgress: promoGrant.wageringProgress,
+  pendingWagered: sql<string>`(
+    select coalesce(sum(${promoGrantRound.progressPending}), 0)::text
+    from ${promoGrantRound}
+    where ${promoGrantRound.grantId} = ${promoGrant.id}
+      and ${promoGrantRound.settledAt} is null
+  )`,
   linkedCash: promoGrant.linkedCash,
   unlinkedCash: promoGrant.unlinkedCash,
   forfeitReason: promoGrant.forfeitReason,
@@ -269,8 +282,11 @@ export class GrantReaderService {
 type OfferLabel = { offerKey: string | null; offerName: string | null };
 
 type PlayerGrantRow = {
-  [K in Exclude<keyof typeof GRANT_COLUMNS, 'maxBet' | 'playerForfeitable'>]: PromoGrant[K];
-} & OfferLabel & { maxBet: string | null; playerForfeitable: boolean };
+  [K in Exclude<
+    keyof typeof GRANT_COLUMNS,
+    'maxBet' | 'playerForfeitable' | 'pendingWagered'
+  >]: PromoGrant[K];
+} & OfferLabel & { maxBet: string | null; playerForfeitable: boolean; pendingWagered: string };
 
 type AdminGrantRow = PlayerGrantRow & {
   userId: PromoGrant['userId'];
