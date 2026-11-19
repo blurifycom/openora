@@ -1051,7 +1051,7 @@ describe('account close and reopen handlers follow the account status (real PG)'
       (await Promise.race([job.then(() => 'settled'), settle().then(() => 'waiting')])) ===
       'waiting';
 
-    it('reads the account for a close job only once the lock is its own', async () => {
+    it('ends a close job on the account reopened while it waited for the lock', async () => {
       const services = makeServices();
       const ownerId = randomUUID();
       const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);
@@ -1073,7 +1073,7 @@ describe('account close and reopen handlers follow the account status (real PG)'
       expect((await readRoom(room.id))?.scheduledDeletionAt).toBeNull();
     });
 
-    it('reads the account for a reopen job only once the lock is its own', async () => {
+    it('ends a reopen job on the account closed while it waited for the lock', async () => {
       const services = makeServices();
       const ownerId = randomUUID();
       const room = await seedPrivateRoom(services, ownerId, [randomUUID()]);

@@ -520,11 +520,13 @@ export class ChatRoomMembershipService {
 
   /**
    * The account close and reopen jobs run on separate queues and retry, so they can arrive out of
-   * order. Each takes the user's lock, then reads the account's state now, fresh, and writes in
-   * that one transaction, so a late job acts on what the account is when it holds the lock, never
-   * on what it was when it queued; a failed read throws so the job retries. Closed here is what
-   * `player.account.closed` fires for: an account that no longer exists, is inactive, or has the
-   * status closed. A suspended account is not closed: it lost play, not its rooms.
+   * order. Each reads the account's state now, fresh, before its transaction, since on a split
+   * service the read is an HTTP call and must not hold a connection and the user's lock; a failed
+   * read throws so the job retries. It then writes under the user's lock, so a close and a reopen
+   * never interleave, and reads again once committed: a state that changed in between gets the
+   * other job's writes, so the last job to write always ends on what the account is now. Closed
+   * here is what `player.account.closed` fires for: an account that no longer exists, is inactive,
+   * or has the status closed. A suspended account is not closed: it lost play, not its rooms.
    */
   private async isAccountClosed(userId: Uuid) {
     const account = (await this.accounts.getAccounts([userId], { fresh: true })).get(userId);
@@ -532,12 +534,29 @@ export class ChatRoomMembershipService {
     return !account || !account.isActive || (player?.accountClosed ?? player?.closed) === true;
   }
 
-  async handleAccountClosed({ userId, closedAt }: { userId: Uuid; closedAt: Date }) {
+  /** Runs the other job when the account changed while this one wrote, see {@link isAccountClosed}. */
+  private async settleAccountState(userId: Uuid, wroteClosed: boolean) {
+    if ((await this.isAccountClosed(userId)) === wroteClosed) {
+      return { success: true } as const;
+    }
+    // The close it missed carried its own closedAt; now is within the time it took to notice.
+    return wroteClosed
+      ? this.handleAccountReopened({ userId })
+      : this.handleAccountClosed({ userId, closedAt: new Date() });
+  }
+
+  async handleAccountClosed({
+    userId,
+    closedAt,
+  }: {
+    userId: Uuid;
+    closedAt: Date;
+  }): Promise<{ success: true }> {
+    if (!(await this.isAccountClosed(userId))) {
+      return { success: true } as const;
+    }
     const closed = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-account:${userId}`, async () => {
-        if (!(await this.isAccountClosed(userId))) {
-          return null;
-        }
         const rooms = await t
           .select({ id: chatRoom.id })
           .from(chatRoomMember)
@@ -562,9 +581,6 @@ export class ChatRoomMembershipService {
         return { received, results };
       }),
     );
-    if (!closed) {
-      return { success: true } as const;
-    }
     const playerId =
       closed.results.length > 0 || closed.received.length > 0
         ? await this.identityReader.getPlayerIdByUserIdSafe(userId)
@@ -579,7 +595,7 @@ export class ChatRoomMembershipService {
         await this.announceAccountClosed(roomId, userId, result.handover);
       }
     }
-    return { success: true } as const;
+    return this.settleAccountState(userId, true);
   }
 
   private closeAccountInRoom(t: DrizzleTx, roomId: Uuid, userId: Uuid, closedAt: Date) {
@@ -758,12 +774,12 @@ export class ChatRoomMembershipService {
     } as const;
   }
 
-  async handleAccountReopened({ userId }: { userId: Uuid }) {
+  async handleAccountReopened({ userId }: { userId: Uuid }): Promise<{ success: true }> {
+    if (await this.isAccountClosed(userId)) {
+      return { success: true } as const;
+    }
     const restored = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-account:${userId}`, async () => {
-        if (await this.isAccountClosed(userId)) {
-          return [];
-        }
         const rooms = await t
           .select({ id: chatRoom.id })
           .from(chatRoomMember)
@@ -789,7 +805,7 @@ export class ChatRoomMembershipService {
         await this.announceDeletionCancelled(roomId, userId, room);
       }
     }
-    return { success: true } as const;
+    return this.settleAccountState(userId, false);
   }
 
   private reopenAccountInRoom(t: DrizzleTx, roomId: Uuid, userId: Uuid) {
