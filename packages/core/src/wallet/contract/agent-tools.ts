@@ -49,7 +49,15 @@ export const WalletActivityOutputSchema = z.object({
   playerId: UuidSchema,
   windowDays: z.number().int(),
   activeCurrency: CurrencyTickerSchema,
-  balances: z.array(z.object({ currency: CurrencyTickerSchema, balance: MoneyAmountSchema })),
+  balances: z.array(
+    z.object({
+      currency: CurrencyTickerSchema,
+      balance: MoneyAmountSchema,
+      // Bonus-locked real money and the rest, as on the player's balance read (ADR-0064).
+      locked: MoneyAmountSchema.optional(),
+      free: MoneyAmountSchema.optional(),
+    }),
+  ),
   totals: z.array(
     z.object({
       currency: CurrencyTickerSchema,

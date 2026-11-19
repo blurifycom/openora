@@ -98,6 +98,22 @@ export function splitLocked(
   return { locked, free: moneyCompare(free, ZERO) > 0 ? free : ZERO };
 }
 
+/** The one figure every lock check and every read reports: only the grants that lock count. */
+export function lockedFundsOf(
+  real: string,
+  grants: readonly {
+    source: BonusGrantSource;
+    terms: { funds?: Pick<BonusFundSettings, 'lockWithdrawals'> | undefined };
+    unlinked: string;
+    linked: string;
+  }[],
+): { locked: string; free: string } {
+  return splitLocked(
+    real,
+    grants.filter((grant) => grantLocks(grant.source, grant.terms)),
+  );
+}
+
 function spendOrder(order: BonusFreeFundsOrder): readonly FundBucket[] {
   return order === 'first'
     ? ['free', 'unlinked', 'linked', 'bonus']

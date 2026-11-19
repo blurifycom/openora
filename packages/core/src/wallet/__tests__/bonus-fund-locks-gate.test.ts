@@ -5,6 +5,7 @@ import { requireBonusFundLocks } from '../service/wallet.service.js';
 const locks: BonusFundLockCommands = {
   lockedFunds: async () => ({ locked: '0', free: '0' }),
   onOutflow: async () => {},
+  readLockedFunds: async () => [],
 };
 const config = (withdrawalWhileActive: 'block' | 'forfeit') =>
   definePlatformConfig({ promo: { bonus: { withdrawalWhileActive } } });

@@ -71,6 +71,7 @@ import {
   type BonusDepositCommands,
   type DomainEventPayload,
   type BonusFundLockCommands,
+  type LockedFunds,
   type BonusLifecycleCommands,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
@@ -1716,20 +1717,40 @@ export class WalletService {
     return row;
   }
 
-  getBalance(userId: User['id']) {
-    return resolveWalletBalance(
+  async getBalance(userId: User['id']) {
+    const reading = await resolveWalletBalance(
       this.drizzle.db,
       userId,
       this.platformConfig?.wallet?.defaultCurrency,
     );
+    const [withLocks] = await this.withLockedFunds(userId, [reading]);
+    return withLocks ?? reading;
   }
 
   async getBalances(userId: User['id']) {
-    return readWalletBalances(
+    const reading = await readWalletBalances(
       this.drizzle.db,
       userId,
       this.platformConfig?.wallet?.defaultCurrency,
     );
+    return { ...reading, balances: await this.withLockedFunds(userId, reading.balances) };
+  }
+
+  private async withLockedFunds<T extends { currency: string; balance: string }>(
+    userId: User['id'],
+    balances: T[],
+  ): Promise<(T & Partial<LockedFunds>)[]> {
+    if (!this.bonusFundLocks || balances.length === 0) {
+      return balances;
+    }
+    const locks = await this.bonusFundLocks.readLockedFunds(this.drizzle.db, {
+      userId,
+      balances: balances.map(({ currency, balance }) => ({
+        currency: balanceKey(currency),
+        realBalance: balance,
+      })),
+    });
+    return balances.map((balance, i) => ({ ...balance, ...locks[i] }));
   }
 
   /** A player without a wallet reads as empty rather than as an error. */

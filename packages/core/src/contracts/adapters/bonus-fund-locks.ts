@@ -12,6 +12,11 @@ export type LockedFunds = { locked: string; free: string };
 
 export type LockedFundsArgs = { userId: string; currency: string; realBalance: string };
 
+export type ReadLockedFundsArgs = {
+  userId: string;
+  balances: readonly { currency: string; realBalance: string }[];
+};
+
 type OutflowAmount = {
   userId: string;
   currency: string;
@@ -55,6 +60,11 @@ export type BonusFundLockCommands = {
    * holds the wallet row and that currency's balance row locks; this adds the grants' FOR SHARE.
    */
   lockedFunds(tx: unknown, args: LockedFundsArgs): Promise<LockedFunds>;
+  /**
+   * `lockedFunds` for each balance, in the same order, for display. Takes no lock, so it may trail
+   * a bet in flight; the refusal is still decided by `onOutflow`.
+   */
+  readLockedFunds(db: unknown, args: ReadLockedFundsArgs): Promise<LockedFunds[]>;
   /**
    * In `forfeit` mode a withdrawal forfeits every live grant, in every currency, announcing each
    * `promo.bonus.forfeited` on `tx`. Otherwise throws `BonusFundsLockedError` when `balanceAfter`
