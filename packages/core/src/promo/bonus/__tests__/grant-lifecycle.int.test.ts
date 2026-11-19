@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { findOneOrThrow, type DrizzleTx } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import type { BonusGrantArgs, Uuid } from '@openora/core/contracts';
+import type { BonusGrantArgs, PlayEligibilityPort, Uuid } from '@openora/core/contracts';
 import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { promoGrant, promoGrantEntry, promoWeight, promoWeightProfile } from '../schema/index.js';
@@ -73,7 +73,8 @@ beforeAll(async () => {
   audit = makeAuditWriter();
   grants = new GrantService(audit);
   events = makeEventBus();
-  lifecycle = new GrantLifecycleService(db.drizzle, audit, events);
+  const unrestricted: PlayEligibilityPort = { isRestricted: async () => false };
+  lifecycle = new GrantLifecycleService(db.drizzle, audit, events, unrestricted);
 });
 
 afterAll(async () => {

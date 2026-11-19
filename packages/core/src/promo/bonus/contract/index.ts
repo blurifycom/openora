@@ -467,7 +467,8 @@ export const bonusContract = {
 
     /**
      * Starts a pending bonus once no other bonus holds its slot; its wagering window restarts
-     * now. Refused with `BONUS_SLOT_TAKEN` while the slot is held.
+     * now. Refused with `BONUS_SLOT_TAKEN` while the slot is held, and `BONUS_PLAY_RESTRICTED`
+     * while the player may not play.
      */
     activate: oc
       .route({ method: 'POST', path: '/promo/grants/{id}/activate' })

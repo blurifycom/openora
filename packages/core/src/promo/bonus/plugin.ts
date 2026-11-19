@@ -143,6 +143,7 @@ export default {
             c.get(DRIZZLE),
             c.get(AUDIT_WRITER),
             c.get(EVENT_BUS),
+            c.get(PLAY_ELIGIBILITY),
             grantConcurrency(c),
           ),
         ),
@@ -335,6 +336,7 @@ export default {
         c.get(DRIZZLE),
         c.get(AUDIT_WRITER),
         c.get(EVENT_BUS),
+        c.get(PLAY_ELIGIBILITY),
         grantConcurrency(c),
       );
       drizzle = c.get(DRIZZLE);

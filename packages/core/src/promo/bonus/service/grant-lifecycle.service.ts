@@ -5,6 +5,7 @@ import {
   type BonusForfeitReason,
   type ClientMeta,
   type GrantConcurrencyMode,
+  type PlayEligibilityPort,
   type Uuid,
 } from '@openora/core/contracts';
 import {
@@ -27,6 +28,11 @@ export const GrantNotActivatableError = makeConflictError(
   'GrantNotActivatableError',
   'Only a pending bonus inside its claim window can be activated',
   { code: 'BONUS_NOT_ACTIVATABLE' },
+);
+export const GrantActivationRestrictedError = makeConflictError(
+  'GrantActivationRestrictedError',
+  'Your account cannot start a bonus right now',
+  { code: 'BONUS_PLAY_RESTRICTED' },
 );
 
 /** A grant that can still be taken away. `completed`, `expired` and `forfeited` cannot. */
@@ -59,6 +65,7 @@ export class GrantLifecycleService {
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
     private readonly events: EventBus,
+    private readonly playEligibility: PlayEligibilityPort,
     private readonly concurrency: GrantConcurrencyMode = 'multiple',
   ) {}
 
@@ -82,6 +89,11 @@ export class GrantLifecycleService {
         .where(and(eq(promoGrant.id, grantId), eq(promoGrant.userId, userId)));
       if (!owned) {
         throw new GrantNotFoundError(grantId);
+      }
+      // The same gate opting into an offer runs: a self-excluded or blocked player cannot start
+      // a bonus that was parked while they could still play.
+      if (await this.playEligibility.isRestricted(userId, tx)) {
+        throw new GrantActivationRestrictedError();
       }
       return withGrantSlotLock(tx, this.concurrency, userId, owned.currency, async () => {
         const [grant] = await tx

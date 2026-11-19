@@ -6,13 +6,15 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import type {
   BonusGrantArgs,
   GrantConcurrencyMode,
+  PlayEligibilityPort,
   Uuid,
   WagerProduct,
 } from '@openora/core/contracts';
-import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
+import { makeAuditWriter, makeEventBus, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { promoGrant, promoGrantEntry, promoWeight, promoWeightProfile } from '../schema/index.js';
 import {
+  GrantActivationRestrictedError,
   GrantLifecycleService,
   GrantNotActivatableError,
   GrantNotFoundError,
@@ -98,8 +100,14 @@ const stakesOf = (id: string) =>
     .from(promoGrantEntry)
     .where(sql`${promoGrantEntry.grantId} = ${id} and ${promoGrantEntry.type} = 'stake'`);
 
-const lifecycle = (mode: GrantConcurrencyMode = 'single') =>
-  new GrantLifecycleService(db.drizzle, audit, events, mode);
+const lifecycle = (mode: GrantConcurrencyMode = 'single', restricted = false) =>
+  new GrantLifecycleService(
+    db.drizzle,
+    audit,
+    events,
+    mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => restricted) }),
+    mode,
+  );
 
 const wipeLedger = async () => {
   await db.drizzle.db.execute(
@@ -265,6 +273,18 @@ describe('activating a pending grant', () => {
       BonusSlotTakenError,
     );
     expect((await rowOf(pending)).status).toBe('pending');
+  });
+
+  it('refuses a player who may no longer play, leaving the grant pending', async () => {
+    const { userId, active, pending } = await pendingBehindActive();
+    await lifecycle().forfeit({ grantId: active, reason: 'player_opt_out', note: 'test' });
+
+    await expect(
+      lifecycle('single', true).activate({ userId, grantId: pending }),
+    ).rejects.toBeInstanceOf(GrantActivationRestrictedError);
+    const row = await rowOf(pending);
+    expect(row.status).toBe('pending');
+    expect(row.activatedAt).toBeNull();
   });
 
   it('refuses a grant that is not pending', async () => {

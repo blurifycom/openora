@@ -25,6 +25,7 @@ export function bonusBalanceChannel(userId: Uuid): string {
 import { BonusSlotTakenError } from '../shared/grant-slot.js';
 import {
   GrantLifecycleService,
+  GrantActivationRestrictedError,
   GrantNotActivatableError,
   GrantNotForfeitableError,
   GrantNotFoundError as GrantNotForfeitableNotFoundError,
@@ -225,7 +226,11 @@ export function createBonusRouter({
         mapErrors(
           {
             NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
-            CONFLICT: [GrantNotActivatableError, BonusSlotTakenError],
+            CONFLICT: [
+              GrantNotActivatableError,
+              GrantActivationRestrictedError,
+              BonusSlotTakenError,
+            ],
           },
           async () => {
             const userId = getUserId(context);
