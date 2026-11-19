@@ -40,6 +40,7 @@ import {
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
 import { FundLockService } from './service/fund-lock.service.js';
+import { PlayerFundsService } from './service/player-funds.service.js';
 import { GrantReaderService, bonusGrantLedger } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
 import { GrantsFindService } from './service/grants-find.service.js';
@@ -339,6 +340,11 @@ export default {
         .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
       return createBonusRouter({
         grants: new GrantReaderService(c.get(DRIZZLE)),
+        funds: new PlayerFundsService(
+          c.get(DRIZZLE),
+          c.get(WALLET_READER),
+          c.get(BONUS_FUND_LOCKS),
+        ),
         offers,
         realtime: c.get(REALTIME_TRANSPORT),
         weights: new WeightService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
