@@ -13,14 +13,19 @@ export type GrantSlot = { userId: string; currency: string; source: BonusGrantSo
 
 /**
  * Serializes every check-then-write on a player's active grants in one currency, so two grants
- * created or activated at once cannot both see a free slot.
+ * created or activated at once cannot both see a free slot. `multiple` has no slot to guard, so
+ * it runs `fn` without the lock.
  */
 export function withGrantSlotLock<T>(
   tx: DrizzleTx,
+  mode: GrantConcurrencyMode,
   userId: string,
   currency: string,
   fn: () => Promise<T>,
 ): Promise<T> {
+  if (mode === 'multiple') {
+    return fn();
+  }
   return withAdvisoryXactLock(tx, `promo-grant-slot:${userId}:${currency}`, fn);
 }
 

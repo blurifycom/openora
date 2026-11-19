@@ -133,7 +133,9 @@ export class GrantService implements BonusGrantCommands {
 
   async grant(tx: DrizzleTx, rawArgs: BonusGrantArgs): Promise<BonusGrantOutcome> {
     const args = grantArgsSchema.parse(rawArgs);
-    return withGrantSlotLock(tx, args.userId, args.currency, () => this.grantLocked(tx, args));
+    return withGrantSlotLock(tx, this.concurrency, args.userId, args.currency, () =>
+      this.grantLocked(tx, args),
+    );
   }
 
   private async grantLocked(

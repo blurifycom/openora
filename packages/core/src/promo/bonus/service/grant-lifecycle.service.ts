@@ -83,7 +83,7 @@ export class GrantLifecycleService {
       if (!owned) {
         throw new GrantNotFoundError(grantId);
       }
-      return withGrantSlotLock(tx, userId, owned.currency, async () => {
+      return withGrantSlotLock(tx, this.concurrency, userId, owned.currency, async () => {
         const [grant] = await tx
           .select({
             status: promoGrant.status,
