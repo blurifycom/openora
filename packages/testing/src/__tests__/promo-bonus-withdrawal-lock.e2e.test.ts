@@ -4,6 +4,8 @@ import { eq } from 'drizzle-orm';
 import { moneyAdd, moneyCompare } from '@openora/core/server';
 import type { WalletTransactionType } from '@openora/core/contracts';
 import { promoGrant } from '@openora/core/promo/schema/bonus';
+import { user } from '@openora/core/pam/schema/identity';
+import { adminRole, adminRoleAssignment, adminRolePermission } from '@openora/core/iam/schema';
 import { readJson, type TestClient } from '../index.js';
 import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
 import { TEST_LOCKED_FUNDS_MESSAGE } from './fixtures/test-bonus-withdrawal-block-config-plugin.js';
@@ -226,6 +228,33 @@ describe('the staff funds read', () => {
     expectMoney(usd.locked, '100', 'locked');
     expectMoney(usd.free, '50', 'free');
   });
+
+  async function staffWith(resource: 'bonus' | 'transaction') {
+    const staff = await player('0.01');
+    await drizzle().update(user).set({ role: 'admin' }).where(eq(user.id, staff.userId));
+    const [role] = await drizzle()
+      .insert(adminRole)
+      .values({ name: `${resource} reader ${randomUUID()}` })
+      .returning({ id: adminRole.id });
+    if (!role) {
+      throw new Error('role insert returned no row');
+    }
+    await drizzle()
+      .insert(adminRolePermission)
+      .values({ roleId: role.id, resource, level: 'read' });
+    await drizzle().insert(adminRoleAssignment).values({ userId: staff.userId, roleId: role.id });
+    return staff.client;
+  }
+
+  it.each(['bonus', 'transaction'] as const)(
+    'refuses staff who can read only %s',
+    async (resource) => {
+      const { userId } = await player('150');
+      const staff = await staffWith(resource);
+
+      expect((await staff.get(`/backoffice/promo/players/${userId}/funds`)).status).toBe(403);
+    },
+  );
 
   it('refuses a player reaching for it, even for their own funds', async () => {
     const { client, userId } = await player('150');

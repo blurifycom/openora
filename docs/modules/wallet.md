@@ -288,7 +288,7 @@ is `SPORTSBOOK_LEDGER` unchanged.
   and the `wallet.activity` agent tool add optional `locked` and `free` to each balance when a
   bonus module is loaded, from the same computation in one snapshot without row locks. Staff
   read the same figures for one player on `GET /backoffice/promo/players/{userId}/funds`
-  (`bonus:view`), where `locked` and `free` are always present. `locked`
+  (`transaction:view` and `bonus:view`), where `locked` and `free` are always present. `locked`
   holds back a swap or transfer always, and a withdrawal only in `block` mode; in `forfeit` mode a
   withdrawal of any size forfeits every live grant. An operator clawback goes through an admin or correction debit,
   which the lock never checks. A process that loads the wallet without the bonus module, a split

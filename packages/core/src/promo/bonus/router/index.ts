@@ -120,15 +120,19 @@ export function createBonusRouter({
     },
 
     admin: {
+      players: {
+        // Real-money balances, so the wallet's own read permission as well as the bonus one.
+        funds: os.admin.players.funds.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'transaction', 'view');
+          await adminGuard.assert(context, 'bonus', 'view');
+          return funds.read(input.userId);
+        }),
+      },
+
       grants: {
         list: os.admin.grants.list.handler(async ({ input, context }) => {
           await adminGuard.assert(context, 'bonus', 'view');
           return grants.listForAdmin(input.userId, input);
-        }),
-
-        funds: os.admin.grants.funds.handler(async ({ input, context }) => {
-          await adminGuard.assert(context, 'bonus', 'view');
-          return funds.read(input.userId);
         }),
 
         forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {

@@ -440,16 +440,18 @@ export const bonusContract = {
   },
 
   admin: {
+    players: {
+      funds: oc
+        .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/funds' })
+        .input(z.object({ userId: UuidSchema }))
+        .output(AdminPlayerFundsSchema),
+    },
+
     grants: {
       list: oc
         .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/grants' })
         .input(z.object({ userId: UuidSchema, ...PageQuerySchema.shape }))
         .output(z.array(AdminGrantSchema)),
-
-      funds: oc
-        .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/funds' })
-        .input(z.object({ userId: UuidSchema }))
-        .output(AdminPlayerFundsSchema),
 
       forfeit: oc
         .route({ method: 'POST', path: '/backoffice/promo/grants/{id}/forfeit' })
