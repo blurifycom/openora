@@ -1028,6 +1028,30 @@ describe('a sportsbook bet, paid when it settles', () => {
     ]);
   });
 
+  it('pays once when the payout mode switches from instant to claim between settles', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await settledBet(rakeback, userId, 'bet-1');
+    await reopenedBet(rakeback, userId, 'bet-1');
+    await settledBet(claimable(), userId, 'bet-1');
+
+    expect(credit).toHaveBeenCalledTimes(1);
+    expect((await accrualsOf(userId)).filter((row) => row.status === 'accrued')).toEqual([]);
+  });
+
+  it('pays once when the payout mode switches from claim to instant between settles', async () => {
+    const userId = randomUUID();
+    await givePlayerTier(userId, 'bronze');
+
+    await settledBet(claimable(), userId, 'bet-1');
+    await reopenedBet(claimable(), userId, 'bet-1');
+    await settledBet(rakeback, userId, 'bet-1');
+
+    expect(credit).toHaveBeenCalledTimes(1);
+    expect((await accrualsOf(userId)).filter((row) => row.status === 'accrued')).toEqual([]);
+  });
+
   it('audits paid rakeback a voided bet keeps, and nothing for an unpaid one', async () => {
     const userId = randomUUID();
     await givePlayerTier(userId, 'bronze');
