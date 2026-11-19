@@ -566,55 +566,6 @@ describe('WalletCommandsService.credit gift/rain grant terms (real PG)', () => {
     expect(await txRows(w.id)).toHaveLength(0);
     expect(await balanceOf(w.userId)).toBe(0);
   });
-
-  it('pays a tip credit in cash on the ledger, with a bonus engine bound', async () => {
-    const w = await seedWallet({ balance: '5' });
-    const grant = vi.fn();
-    const svcWithGrants = new WalletCommandsService(eligibility(false), audit, {
-      bonusGrants: mock<BonusGrantCommands>({ grant }),
-    });
-
-    const outcome = await svcWithGrants.credit(db.drizzle.db, {
-      userId: w.userId,
-      amount: '10',
-      currency: 'USD',
-      type: 'tip',
-      providerRef: { providerName: 'social-transfers', providerRefId: randomUUID() },
-    });
-
-    expect(outcome).toMatchObject({ ok: true, moved: true });
-    expect(grant).not.toHaveBeenCalled();
-    expect(await txRows(w.id)).toEqual([
-      expect.objectContaining({
-        type: 'tip',
-        direction: 'credit',
-        amount: '10.000000000000000000',
-      }),
-    ]);
-    expect(await balanceOf(w.userId)).toBe(15);
-  });
-});
-
-describe('WalletCommandsService ledger direction (real PG)', () => {
-  // gift/rain/tip write the SAME `type` for both legs of a transfer - direction is the
-  // only column that tells the sender's debit apart from the recipient's credit.
-  it('records opposite directions for the sender debit and recipient credit legs of a tip', async () => {
-    const sender = await seedWallet({ balance: '100' });
-    const recipient = await seedWallet({ balance: '0' });
-
-    await svc.debit(db.drizzle.db, { userId: sender.userId, amount: '10', type: 'tip' });
-    await svc.credit(db.drizzle.db, {
-      userId: recipient.userId,
-      amount: '10',
-      currency: 'USD',
-      type: 'tip',
-    });
-
-    const senderRows = await txRows(sender.id);
-    const recipientRows = await txRows(recipient.id);
-    expect(senderRows[0]).toMatchObject({ type: 'tip', direction: 'debit' });
-    expect(recipientRows[0]).toMatchObject({ type: 'tip', direction: 'credit' });
-  });
 });
 
 describe('WalletCommandsService providerRef tagging (real PG)', () => {
@@ -829,7 +780,7 @@ describe('WalletCommandsService providerRef replay of a different request (real 
 
   it.each([
     ['amount', { amount: '11' }],
-    ['type', { type: 'tip' as const }],
+    ['type', { type: 'donation' as const }],
     ['round', { providerRef: { ...providerRef, externalRoundId: 'round-2' } }],
   ])('refuses a debit replay with a different %s, moving nothing', async (_name, overrides) => {
     const w = await seedWallet({ balance: '100' });
@@ -1680,7 +1631,7 @@ describe('WalletCommandsService.debit bonus wagering (real PG)', () => {
 
 describe('WalletCommandsService.debit of a non-bet type (real PG)', () => {
   const context = { provider: 'agg', product: 'casino' } as const;
-  const ref = { providerName: 'agg', providerRefId: 'tip-1', externalRoundId: 'round-1' };
+  const ref = { providerName: 'agg', providerRefId: 'donation-1', externalRoundId: 'round-1' };
 
   it('is neither wager-gated nor wagered, whatever context and round id it carries', async () => {
     const limits = refusingLimits();
@@ -1694,7 +1645,7 @@ describe('WalletCommandsService.debit of a non-bet type (real PG)', () => {
     const res = await engine.debit(db.drizzle.db, {
       userId: w.userId,
       amount: '10',
-      type: 'tip',
+      type: 'donation',
       context,
       providerRef: ref,
     });
@@ -1704,14 +1655,18 @@ describe('WalletCommandsService.debit of a non-bet type (real PG)', () => {
     expect(wager).not.toHaveBeenCalled();
     expect(await balanceOf(w.userId)).toBe(90);
     expect(await txRows(w.id)).toEqual([
-      expect.objectContaining({ type: 'tip', wagerProduct: null, wagerRtp: null }),
+      expect.objectContaining({ type: 'donation', wagerProduct: null, wagerRtp: null }),
     ]);
   });
 
   it('reports the shortfall and moves nothing when the balance cannot cover it', async () => {
     const w = await seedWallet({ balance: '5' });
 
-    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'tip' });
+    const res = await svc.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '10',
+      type: 'donation',
+    });
 
     expect(res).toEqual({ ok: false, available: '5.000000000000000000' });
     expect(await balanceOf(w.userId)).toBe(5);

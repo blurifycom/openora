@@ -14,8 +14,6 @@ export const WALLET_TRANSACTION_TYPES = [
   'win',
   'loss',
   'bonus',
-  /** A plain cash transfer between players, credited as withdrawable balance with no wagering; for a player-to-player donation use `donation`. */
-  'tip',
   'gift',
   'rain',
   'manual_credit',

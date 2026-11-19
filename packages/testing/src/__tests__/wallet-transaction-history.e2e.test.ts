@@ -75,7 +75,7 @@ const debitIn = (userId: string, amount: string, currency: string) =>
       userId,
       amount,
       currency,
-      type: 'tip',
+      type: 'donation',
       providerRef: { providerName: 'chat', providerRefId: randomUUID() },
     }),
   );
@@ -268,9 +268,11 @@ describe('player transaction history', () => {
 
     const inverted = await client.get(`/wallet/transactions?from=${later}&to=${earlier}`);
     const unknownType = await client.get('/wallet/transactions?types[]=jackpot');
+    const removedType = await client.get('/wallet/transactions?types[]=tip');
 
     expect(inverted.status).toBe(400);
     expect(unknownType.status).toBe(400);
+    expect(removedType.status).toBe(400);
   });
 });
 
@@ -287,5 +289,11 @@ describe('admin transaction history', () => {
 
     expect(Number(adminHistory.items.find((i) => i.id === depositId)?.balanceAfter)).toBe(100);
     expect(playerHistory.items.find((i) => i.id === depositId)).not.toHaveProperty('balanceAfter');
+  });
+
+  it('rejects an unknown type on the backoffice transactions list', async () => {
+    const admin = await asAdmin(app.app);
+
+    expect((await admin.get('/backoffice/transactions?type=tip')).status).toBe(400);
   });
 });

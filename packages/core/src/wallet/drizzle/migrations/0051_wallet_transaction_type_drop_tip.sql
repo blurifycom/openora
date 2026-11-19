@@ -1,0 +1,4 @@
+ALTER TABLE "wallet_transaction" ALTER COLUMN "type" SET DATA TYPE text;--> statement-breakpoint
+DROP TYPE "public"."wallet_transaction_type";--> statement-breakpoint
+CREATE TYPE "public"."wallet_transaction_type" AS ENUM('deposit', 'withdrawal', 'bet', 'win', 'loss', 'bonus', 'gift', 'rain', 'manual_credit', 'manual_debit', 'swap_out', 'swap_in', 'bet_reversal', 'cashback', 'win_reversal', 'donation', 'referral_reward');--> statement-breakpoint
+ALTER TABLE "wallet_transaction" ALTER COLUMN "type" SET DATA TYPE "public"."wallet_transaction_type" USING "type"::"public"."wallet_transaction_type";

@@ -19,7 +19,6 @@ export const NOTIFICATION_TYPES = [
   'promo.streak.milestone.reached',
   'rakeback.claimable',
   'chat.rain.received',
-  'chat.tip.received',
   'chat.donation.received',
   'chat.gift.claimed',
   'chat.gift.expired',
@@ -116,7 +115,6 @@ export const NOTIFICATION_PARAM_KEYS = {
   },
   'chat.rain.received': { required: ['amount', 'currency'], optional: [] },
   'chat.gift.expired': { required: ['amount', 'currency'], optional: [] },
-  'chat.tip.received': { required: ['senderUsername', 'amount', 'currency'], optional: [] },
   'chat.donation.received': {
     required: ['senderUsername', 'amount', 'currency'],
     optional: ['wageringMultiplier'],

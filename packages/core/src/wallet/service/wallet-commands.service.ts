@@ -224,8 +224,7 @@ export class WalletCommandsService implements WalletCommands {
 
   // Completed ledger row shared by every gameplay move. `direction` is required (not
   // optional) so a new call site can't compile without deciding it - `debit()` always
-  // passes 'debit', `credit()` always passes 'credit', including the gift/rain/tip legs
-  // that share one `type` for both sides of the transfer.
+  // passes 'debit', `credit()` always passes 'credit'.
   private async writeLedgerRow(
     txn: DrizzleDb,
     row: { id: string; currency: string },
