@@ -32,6 +32,7 @@ import {
   PlayerForfeitNotAllowedError,
 } from '../service/grant-lifecycle.service.js';
 import { GrantNotFoundError, GrantReaderService } from '../service/grant-reader.service.js';
+import type { PlayerFundsService } from '../service/player-funds.service.js';
 import {
   InvalidOfferTermsError,
   OfferClaimedError,
@@ -64,6 +65,7 @@ function canForfeit(granted: readonly (typeof FORFEIT_PERMISSIONS)[number][]): b
 
 export function createBonusRouter({
   grants,
+  funds,
   offers,
   weights,
   lifecycle,
@@ -73,6 +75,7 @@ export function createBonusRouter({
   geoCheck,
 }: {
   grants: GrantReaderService;
+  funds: PlayerFundsService;
   offers: OfferService;
   weights: WeightService;
   lifecycle: GrantLifecycleService;
@@ -121,6 +124,11 @@ export function createBonusRouter({
         list: os.admin.grants.list.handler(async ({ input, context }) => {
           await adminGuard.assert(context, 'bonus', 'view');
           return grants.listForAdmin(input.userId, input);
+        }),
+
+        funds: os.admin.grants.funds.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return funds.read(input.userId);
         }),
 
         forfeit: os.admin.grants.forfeit.handler(async ({ input, context }) => {

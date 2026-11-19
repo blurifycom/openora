@@ -208,6 +208,39 @@ describe('the balance read', () => {
   });
 });
 
+describe('the staff funds read', () => {
+  const staffFunds = (userId: string) => admin().get(`/backoffice/promo/players/${userId}/funds`);
+
+  it("shows staff the same balances, locked and free money as the player's own read", async () => {
+    const { client, userId } = await matchedDepositor();
+    await deposit(client, '5', 'EUR');
+
+    const res = await staffFunds(userId);
+
+    expect(res.status).toBe(200);
+    const staff = await readJson(res);
+    const own = await readJson(await client.get('/wallet/balances'));
+    expect(staff).toEqual(own);
+    expect(staff.balances.map((b: { currency: string }) => b.currency)).toEqual(['EUR', 'USD']);
+    const usd = staff.balances.find((b: { currency: string }) => b.currency === 'USD');
+    expectMoney(usd.locked, '100', 'locked');
+    expectMoney(usd.free, '50', 'free');
+  });
+
+  it('refuses a player reaching for it, even for their own funds', async () => {
+    const { client, userId } = await player('150');
+
+    expect((await client.get(`/backoffice/promo/players/${userId}/funds`)).status).toBe(403);
+  });
+
+  it('reads an unknown player as no balances, like the grant list', async () => {
+    const res = await staffFunds(randomUUID());
+
+    expect(res.status).toBe(200);
+    expect((await readJson(res)).balances).toEqual([]);
+  });
+});
+
 describe('which bonuses lock', () => {
   it('does not lock behind a rank bonus', async () => {
     const { client, userId } = await player('150');
