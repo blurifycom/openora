@@ -204,17 +204,49 @@ describe('progress credited at settlement', () => {
     expect(n(reversal?.wageringDelta)).toBe(-50);
   });
 
-  it('halves the pending progress on a half reversal before the round settles', async () => {
+  it('keeps the round open after a partial reversal, and credits the rest when it settles', async () => {
     const userId = randomUUID();
     const grantId = await grant({ userId });
     const round = randomUUID();
     await bet(userId, '100', round);
 
-    await reverse(userId, round, '50');
+    await reverse(userId, round, '20');
 
-    expect(n((await rowOf(grantId)).wageringProgress)).toBe(50);
-    expect(sumDeltas(await entriesOf(grantId, 'progress'))).toBe(50);
+    expect(n((await rowOf(grantId)).wageringProgress)).toBe(0);
+    expect(n(await pendingOf(grantId, round))).toBe(80);
+    expect(await entriesOf(grantId, 'progress')).toEqual([]);
+    const [open] = await db.drizzle.db
+      .select({ settledAt: promoGrantRound.settledAt })
+      .from(promoGrantRound)
+      .where(eq(promoGrantRound.grantId, grantId));
+    expect(open?.settledAt).toBeNull();
+
+    await close(userId, round);
+
+    expect(n((await rowOf(grantId)).wageringProgress)).toBe(80);
     expect(n(await pendingOf(grantId, round))).toBe(0);
+    expect(sumDeltas(await entriesOf(grantId, 'progress'))).toBe(80);
+  });
+
+  it('credits nothing on a partial reversal, and a full one leaves nothing pending', async () => {
+    const userId = randomUUID();
+    const grantId = await grant({ userId, amount: '100', wageringRequired: '100' });
+    const first = randomUUID();
+    await bet(userId, '50', first);
+    await close(userId, first);
+    const round = randomUUID();
+    await bet(userId, '50', round);
+
+    await reverse(userId, round, '10');
+
+    expect((await rowOf(grantId)).status).toBe('active');
+    expect(n((await rowOf(grantId)).wageringProgress)).toBe(50);
+
+    await reverse(userId, round, '40');
+
+    expect(n(await pendingOf(grantId, round))).toBe(0);
+    expect(n((await rowOf(grantId)).wageringProgress)).toBe(50);
+    expect((await rowOf(grantId)).status).toBe('active');
   });
 
   it('settles a stake taken before settlement-time credit on what its stake row already counted', async () => {

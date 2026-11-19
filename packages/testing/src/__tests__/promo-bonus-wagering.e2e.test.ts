@@ -320,6 +320,31 @@ describe('a bet against a bonus', () => {
     expect((await other.client.get(`/promo/grants/${grantId}`)).status).toBe(404);
   });
 
+  it('keeps a round open after a partial reversal, crediting its progress only when the rest settles', async () => {
+    const { client, userId } = await player('100');
+    const grantId = await grantBonus(userId, '100', '10');
+    const round = randomUUID();
+    const own = async () => {
+      const grant = await readJson(await client.get(`/promo/grants/${grantId}`));
+      return [grant.pendingWagered, grant.wageringProgress, grant.status];
+    };
+
+    await bet(userId, '100', round);
+    await reverse(userId, '20', round, 'partial');
+
+    expect(await own()).toEqual(['80.000000000000000000', '0.000000000000000000', 'active']);
+    const [open] = await drizzle()
+      .select({ settledAt: promoGrantRound.settledAt })
+      .from(promoGrantRound)
+      .where(eq(promoGrantRound.grantId, grantId));
+    expect(open?.settledAt).toBeNull();
+    expect(await realBalanceOf(userId)).toBe('20.000000000000000000');
+
+    await lose(userId, round);
+
+    expect(await own()).toEqual(['0.000000000000000000', '80.000000000000000000', 'active']);
+  });
+
   it('refuses a stake neither balance can cover and moves nothing', async () => {
     const { userId } = await player('10');
     const grantId = await grantBonus(userId, '20', '10');
@@ -897,7 +922,9 @@ describe('a voided round', () => {
 
     const row = await grantRow(grantId);
     expect(row.bonusBalance).toBe('70.000000000000000000');
-    expect(row.wageringProgress).toBe('30.000000000000000000');
+    expect(row.wageringProgress).toBe('0.000000000000000000');
+    await lose(userId, round);
+    expect((await grantRow(grantId)).wageringProgress).toBe('30.000000000000000000');
   });
 
   it('takes back the progress a cash-funded bet bought under an active grant when it is voided', async () => {
