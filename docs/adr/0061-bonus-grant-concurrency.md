@@ -1,4 +1,4 @@
-# ADR-0060: Bonus grant concurrency and sequential rollover attribution
+# ADR-0061: Bonus grant concurrency and sequential rollover attribution
 
 **Date**: 2026-11-17
 **Status**: Proposed
