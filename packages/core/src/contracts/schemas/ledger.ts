@@ -178,7 +178,10 @@ export type LedgerV1Move = z.infer<typeof LedgerV1MoveSchema>;
 export const LedgerV1RefusedSchema = z.object({
   status: z.literal('refused'),
   reason: LedgerV1RefusalReasonSchema,
-  /** With `insufficient_funds`: the real balance plus what bonus funds could have covered. */
+  /**
+   * With `insufficient_funds`: the most this bet could have staked - the real balance plus what bonus
+   * funds could cover, less any bucket its bet class may not use, so it can be below the balance.
+   */
   available: MoneyAmountSchema.optional(),
 });
 export type LedgerV1Refused = z.infer<typeof LedgerV1RefusedSchema>;

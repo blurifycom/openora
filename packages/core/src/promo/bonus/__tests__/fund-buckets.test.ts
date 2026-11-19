@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { moneyCompare } from '@openora/core/server';
 import {
+  DEFAULT_FUND_SETTINGS,
+  allowedBuckets,
+  betClass,
   clampCounters,
   depositBuckets,
   isDepleted,
   splitReturn,
-  splitStake,
   sumSplit,
   wageringBase,
+  type FundBucket,
   type FundSplit,
 } from '../shared/fund-buckets.js';
+
+const ALL = new Set<FundBucket>(['free', 'unlinked', 'linked', 'bonus']);
+const NO_BONUS = new Set<FundBucket>(['free', 'unlinked', 'linked']);
 
 const eq = (a: string, b: string) => moneyCompare(a, b) === 0;
 const expectSplit = (actual: FundSplit | null, expected: Partial<FundSplit>) => {
@@ -84,41 +90,6 @@ describe('counters over the real balance', () => {
   });
 });
 
-describe('spend order', () => {
-  const available: FundSplit = { free: '50', unlinked: '30', linked: '20', bonus: '100' };
-
-  it('spends free, then A, B, C when free funds go first', () => {
-    expectSplit(splitStake({ stake: '120', available, order: 'first', bonusAllowed: true }), {
-      free: '50',
-      unlinked: '30',
-      linked: '20',
-      bonus: '20',
-    });
-  });
-
-  it('spends A, B, C, then free when free funds go last', () => {
-    expectSplit(splitStake({ stake: '160', available, order: 'last', bonusAllowed: true }), {
-      unlinked: '30',
-      linked: '20',
-      bonus: '100',
-      free: '10',
-    });
-  });
-
-  it('skips C on a product bonus funds cannot pay for', () => {
-    expectSplit(splitStake({ stake: '60', available, order: 'last', bonusAllowed: false }), {
-      unlinked: '30',
-      linked: '20',
-      free: '10',
-    });
-  });
-
-  it('refuses a stake the buckets together cannot cover', () => {
-    expect(splitStake({ stake: '201', available, order: 'first', bonusAllowed: true })).toBeNull();
-    expect(splitStake({ stake: '101', available, order: 'first', bonusAllowed: false })).toBeNull();
-  });
-});
-
 describe('proportional return', () => {
   it('returns a win in the shares the stake was paid', () => {
     const r = splitReturn('200', { free: '0', unlinked: '25', linked: '25', bonus: '50' });
@@ -156,5 +127,40 @@ describe('depletion', () => {
   it('depletes only at exactly zero without a threshold', () => {
     expect(isDepleted('0', '0')).toBe(true);
     expect(isDepleted('0.000000000000000001', '0')).toBe(false);
+  });
+});
+
+describe('bet class', () => {
+  const casino = { provider: 'aggregator', product: 'casino' } as const;
+
+  it('is pvp for a pvp bet whatever its weight', () => {
+    expect(betClass({ provider: 'aggregator', product: 'pvp' }, '100')).toBe('pvp');
+  });
+
+  it('contributes on a positive effective percent and is zero otherwise', () => {
+    expect(betClass(casino, '0.000000000000000001')).toBe('contributing');
+    expect(betClass(casino, '0')).toBe('zero');
+  });
+});
+
+describe('allowed buckets', () => {
+  const settings = {
+    ...DEFAULT_FUND_SETTINGS,
+    betClassBuckets: { zero: ['unlinked', 'linked'], pvp: ['unlinked'] },
+  } satisfies typeof DEFAULT_FUND_SETTINGS;
+  const sorted = (set: ReadonlySet<FundBucket>) => [...set].sort();
+
+  it('allows every bucket to a class with no rule, and when no rules are set', () => {
+    expect(sorted(allowedBuckets(settings, 'contributing', false))).toEqual(sorted(ALL));
+    expect(sorted(allowedBuckets(DEFAULT_FUND_SETTINGS, 'pvp', false))).toEqual(sorted(ALL));
+  });
+
+  it('keeps a class to its configured buckets, free money always included', () => {
+    expect(sorted(allowedBuckets(settings, 'zero', false))).toEqual(sorted(NO_BONUS));
+    expect(sorted(allowedBuckets(settings, 'pvp', false))).toEqual(['free', 'unlinked']);
+  });
+
+  it('removes C on an excluded product even when the class allows it', () => {
+    expect(sorted(allowedBuckets(settings, 'contributing', true))).toEqual(sorted(NO_BONUS));
   });
 });

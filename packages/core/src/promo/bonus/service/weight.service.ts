@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import { type AuditWritePort, type Uuid } from '@openora/core/contracts';
 import { makeConflictError, makeNotFoundError, type DrizzleService } from '@openora/core/server';
 import { promoWeight, promoWeightProfile } from '../schema/index.js';
@@ -54,7 +54,11 @@ export class WeightService {
       // would both find it free.
       const [created] = await tx
         .insert(promoWeightProfile)
-        .values({ name: input.name })
+        .values({
+          name: input.name,
+          contributionMode: input.contributionMode ?? 'flat',
+          referenceEdge: input.referenceEdge ?? null,
+        })
         .onConflictDoNothing({ target: promoWeightProfile.name })
         .returning();
       if (!created) {
@@ -66,7 +70,7 @@ export class WeightService {
         action: 'promo.weight_profile.created',
         resourceType: 'promo_weight_profile',
         resourceId: created.id,
-        after: { name: created.name },
+        after: { name: created.name, ...contributionOf(created) },
       });
       // A profile with no rows scores every bet at zero, so a grant made against it can never be
       // wagered down. Nothing is granted against a profile that was only just created, but the
@@ -92,6 +96,23 @@ export class WeightService {
         .from(promoWeight)
         .where(eq(promoWeight.profileId, profile.id));
 
+      const [saved] = await tx
+        .update(promoWeightProfile)
+        .set({
+          ...(input.contributionMode !== undefined
+            ? {
+                contributionMode: input.contributionMode,
+                referenceEdge: input.referenceEdge ?? null,
+              }
+            : {}),
+          version: sql`${promoWeightProfile.version} + 1`,
+        })
+        .where(eq(promoWeightProfile.id, profile.id))
+        .returning();
+      if (!saved) {
+        throw new WeightProfileNotFoundError(input.id);
+      }
+
       await tx.delete(promoWeight).where(eq(promoWeight.profileId, profile.id));
       const inserted =
         input.weights.length === 0
@@ -107,10 +128,10 @@ export class WeightService {
         action: 'promo.weight_profile.set',
         resourceType: 'promo_weight_profile',
         resourceId: profile.id,
-        before: { weights: before.map(toWeight) },
-        after: { weights: inserted.map(toWeight) },
+        before: { ...contributionOf(profile), weights: before.map(toWeight) },
+        after: { ...contributionOf(saved), weights: inserted.map(toWeight) },
       });
-      return toDetail(profile, inserted.map(toWeight));
+      return toDetail(saved, inserted.map(toWeight));
     });
   }
 }
@@ -126,12 +147,19 @@ const toWeight = (row: WeightRow) => ({
   createdAt: row.createdAt.toISOString(),
 });
 
+const contributionOf = (row: ProfileRow) => ({
+  contributionMode: row.contributionMode,
+  referenceEdge: row.referenceEdge,
+  version: row.version,
+});
+
 const toDetail = (
   row: ProfileRow,
   weights: WagerWeightProfileDetail['weights'],
 ): WagerWeightProfileDetail => ({
   id: row.id,
   name: row.name,
+  ...contributionOf(row),
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
   weights,

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isUsableRtp } from '../adapters/wager-context.js';
 
 // Canonical promo value sets. Declared here rather than in the promo module because the
 // isomorphic event and adapter contracts reference them and cannot import from a domain.
@@ -66,7 +67,19 @@ export const BONUS_GRANT_ENTRY_TYPES = [
   'convert',
   'forfeit',
   'expire',
+  // A settled round's weighted stake credited to the requirement; moves no funds.
+  'progress',
 ] as const;
+
+/**
+ * How a bet's weight is scored: `flat` takes the profile's percent as is, `house_edge` scales it
+ * by the game's edge against the profile's reference edge, capped at the full percent.
+ */
+export const WAGER_CONTRIBUTION_MODES = ['flat', 'house_edge'] as const;
+/** What a bet is for the funding rules: it contributes, it contributes nothing, or it is PvP. */
+export const BONUS_BET_CLASSES = ['contributing', 'zero', 'pvp'] as const;
+/** The grant buckets a bet class may draw on. Free real money is never restricted. */
+export const BONUS_GRANT_BUCKETS = ['unlinked', 'linked', 'bonus'] as const;
 
 export const BonusGrantSourceSchema = z.enum(BONUS_GRANT_SOURCES);
 export const BonusGrantStatusSchema = z.enum(BONUS_GRANT_STATUSES);
@@ -76,6 +89,9 @@ export const PromoOfferStatusSchema = z.enum(PROMO_OFFER_STATUSES);
 export const BonusRolloverBaseSchema = z.enum(BONUS_ROLLOVER_BASES);
 export const BonusExistingBalanceModeSchema = z.enum(BONUS_EXISTING_BALANCE_MODES);
 export const BonusFreeFundsOrderSchema = z.enum(BONUS_FREE_FUNDS_ORDERS);
+export const WagerContributionModeSchema = z.enum(WAGER_CONTRIBUTION_MODES);
+export const BonusBetClassSchema = z.enum(BONUS_BET_CLASSES);
+export const BonusGrantBucketSchema = z.enum(BONUS_GRANT_BUCKETS);
 
 export type BonusGrantSource = z.infer<typeof BonusGrantSourceSchema>;
 export type BonusGrantStatus = z.infer<typeof BonusGrantStatusSchema>;
@@ -85,6 +101,17 @@ export type PromoOfferStatus = z.infer<typeof PromoOfferStatusSchema>;
 export type BonusRolloverBase = z.infer<typeof BonusRolloverBaseSchema>;
 export type BonusExistingBalanceMode = z.infer<typeof BonusExistingBalanceModeSchema>;
 export type BonusFreeFundsOrder = z.infer<typeof BonusFreeFundsOrderSchema>;
+export type WagerContributionMode = z.infer<typeof WagerContributionModeSchema>;
+export type BonusBetClass = z.infer<typeof BonusBetClassSchema>;
+export type BonusGrantBucket = z.infer<typeof BonusGrantBucketSchema>;
+
+// The reference house edge a `house_edge` profile scores against, as a decimal fraction in
+// (0, 1] in the same shape as a wager's rtp; `numeric(19,18)` in the database.
+export const REFERENCE_EDGE_PRECISION = 19;
+export const REFERENCE_EDGE_SCALE = 18;
+export const ReferenceEdgeSchema = z
+  .string()
+  .refine(isUsableRtp, 'must be a decimal fraction in (0, 1] with at most 18 places');
 
 /** How the rank daily, weekly and monthly bonuses are sized; see `promo.rankPeriodic.basis`. */
 export const RANK_PERIODIC_BASES = ['flat', 'margin'] as const;

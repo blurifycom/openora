@@ -69,7 +69,10 @@ export type WalletDebitOutcome =
       /** Grants a `loss` closing their last open round completed, already converted. */
       completed?: BonusCompletion[];
     }
-  /** `available` is the real balance plus whatever bonus funds could have covered the rest. */
+  /**
+   * `available` is the most this bet could have staked: the real balance plus the bonus funds that
+   * could cover it, less any bucket its bet class may not use (so it can be below the real balance).
+   */
   | { ok: false; available: string };
 
 export type WalletCreditArgs = {

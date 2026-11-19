@@ -5,8 +5,10 @@
  * the other's DB module.
  */
 import type {
+  BonusBetClass,
   BonusExistingBalanceMode,
   BonusFreeFundsOrder,
+  BonusGrantBucket,
   BonusGrantSource,
   BonusGrantStatus,
   BonusRolloverBase,
@@ -28,6 +30,8 @@ export type BonusFundSettings = {
   dustThresholdUsd: string;
   /** Decimal places the bucket split rounds down to; the currency's precision. */
   decimals: number;
+  /** The grant buckets each bet class may draw on. An absent class may draw on all three. */
+  betClassBuckets?: Partial<Record<BonusBetClass, BonusGrantBucket[]>>;
 };
 
 /**
