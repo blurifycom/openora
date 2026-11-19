@@ -320,7 +320,10 @@ export const PlayerGrantSchema = z.object({
   bonusBalance: MoneyAmountSchema,
   wageringRequired: MoneyAmountSchema,
   wageringProgress: MoneyAmountSchema,
-  /** Weighted stakes on rounds still open; added to `wageringProgress` once each round settles. */
+  /**
+   * Weighted stakes on rounds still open, up to what the requirement has left; credited to
+   * `wageringProgress` as those rounds settle. Zero once the grant is no longer active.
+   */
   pendingWagered: MoneyAmountSchema.optional(),
   /** Real cash tied to the bonus (bucket B); part of the real balance, not on top of it. */
   linkedCash: MoneyAmountSchema,
