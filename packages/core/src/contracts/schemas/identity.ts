@@ -116,7 +116,15 @@ const credentialsBase = z.object({
   password: z.string().min(8),
 });
 
+/**
+ * Which surface a sign-in is for. `staff` is the backoffice, `player` the casino. Optional so
+ * existing callers keep working; when set, an account of the other kind is refused after its
+ * credential proves out, so no session is issued for a surface the account does not belong to.
+ */
+export const LoginAudienceSchema = z.enum(['staff', 'player']);
+
 export const LoginInputSchema = credentialsBase.extend({
+  audience: LoginAudienceSchema.optional(),
   rememberMe: z.boolean().optional(),
   timezone: TimezoneSchema.optional(),
 });
