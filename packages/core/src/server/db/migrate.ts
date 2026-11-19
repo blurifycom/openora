@@ -55,6 +55,12 @@ export type RunMigrationsOptions = {
    * migration advisory lock is still held, so concurrent runners never overlap here.
    */
   postSql?: string[];
+  /**
+   * `lock_timeout` set inside each migration file's transaction, eg `'5s'`. A migration that
+   * rewrites a busy table under ACCESS EXCLUSIVE then fails fast instead of queueing every query
+   * on that table behind it. drizzle-kit cannot emit it, so it lives here, not in the SQL file.
+   */
+  lockTimeout?: string;
 };
 
 const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
@@ -224,6 +230,9 @@ export async function applyMigrationsIndividually({
 
 /** Apply one migration set against the admin connection. Idempotent: drizzle skips already-recorded migrations. */
 export async function runMigrations(opts: RunMigrationsOptions) {
+  if (opts.lockTimeout !== undefined && !/^\d+(ms|s|min)$/.test(opts.lockTimeout)) {
+    throw new Error(`Invalid lock timeout: ${opts.lockTimeout}`);
+  }
   const pool = new Pool({ connectionString: migrateUrl(opts.databaseUrl) });
   try {
     for (const ext of opts.extensions ?? []) {
@@ -275,6 +284,9 @@ export async function runMigrations(opts: RunMigrationsOptions) {
               const client = await pool.connect();
               try {
                 await client.query('BEGIN');
+                if (opts.lockTimeout) {
+                  await client.query(`SET LOCAL lock_timeout = '${opts.lockTimeout}'`);
+                }
                 for (const statement of migration.sql) {
                   await client.query(statement);
                 }

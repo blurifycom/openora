@@ -58,6 +58,9 @@ export function migrate(databaseUrl?: string) {
     migrationsTable: '__drizzle_migrations_wallet',
     migrationsSchema: 'drizzle',
     preSql: [REFUSE_TIP_ROWS_SQL],
+    // 0051 rewrites wallet_transaction twice under ACCESS EXCLUSIVE; wait on live traffic for
+    // at most this long, then fail the deploy rather than stall every bet behind the lock.
+    lockTimeout: '5s',
     postSql: [LEDGER_RECORD_SQL, BALANCE_BASELINE_SQL, LEDGER_API_REQUEST_SQL],
     ...(databaseUrl ? { databaseUrl } : {}),
   });

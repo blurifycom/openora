@@ -339,3 +339,9 @@ holds `tip` rows, since ledger rows are immutable: reset a development or test d
 upgrading, and keep a database holding real money on the previous release. Run the migration with
 the previous app version stopped, because the enum rebuild rewrites `wallet_transaction` under an
 exclusive lock.
+
+Migration 0051 rewrites the whole `wallet_transaction` table and its indexes twice (enum to text
+and back), so it takes time and disk in proportion to the ledger's size, and every read and write
+of the table waits for it. Plan a maintenance window on a large ledger. The wallet migrate sets
+`lock_timeout = '5s'` per migration, so a migration that cannot get its lock within 5 seconds fails
+the deploy and rolls back instead of queueing traffic behind it; rerun it once the table is quiet.

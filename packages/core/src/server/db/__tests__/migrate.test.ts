@@ -134,6 +134,27 @@ describe('runMigrations', () => {
     expect(calls).not.toContain(migrations[0]?.sql[0]);
     expect(calls).not.toContain(migrations[1]?.sql[0]);
   });
+
+  it('sets lockTimeout inside each migration transaction', async () => {
+    readMigrationFilesMock.mockReturnValue(migrations);
+
+    await runMigrations({
+      migrationsFolder: '/tmp/migrations',
+      databaseUrl: 'postgres://test',
+      lockTimeout: '5s',
+    });
+
+    const setLock = "SET LOCAL lock_timeout = '5s'";
+    expect(calls.filter((sql) => sql === setLock)).toHaveLength(2);
+    expect(calls.indexOf(setLock)).toBe(calls.indexOf('BEGIN') + 1);
+  });
+
+  it('refuses a malformed lockTimeout before opening the connection', async () => {
+    await expect(
+      runMigrations({ migrationsFolder: '/tmp/migrations', lockTimeout: "5s'; DROP" }),
+    ).rejects.toThrow('Invalid lock timeout');
+    expect(poolInstances).toHaveLength(0);
+  });
 });
 
 const migrations: MigrationMeta[] = [
