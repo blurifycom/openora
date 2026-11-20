@@ -108,6 +108,11 @@ export type BonusSettleArgs = {
   kind: Extract<WalletTransactionType, 'win' | 'bet_reversal'>;
   /** Real balance before this credit; the grant's real-cash counters never exceed it. */
   realBalance: string;
+  /**
+   * The provider marked this the round's last result. Without it a win leaves the round open, and
+   * a reversal closes it only once nothing is left staked on it, so no grant completes mid-round.
+   */
+  final?: boolean;
 };
 
 /**

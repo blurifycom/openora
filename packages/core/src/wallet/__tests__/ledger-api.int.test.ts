@@ -18,6 +18,7 @@ import {
   type GamingCommands,
   type LedgerApiV1,
   type LedgerV1BetArgs,
+  type LedgerV1WinArgs,
   type LedgerV1MoveOutcome,
   type PlayEligibilityPort,
   type PlayEligibilitySnapshot,
@@ -1297,6 +1298,72 @@ describe('round close against a real bonus grant', () => {
 
     expect(await grantStatus(grantId)).toBe('completed');
     expect(moneyEquals(await balanceOf(walletId), '50')).toBe(true);
+    expect(completedFor(grantId)).toHaveLength(1);
+  });
+
+  const winOn = (bet: LedgerV1BetArgs, amount: string, isFinal?: boolean): LedgerV1WinArgs => ({
+    providerName: PROVIDER,
+    providerRefId: `tx-${randomUUID()}`,
+    userId: bet.userId,
+    gameId: bet.gameId,
+    externalRoundId: bet.externalRoundId,
+    currency: 'USD',
+    amount,
+    ...(isFinal ? { isFinal } : {}),
+  });
+
+  it('keeps the grant active through a non-final win and completes it on the final result', async () => {
+    const ledger = bonusApi();
+    const { walletId, grantId, betArgs } = await grantedPlayer();
+    const bet = betArgs({ amount: '50' });
+    expect(await ledger.bet(bet)).toMatchObject({ status: 'applied' });
+
+    expect(await ledger.win(winOn(bet, '20'))).toMatchObject({ status: 'applied' });
+
+    expect(await grantStatus(grantId)).toBe('active');
+    expect(moneyEquals(await balanceOf(walletId), '0')).toBe(true);
+    expect(completedFor(grantId)).toHaveLength(0);
+
+    expect(await ledger.win(winOn(bet, '0', true))).toMatchObject({ status: 'applied' });
+
+    // 100 - 50 staked + 20 won back onto the bonus, converted once the round is over.
+    expect(await grantStatus(grantId)).toBe('completed');
+    expect(moneyEquals(await balanceOf(walletId), '70')).toBe(true);
+    expect(completedFor(grantId)).toHaveLength(1);
+  });
+
+  it('keeps the grant active through a partial reversal until the rest of the round settles', async () => {
+    const ledger = bonusApi();
+    const { walletId, grantId, betArgs } = await grantedPlayer();
+    // The first round meets the requirement and ends while the second is still open.
+    const met = betArgs({ amount: '50' });
+    const externalRoundId = `round-${randomUUID()}`;
+    const kept = betArgs({ amount: '10', externalRoundId });
+    const reversed = betArgs({ amount: '10', externalRoundId });
+    for (const bet of [met, kept, reversed]) {
+      expect(await ledger.bet(bet)).toMatchObject({ status: 'applied' });
+    }
+    expect(await ledger.win(winOn(met, '0', true))).toMatchObject({ status: 'applied' });
+    expect(await grantStatus(grantId)).toBe('active');
+
+    expect(
+      await ledger.reverse({
+        providerName: PROVIDER,
+        providerRefId: `rb-${randomUUID()}`,
+        userId: reversed.userId,
+        gameId: reversed.gameId,
+        targetRefId: reversed.providerRefId,
+      }),
+    ).toMatchObject({ status: 'applied' });
+
+    expect(await grantStatus(grantId)).toBe('active');
+    expect(completedFor(grantId)).toHaveLength(0);
+
+    expect(await ledger.win(winOn(kept, '0', true))).toMatchObject({ status: 'applied' });
+
+    // 100 - 50 - 10 - 10 staked + 10 reversed back onto the bonus.
+    expect(await grantStatus(grantId)).toBe('completed');
+    expect(moneyEquals(await balanceOf(walletId), '40')).toBe(true);
     expect(completedFor(grantId)).toHaveLength(1);
   });
 

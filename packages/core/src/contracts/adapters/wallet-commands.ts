@@ -110,6 +110,8 @@ export type WalletCreditArgs = {
    * that still holds that much unreversed stake.
    */
   reversesTransactionId?: string;
+  /** A `win` or `bet_reversal` the provider marked as its round's last result. */
+  closesRound?: boolean;
 };
 
 /**

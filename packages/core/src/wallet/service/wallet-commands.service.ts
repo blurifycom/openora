@@ -602,6 +602,7 @@ export class WalletCommandsService implements WalletCommands {
       providerRef,
       terms,
       reversesTransactionId,
+      closesRound,
     }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     if (type === 'win_reversal') {
@@ -745,6 +746,7 @@ export class WalletCommandsService implements WalletCommands {
                 externalRoundId: providerRef.externalRoundId,
                 kind: type,
                 realBalance,
+                ...(closesRound ? { final: true } : {}),
               })
             : { realShare: amount, completed: [] };
 

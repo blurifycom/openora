@@ -615,6 +615,7 @@ describe('the terms a grant was created under', () => {
       amount: '500',
       currency: 'USD',
       type: 'win',
+      closesRound: true,
       providerRef: {
         providerName: 'aggregator',
         providerRefId: `win-${round}`,

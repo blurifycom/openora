@@ -795,6 +795,7 @@ export class GamingService {
           currency: round.currency,
           type: 'win',
           allowNewCurrency: true,
+          closesRound: true,
           providerRef: {
             providerName: INTERNAL_ROUND_PROVIDER,
             providerRefId: `win:${roundId}`,

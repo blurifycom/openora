@@ -432,6 +432,9 @@ export class WageringService implements BonusWageringCommands {
     const realShareOut = moneySubtract(moneySubtract(applyAmount, settled), forfeited);
     const realShare = isPositive(realShareOut) ? realShareOut : ZERO;
 
+    if (!args.final && !(reversal && moneyCompare(applyAmount, totalStake) >= 0)) {
+      return { bonusShare: settled, realShare, completed: [] };
+    }
     const grantIds = await this.settleRound(tx, args);
     const completed = await this.resolveAll(tx, grantIds, moneyAdd(args.realBalance, realShare));
     return { bonusShare: settled, realShare, completed };

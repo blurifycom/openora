@@ -378,6 +378,7 @@ export class LedgerApiService implements LedgerApiV1 {
           type: 'win',
           allowNewCurrency: true,
           providerRef,
+          ...(args.isFinal ? { closesRound: true } : {}),
         });
         const moved = this.assertCredited(credit, round.roundId, currency);
         await this.emitMove(tx, userId, playerId, {

@@ -37,8 +37,10 @@ the round's stakes paid, each share truncated. The rounding residue goes to the 
 bucket that paid (C, then B), so rounding never moves bonus money somewhere freer.
 
 **Completion and depletion wait for open bets.** A grant whose progress reaches the requirement
-completes only when it has no open round. A lost round settles through a new `closeRound` port
-method, which the wallet calls on a `loss` debit. On completion, C converts to real money, B is
+completes only when it has no open round. A round ends only on the provider's final result: a
+win or reversal the caller marks final (`closesRound`), a reversal that leaves nothing staked on
+the round, or a lost round through a new `closeRound` port method. A non-final win or a partial
+reversal pays back to the buckets and leaves the round open. On completion, C converts to real money, B is
 released, and the counters reset. A grant whose A + B + C is below the dust threshold and has
 no open round becomes `depleted`, with an audit record.
 
