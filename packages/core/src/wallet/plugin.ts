@@ -6,6 +6,7 @@ import {
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
   BONUS_DEPOSITS,
+  BONUS_FUND_LOCKS,
   BONUS_LIFECYCLE,
   BONUS_WAGERING,
   IDENTITY_READER,
@@ -68,6 +69,7 @@ import {
   WalletService,
   WithdrawalNotFoundError,
   WithdrawalNotPendingError,
+  requireBonusFundLocks,
 } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import { LedgerApiService } from './service/ledger-api.service.js';
@@ -141,6 +143,11 @@ export default {
     {
       port: RG_LIMITS_SOURCE,
       without: 'reconciliation never compares the limits projection with compliance',
+    },
+    {
+      port: BONUS_FUND_LOCKS,
+      without:
+        "no bonus locks real money and a withdrawal forfeits only through BONUS_LIFECYCLE; 'block' mode fails the boot",
     },
   ],
   register(ctx) {
@@ -327,6 +334,12 @@ export default {
         platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
       }));
 
+    const bonusFundLocks = (c: TypedContainer<CoreTokenCatalog>) =>
+      requireBonusFundLocks(
+        c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+        c.has(BONUS_FUND_LOCKS) ? c.get(BONUS_FUND_LOCKS) : undefined,
+      );
+
     // One instance backs the router and the agent tools; either factory may build it first.
     let walletSvc: WalletService | null = null;
     const walletService = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -352,6 +365,7 @@ export default {
           : undefined,
         playEligibility: c.get(PLAY_ELIGIBILITY),
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
+        bonusFundLocks: bonusFundLocks(c),
         bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
         depositBonus: c.has(BONUS_DEPOSITS) ? c.get(BONUS_DEPOSITS) : undefined,
       }));
@@ -524,6 +538,7 @@ export default {
           rgLimits: c.get(RG_LIMITS),
           bonusWagering: c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
+          bonusFundLocks: bonusFundLocks(c),
           identityReader: c.get(IDENTITY_READER),
         }),
     );
@@ -644,6 +659,7 @@ export default {
             audit: c.get(AUDIT_WRITER),
             platformConfig,
             limiter: c.get(RATE_LIMITER),
+            bonusFundLocks: bonusFundLocks(c),
           })
         : undefined;
       // A webhook needs BOTH: an adapter that parses the vendor's format and that same

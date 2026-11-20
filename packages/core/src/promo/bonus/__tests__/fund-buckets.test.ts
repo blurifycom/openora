@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { BONUS_GRANT_SOURCES, type BonusGrantSource } from '@openora/core/contracts';
 import { moneyCompare } from '@openora/core/server';
 import {
   clampCounters,
   depositBuckets,
+  grantLocks,
   isDepleted,
+  lockedFundsOf,
+  splitLocked,
   splitReturn,
   splitStake,
   sumSplit,
@@ -156,5 +160,82 @@ describe('depletion', () => {
   it('depletes only at exactly zero without a threshold', () => {
     expect(isDepleted('0', '0')).toBe(true);
     expect(isDepleted('0.000000000000000001', '0')).toBe(false);
+  });
+});
+
+describe('splitLocked', () => {
+  const grant = (unlinked: string, linked: string) => ({ unlinked, linked });
+
+  it('locks A and B of every grant and frees the rest', () => {
+    const r = splitLocked('150', [grant('100', '0'), grant('0', '20')]);
+    expect(eq(r.locked, '120')).toBe(true);
+    expect(eq(r.free, '30')).toBe(true);
+  });
+
+  it('frees everything with no grants', () => {
+    const r = splitLocked('42.5', []);
+    expect(eq(r.locked, '0')).toBe(true);
+    expect(eq(r.free, '42.5')).toBe(true);
+  });
+
+  it('never locks more than the real balance holds', () => {
+    const r = splitLocked('50', [grant('40', '30')]);
+    expect(eq(r.locked, '50')).toBe(true);
+    expect(eq(r.free, '0')).toBe(true);
+  });
+
+  it('locks nothing on an empty balance', () => {
+    const r = splitLocked('0', [grant('10', '10')]);
+    expect(eq(r.locked, '0')).toBe(true);
+    expect(eq(r.free, '0')).toBe(true);
+  });
+
+  it('keeps 18-decimal precision', () => {
+    const r = splitLocked('1', [grant('0.000000000000000001', '0')]);
+    expect(eq(r.free, '0.999999999999999999')).toBe(true);
+  });
+});
+
+describe('grantLocks', () => {
+  it('locks a deposit grant by default and nothing else', () => {
+    expect(grantLocks('deposit', {})).toBe(true);
+    for (const source of BONUS_GRANT_SOURCES.filter((s) => s !== 'deposit')) {
+      expect(grantLocks(source, {}), source).toBe(false);
+    }
+  });
+
+  it('follows the terms when they say', () => {
+    expect(grantLocks('deposit', { funds: { lockWithdrawals: false } })).toBe(false);
+    expect(grantLocks('manual', { funds: { lockWithdrawals: true } })).toBe(true);
+  });
+});
+
+describe('lockedFundsOf', () => {
+  const held = (source: BonusGrantSource, unlinked: string, linked: string, lock?: boolean) => ({
+    source,
+    terms: lock === undefined ? {} : { funds: { lockWithdrawals: lock } },
+    unlinked,
+    linked,
+  });
+
+  it('sums A and B over the deposit grants only', () => {
+    const r = lockedFundsOf('200', [held('deposit', '30', '50'), held('rank', '40', '40')]);
+    expect(eq(r.locked, '80')).toBe(true);
+    expect(eq(r.free, '120')).toBe(true);
+  });
+
+  it('counts any grant whose terms lock and skips a deposit grant whose terms do not', () => {
+    const r = lockedFundsOf('200', [
+      held('manual', '10', '20', true),
+      held('deposit', '50', '50', false),
+    ]);
+    expect(eq(r.locked, '30')).toBe(true);
+    expect(eq(r.free, '170')).toBe(true);
+  });
+
+  it('caps the sum over several grants at the balance', () => {
+    const r = lockedFundsOf('60', [held('deposit', '40', '40'), held('deposit', '0', '30')]);
+    expect(eq(r.locked, '60')).toBe(true);
+    expect(eq(r.free, '0')).toBe(true);
   });
 });

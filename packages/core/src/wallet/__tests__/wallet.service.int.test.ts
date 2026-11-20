@@ -6,11 +6,13 @@ import {
   DEFAULT_PAYMENT_PROVIDER,
   PaymentRejectedError,
   type AdminUserDirectory,
+  type BonusFundLockCommands,
   type ExchangeRateReader,
   type PaymentAdapter,
   type AdminPlayerSummary,
   type PlayEligibilityPort,
   type PlayerTags,
+  type ReadLockedFundsArgs,
   type TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/testing';
@@ -475,6 +477,34 @@ describe('WalletService.getBalances / setActiveCurrency (real PG)', () => {
     expect(await svc.getBalance(userId)).toEqual({ balance: '0', currency: 'USD' });
   });
 
+  it('adds what the bound fund locks report for each balance to both reads', async () => {
+    const locks = mock<BonusFundLockCommands>({
+      readLockedFunds: vi.fn(async (_db: unknown, { balances }: ReadLockedFundsArgs) =>
+        balances.map(({ currency }) =>
+          currency === 'USD' ? { locked: '70', free: '30' } : { locked: '0', free: '10' },
+        ),
+      ),
+    });
+    const { svc } = makeService({ bonusFundLocks: locks });
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect((await svc.getBalances(w.userId)).balances).toEqual([
+      { currency: 'EUR', balance: '10.000000000000000000', locked: '0', free: '10' },
+      { currency: 'USD', balance: '100.000000000000000000', locked: '70', free: '30' },
+    ]);
+    expect(await svc.getBalance(w.userId)).toEqual({
+      currency: 'USD',
+      balance: '100.000000000000000000',
+      locked: '70',
+      free: '30',
+    });
+    expect(locks.readLockedFunds).toHaveBeenCalledWith(expect.anything(), {
+      userId: w.userId,
+      balances: [{ currency: 'USD', realBalance: '100.000000000000000000' }],
+    });
+  });
+
   it('switches the active currency so getBalance reads the new one', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ balance: '100', currency: 'USD' });
@@ -758,6 +788,46 @@ describe('WalletService.withdraw (real PG)', () => {
     expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(1);
     expect(await balanceOf(w.userId)).toBe(40);
     expect(await txRows(w.id)).toHaveLength(1);
+  });
+
+  it('forfeits through the bonus lifecycle port when nothing binds the fund locks', async () => {
+    const forfeitHeld = vi.fn(async () => []);
+    const { svc } = makeService({ bonusLifecycle: { forfeitHeld, forfeit: vi.fn() } });
+    const w = await seedWallet({ balance: '100' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(forfeitHeld).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: w.userId,
+        reason: 'withdrawal_while_active',
+        note: `withdrawal ${result.transactionId}`,
+      }),
+    );
+  });
+
+  it('leaves forfeiting to the fund locks when they are bound', async () => {
+    const forfeitHeld = vi.fn(async () => []);
+    const onOutflow = vi.fn(async () => undefined);
+    const { svc } = makeService({
+      bonusLifecycle: { forfeitHeld, forfeit: vi.fn() },
+      bonusFundLocks: { onOutflow, lockedFunds: vi.fn(), readLockedFunds: vi.fn() },
+    });
+    const w = await seedWallet({ balance: '100' });
+
+    await svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META });
+
+    expect(onOutflow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: w.userId, outflow: 'withdrawal', amount: '40' }),
+    );
+    expect(forfeitHeld).not.toHaveBeenCalled();
   });
 });
 

@@ -144,6 +144,8 @@ export const BonusFundSettingsSchema = z.object({
   dustThresholdUsd: MoneyAmountSchema.default('0.01'),
   /** The currency's precision; the bucket split rounds down to it. */
   decimals: z.number().int().min(0).max(18).default(18),
+  /** Ties A and B to the grant's currency against outflows. Absent: only a deposit grant locks. */
+  lockWithdrawals: z.boolean().optional(),
 });
 
 export const BonusGrantTermsSchema = z.object({
@@ -314,6 +316,25 @@ export const AdminGrantSchema = PlayerGrantSchema.extend({
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;
 
 /**
+ * A player's balance in one currency with what live locking bonuses hold back: `locked` blocks
+ * a swap or transfer always, and a withdrawal only in `block` mode. `free` is the balance minus
+ * it, never below 0. Read from one snapshot without row locks.
+ */
+export const AdminPlayerFundsSchema = z.object({
+  activeCurrency: CurrencyTickerSchema,
+  balances: z.array(
+    z.object({
+      currency: CurrencyTickerSchema,
+      balance: MoneyAmountSchema,
+      locked: MoneyAmountSchema,
+      free: MoneyAmountSchema,
+    }),
+  ),
+});
+
+export type AdminPlayerFunds = z.infer<typeof AdminPlayerFundsSchema>;
+
+/**
  * A hand-issued forfeiture is always recorded as `admin`; the reason is not the caller's to pick.
  * The vocabulary also carries `self_exclusion`, `account_closed` and the two the product has not
  * scheduled, and an admin able to file their own action as a responsible-gambling one puts a
@@ -419,6 +440,13 @@ export const bonusContract = {
   },
 
   admin: {
+    players: {
+      funds: oc
+        .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/funds' })
+        .input(z.object({ userId: UuidSchema }))
+        .output(AdminPlayerFundsSchema),
+    },
+
     grants: {
       list: oc
         .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/grants' })

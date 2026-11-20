@@ -3,6 +3,8 @@
 **Date**: 2026-10-15
 **Status**: Accepted
 
+> **Update (2026-11-17)**: A custom `WALLET_COMMANDS` binding may also implement the optional `movableFunds`, which reports a player's real and bonus-locked money in one currency ([ADR-0064](./0064-bonus-withdrawal-locks.md)).
+
 ## Context
 
 An operator wants sports betting from a turnkey provider that owns odds, bet acceptance and

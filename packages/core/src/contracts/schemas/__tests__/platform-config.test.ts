@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_LOCKED_FUNDS_MESSAGE,
+  PromoConfigSchema,
   definePlatformConfig,
   resolveMinPlayerAge,
   resolveWalletDefaultCurrency,
@@ -131,5 +133,27 @@ describe('wallet.reconciliation.batchSize', () => {
       definePlatformConfig({ wallet: { reconciliation: { batchSize: 5000 } } }).wallet
         ?.reconciliation?.batchSize,
     ).toBe(5000);
+  });
+});
+
+describe('promo.bonus', () => {
+  it('forfeits by default and refuses with a generic message', () => {
+    const { bonus } = PromoConfigSchema.parse({});
+    expect(bonus.withdrawalWhileActive).toBe('forfeit');
+    expect(bonus.lockedFundsMessage).toBe(DEFAULT_LOCKED_FUNDS_MESSAGE);
+  });
+
+  it('takes the operator message and mode', () => {
+    const { bonus } = PromoConfigSchema.parse({
+      bonus: { withdrawalWhileActive: 'block', lockedFundsMessage: 'Finish your bonus first' },
+    });
+    expect(bonus).toMatchObject({
+      withdrawalWhileActive: 'block',
+      lockedFundsMessage: 'Finish your bonus first',
+    });
+  });
+
+  it('rejects an unknown mode', () => {
+    expect(() => PromoConfigSchema.parse({ bonus: { withdrawalWhileActive: 'hold' } })).toThrow();
   });
 });
