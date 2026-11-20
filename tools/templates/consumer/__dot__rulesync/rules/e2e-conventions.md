@@ -18,6 +18,14 @@ Two kinds of spec live here:
 - **Browser specs** (`tests/<app>/**`) - a player or admin journey through the UI.
 - **API specs** (`tests/api/**`) - the `api` Playwright project: no browser, no `page`. Drives the real API over HTTP against real Postgres, with each external vendor replaced by a stub HTTP server the API is pointed at by env. This is the tier that proves an overlay end to end: request -> route -> service -> rows -> webhook -> resulting state. `USE_MOCKS` does not apply here at all.
 
+## Which kind a check belongs to
+
+A browser test costs several times an API test, so each check goes to the cheapest kind that still sees it:
+
+- **Browser spec** - what a player or admin sees: the balance updating live after a money action, a saved option still there after a reload, the journey itself. One happy path plus the refusal the user must see.
+- **API spec** - rule matrices: every status, limit, ledger row, audit row, and refusal reason. A browser spec never loops over these.
+- **Desktop and mobile** - a behaviour the two layouts render with the same components is tested once, on mobile. Test both only where the layouts use different components.
+
 ## Real stack by default
 
 Every spec runs against the real seeded stack - API, Postgres, and the apps under test - and that
