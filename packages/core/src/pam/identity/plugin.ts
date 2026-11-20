@@ -199,7 +199,15 @@ export default {
   id: 'identity',
   dependsOn: ['audit'],
   requiresPorts: [MAIL_DISPATCH],
-  optionalPorts: [{ port: PLAYER_PROVISIONING, without: 'registration is refused' }],
+  optionalPorts: [
+    { port: PLAYER_PROVISIONING, without: 'registration is refused' },
+    // Wallet binds it wherever it loads, so a service that stakes always projects in the same
+    // transaction. A split without wallet (chat, back office) leaves it to the outbox event.
+    {
+      port: PLAY_ELIGIBILITY_PROJECTION,
+      without: 'a restriction reaches the ledger only when its outbox event is delivered',
+    },
+  ],
   controlPorts: [
     {
       port: GEO_CHECK_COMMANDS,
@@ -210,14 +218,6 @@ export default {
       port: MCP_TOKEN_REVOCATION,
       without: "ending an admin's sessions leaves their MCP tokens valid",
       boundBy: 'iam',
-    },
-    {
-      // Fail closed: wallet refuses a user it has no row for, so a split that loads wallet but
-      // leaves this unbound would turn every write into an outbox-lag window. Without wallet in
-      // the plugin list nothing is staked, and the outbox event alone carries it.
-      port: PLAY_ELIGIBILITY_PROJECTION,
-      without: 'a restriction reaches the ledger only when its outbox event is delivered',
-      boundBy: 'wallet',
     },
   ],
   register(ctx) {
