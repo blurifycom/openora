@@ -108,7 +108,7 @@ beforeEach(async () => {
 });
 
 describe('a deposit applied to a claim', () => {
-  it('banks a deposit short of the minimum', async () => {
+  it('counts a deposit short of the minimum toward nothing', async () => {
     const userId = randomUUID();
     const offer = await seedOffer({ minDeposit: '100' });
     await claim(userId, offer.id);
@@ -117,26 +117,11 @@ describe('a deposit applied to a claim', () => {
     await apply(userId, '60', randomUUID());
 
     const [optIn] = await optInsOf(userId);
-    expect(optIn?.accumulatedDeposit).toBe('60.000000000000000000');
+    expect(optIn?.accumulatedDeposit).toBe('0.000000000000000000');
     expect(await grantsOf(userId)).toHaveLength(0);
   });
 
-  it('counts the same deposit once, however many times the job runs', async () => {
-    const userId = randomUUID();
-    const offer = await seedOffer({ minDeposit: '100' });
-    await claim(userId, offer.id);
-    const transactionId = randomUUID();
-    lifetimeDeposit = '60';
-
-    await apply(userId, '60', transactionId);
-    await apply(userId, '60', transactionId);
-
-    const [optIn] = await optInsOf(userId);
-    expect(optIn?.accumulatedDeposit).toBe('60.000000000000000000');
-    expect(await grantsOf(userId)).toHaveLength(0);
-  });
-
-  it('grants once the banked deposits clear the minimum', async () => {
+  it('grants nothing on two deposits that only clear the minimum together', async () => {
     const userId = randomUUID();
     const offer = await seedOffer({ minDeposit: '100', matchPercent: '50' });
     await claim(userId, offer.id);
@@ -146,9 +131,24 @@ describe('a deposit applied to a claim', () => {
 
     await apply(userId, '60', randomUUID());
 
+    expect(await grantsOf(userId)).toHaveLength(0);
+  });
+
+  it('grants once on a deposit that clears the minimum, however many times the job runs', async () => {
+    const userId = randomUUID();
+    const offer = await seedOffer({ minDeposit: '100', matchPercent: '50' });
+    await claim(userId, offer.id);
+    const transactionId = randomUUID();
+    lifetimeDeposit = '120';
+
+    await apply(userId, '120', transactionId);
+    await apply(userId, '120', transactionId);
+
     const grants = await grantsOf(userId);
     expect(grants).toHaveLength(1);
     expect(grants[0]?.grantedAmount).toBe('60.000000000000000000');
+    const [optIn] = await optInsOf(userId);
+    expect(optIn?.accumulatedDeposit).toBe('120.000000000000000000');
   });
 
   it('banks nothing while the offer is paused, so re-activating pays no back-match', async () => {
@@ -335,9 +335,6 @@ describe('a deposit applied to a claim', () => {
     await apply(userId, '50', randomUUID());
 
     expect(await grantsOf(userId)).toHaveLength(0);
-    // Still banked, so the deposit is not lost if the restriction lifts in time.
-    const [optIn] = await optInsOf(userId);
-    expect(optIn?.accumulatedDeposit).toBe('50.000000000000000000');
   });
 
   it('closes the race: a delayed deposit job running after self-exclusion grants nothing', async () => {
@@ -355,9 +352,6 @@ describe('a deposit applied to a claim', () => {
     await apply(userId, '100', randomUUID());
 
     expect(await grantsOf(userId)).toHaveLength(0);
-    // The deposit still fully banked: only the grant step was withheld.
-    const [optIn] = await optInsOf(userId);
-    expect(optIn?.accumulatedDeposit).toBe('100.000000000000000000');
   });
 });
 

@@ -12,7 +12,13 @@ import type {
 } from '@openora/core/contracts';
 import { makeAuditWriter, makeEventBus, mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { promoGrant, promoGrantEntry, promoWeight, promoWeightProfile } from '../schema/index.js';
+import {
+  promoGrant,
+  promoGrantEntry,
+  promoGrantRound,
+  promoWeight,
+  promoWeightProfile,
+} from '../schema/index.js';
 import {
   GrantActivationRestrictedError,
   GrantLifecycleService,
@@ -134,6 +140,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await wipeLedger();
+  await db.drizzle.db.delete(promoGrantRound);
   await db.drizzle.db.delete(promoGrant);
   await db.drizzle.db.delete(promoWeight);
   await db.drizzle.db.delete(promoWeightProfile);
@@ -335,18 +342,33 @@ describe('activating a pending grant', () => {
 });
 
 describe('wagering across several active grants', () => {
-  const bet = (userId: string, stake: string, fromBonus = '0', product: WagerProduct = 'casino') =>
-    db.drizzle.db.transaction((tx) =>
-      new WageringService().wager(tx, {
+  // `realAvailable` is the player's real balance; whatever it cannot cover comes from bonus funds.
+  const bet = async (
+    userId: string,
+    stake: string,
+    realAvailable = stake,
+    product: WagerProduct = 'casino',
+  ) => {
+    const round = { providerName: 'aggregator', externalRoundId: randomUUID() };
+    const wagering = new WageringService(audit);
+    const outcome = await db.drizzle.db.transaction((tx) =>
+      wagering.wager(tx, {
         userId,
         currency: 'USD',
         stake,
-        fromBonus,
+        realAvailable,
         context: { provider: 'aggregator', product },
-        providerName: 'aggregator',
-        externalRoundId: randomUUID(),
+        ...round,
       }),
     );
+    // A grant completes when the round settles: here as a loss.
+    const closed = outcome.ok
+      ? await db.drizzle.db.transaction((tx) =>
+          wagering.closeRound(tx, { userId, currency: 'USD', realBalance: '0', ...round }),
+        )
+      : { completed: [] };
+    return { outcome, completed: closed.completed };
+  };
 
   it('fills rollovers earliest expiry first, carrying the remainder weighted by the next grant', async () => {
     const userId = randomUUID();
@@ -355,7 +377,7 @@ describe('wagering across several active grants', () => {
     const first = await grantIdOf({ userId, expiryDays: 10 });
     const middle = await grantIdOf({ userId, expiryDays: 20, percent: '50' });
 
-    const outcome = await bet(userId, '100');
+    const { outcome, completed } = await bet(userId, '100');
 
     expect(outcome).toMatchObject({ ok: true, grantId: first, bonusSpent: '0' });
     // 30 fills the first; 60 at 50% fills the middle; 10 is left for the last.
@@ -365,9 +387,9 @@ describe('wagering across several active grants', () => {
     expect((await rowOf(first)).status).toBe('completed');
     expect((await rowOf(middle)).status).toBe('completed');
     expect((await rowOf(last)).status).toBe('active');
-    expect(outcome.ok && outcome.completed.map((c) => c.grantId)).toEqual([first, middle]);
-    expect(outcome.ok && outcome.completed.map((c) => Number(c.convertedAmount))).toEqual([10, 10]);
-    expect(outcome.ok && Number(outcome.bonusBalanceAfter)).toBe(10);
+    expect(completed.map((c) => c.grantId).sort()).toEqual([first, middle].sort());
+    expect(completed.map((c) => Number(c.convertedAmount))).toEqual([10, 10]);
+    expect(outcome.ok && Number(outcome.bonusBalanceAfter)).toBe(30);
     // Each part at its own grant's weight: 30 + 60 x 50% + 10.
     expect(outcome.ok && Number(outcome.weightedAmount)).toBe(70);
 
@@ -383,7 +405,7 @@ describe('wagering across several active grants', () => {
     await grantIdOf({ userId, expiryDays: 10, percent: '50', multiplier: '1' });
     const second = await grantIdOf({ userId, expiryDays: 20 });
 
-    const outcome = await bet(userId, '40');
+    const { outcome } = await bet(userId, '40');
 
     // 20 at 50% fills the first; the other 20 counts in full on the second.
     expect(outcome.ok && Number(outcome.weightedAmount)).toBe(30);
@@ -407,7 +429,7 @@ describe('wagering across several active grants', () => {
     const excluded = await grantIdOf({ userId, expiryDays: 10, excludedProducts: ['casino'] });
     const funding = await grantIdOf({ userId, expiryDays: 20 });
 
-    const outcome = await bet(userId, '6', '6');
+    const { outcome } = await bet(userId, '6', '0');
 
     expect(outcome).toMatchObject({ ok: true, bonusSpent: '6' });
     expect(await rowOf(excluded)).toMatchObject({
@@ -424,9 +446,9 @@ describe('wagering across several active grants', () => {
     const a = await grantIdOf({ userId, expiryDays: 10 });
     const b = await grantIdOf({ userId, expiryDays: 20 });
 
-    const outcome = await bet(userId, '15', '15');
+    const { outcome } = await bet(userId, '15', '0');
 
-    expect(outcome).toMatchObject({ ok: true, bonusSpent: '15' });
+    expect(outcome.ok && Number(outcome.bonusSpent)).toBe(15);
     expect(Number((await rowOf(a)).bonusBalance)).toBe(0);
     expect(Number((await rowOf(a)).wageringProgress)).toBe(10);
     expect(Number((await rowOf(b)).bonusBalance)).toBe(5);
@@ -438,7 +460,7 @@ describe('wagering across several active grants', () => {
     await grantIdOf({ userId, expiryDays: 10 });
     await grantIdOf({ userId, expiryDays: 20, excludedProducts: ['casino'] });
 
-    const outcome = await bet(userId, '15', '15');
+    const { outcome } = await bet(userId, '15', '0');
 
     expect(outcome).toMatchObject({ ok: false, reason: 'insufficient_bonus' });
     expect(
@@ -451,7 +473,7 @@ describe('wagering across several active grants', () => {
     await grantIdOf({ userId, expiryDays: 10, maxBet: '50' });
     await grantIdOf({ userId, expiryDays: 20, maxBet: '5' });
 
-    const outcome = await bet(userId, '10');
+    const { outcome } = await bet(userId, '10');
 
     expect(outcome).toMatchObject({ ok: false, reason: 'max_bet_exceeded', maxBet: '5' });
   });
@@ -475,20 +497,27 @@ describe('wagering across several active grants', () => {
     const a = await grantIdOf({ userId, expiryDays: 10, amount: '100', multiplier: '10' });
     const b = await grantIdOf({ userId, expiryDays: 20, amount: '100', multiplier: '10' });
     const round = { providerName: 'aggregator', externalRoundId: randomUUID() };
-    const wagering = new WageringService();
+    const wagering = new WageringService(audit);
     await db.drizzle.db.transaction((tx) =>
       wagering.wager(tx, {
         userId,
         currency: 'USD',
         stake: '150',
-        fromBonus: '150',
+        realAvailable: '0',
         context: { provider: 'aggregator', product: 'casino' },
         ...round,
       }),
     );
 
     const settled = await db.drizzle.db.transaction((tx) =>
-      wagering.settle(tx, { userId, currency: 'USD', amount: '300', kind: 'win', ...round }),
+      wagering.settle(tx, {
+        userId,
+        currency: 'USD',
+        amount: '300',
+        kind: 'win',
+        realBalance: '0',
+        ...round,
+      }),
     );
 
     expect(Number(settled.bonusShare)).toBe(300);

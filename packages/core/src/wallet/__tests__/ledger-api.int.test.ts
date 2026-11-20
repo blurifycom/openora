@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import {
   AUDIT_WRITER,
+  BONUS_GRANTS,
   BONUS_WAGERING,
   GAMING_COMMANDS,
   GamingInvalidRtpError,
@@ -36,6 +37,9 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { game, gameProvider, gameRound } from '@openora/core/casino/schema/gaming';
 import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import gamingPlugin from '@openora/core/casino/plugins/gaming';
+import { migrate as migrateBonus } from '@openora/core/promo/migrate/bonus';
+import { promoGrant, promoWeight, promoWeightProfile } from '@openora/core/promo/schema/bonus';
+import bonusPlugin from '@openora/core/promo/plugins/bonus';
 import { mock, makeAuditWriter, makeEventBus, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { ledgerApiRequest, wallet, walletBalance, walletTransaction } from '../schema/index.js';
@@ -71,7 +75,7 @@ function boot(register: (container: Container<CoreTokenCatalog>) => void = () =>
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateGaming]);
+  db = await createTestDb([migrate, migrateGaming, migrateBonus]);
   const container = boot();
   api = container.get(LEDGER_API_V1);
   walletCommands = container.get(WALLET_COMMANDS);
@@ -1204,5 +1208,125 @@ describe('Round wager snapshot (real PG)', () => {
 
     expect(projected('0.960000000000000000')).toBe(true);
     expect(projected('96')).toBe(false);
+  });
+});
+
+describe('round close against a real bonus grant', () => {
+  const bonus = (() => {
+    const container = new Container<CoreTokenCatalog>();
+    container.register(AUDIT_WRITER, () => makeAuditWriter());
+    const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
+    registry.setOwner('bonus');
+    bonusPlugin.register(registry);
+    return container;
+  })();
+  const bonusApi = () =>
+    boot((c) => c.register(BONUS_WAGERING, () => bonus.get(BONUS_WAGERING))).get(LEDGER_API_V1);
+
+  /** A 100 bonus whose 50 requirement a 50 stake meets, on a player with no real money. */
+  async function grantedPlayer() {
+    const player = await setup('0');
+    const profile = findOneOrThrow(
+      await db.drizzle.db
+        .insert(promoWeightProfile)
+        .values({ name: `profile-${randomUUID()}` })
+        .returning(),
+      new Error('weight profile: no row'),
+    );
+    await db.drizzle.db.insert(promoWeight).values({
+      profileId: profile.id,
+      scope: 'default',
+      scopeRef: null,
+      contributionPercent: '100',
+    });
+    const granted = await db.drizzle.db.transaction((tx) =>
+      bonus.get(BONUS_GRANTS).grant(tx, {
+        userId: player.userId,
+        currency: 'USD',
+        amount: '100',
+        source: 'deposit',
+        sourceRef: randomUUID(),
+        actor: { type: 'system' },
+        terms: { wageringMultiplier: '0.5', expiryDays: 30, weightProfileId: profile.id },
+      }),
+    );
+    if (!granted.ok) {
+      throw new Error('grant was refused');
+    }
+    return { ...player, grantId: granted.grantId };
+  }
+
+  async function grantStatus(grantId: string) {
+    const row = findOneOrThrow(
+      await db.drizzle.db
+        .select({ status: promoGrant.status })
+        .from(promoGrant)
+        .where(eq(promoGrant.id, grantId)),
+      new Error('grant missing'),
+    );
+    return row.status;
+  }
+
+  function completedFor(grantId: string) {
+    return events.emitInTransaction.mock.calls.filter(
+      ([, name, payload]) =>
+        name === 'promo.bonus.completed' && (payload as { grantId: string }).grantId === grantId,
+    );
+  }
+
+  it('completes the grant on a final zero win', async () => {
+    const ledger = bonusApi();
+    const { walletId, grantId, betArgs } = await grantedPlayer();
+    const bet = betArgs({ amount: '50' });
+
+    expect(await ledger.bet(bet)).toMatchObject({ status: 'applied' });
+    expect(await grantStatus(grantId)).toBe('active');
+
+    expect(
+      await ledger.win({
+        providerName: PROVIDER,
+        providerRefId: `tx-${randomUUID()}`,
+        userId: bet.userId,
+        gameId: bet.gameId,
+        externalRoundId: bet.externalRoundId,
+        currency: 'USD',
+        amount: '0',
+        isFinal: true,
+      }),
+    ).toMatchObject({ status: 'applied' });
+
+    expect(await grantStatus(grantId)).toBe('completed');
+    expect(moneyEquals(await balanceOf(walletId), '50')).toBe(true);
+    expect(completedFor(grantId)).toHaveLength(1);
+  });
+
+  it('closeRound settles the round for every provider the player bet with on it', async () => {
+    const ledger = bonusApi();
+    const { walletId, grantId, betArgs } = await grantedPlayer();
+    const externalRoundId = `round-${randomUUID()}`;
+
+    expect(await ledger.bet(betArgs({ amount: '25', externalRoundId }))).toMatchObject({
+      status: 'applied',
+    });
+    expect(
+      await ledger.bet(
+        betArgs({ amount: '25', externalRoundId, providerName: `${PROVIDER}-second` }),
+      ),
+    ).toMatchObject({ status: 'applied' });
+    expect(await grantStatus(grantId)).toBe('active');
+
+    const first = betArgs();
+    expect(
+      await ledger.closeRound({
+        userId: first.userId,
+        gameId: first.gameId,
+        externalRoundId,
+        currency: 'USD',
+      }),
+    ).toMatchObject({ status: 'closed' });
+
+    expect(await grantStatus(grantId)).toBe('completed');
+    expect(moneyEquals(await balanceOf(walletId), '50')).toBe(true);
+    expect(completedFor(grantId)).toHaveLength(1);
   });
 });

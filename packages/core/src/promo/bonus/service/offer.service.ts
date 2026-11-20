@@ -13,9 +13,9 @@ import {
   findOneOrThrow,
   makeConflictError,
   makeNotFoundError,
-  moneyAdd,
   moneyScaleBy,
   moneyCompare,
+  moneySubtract,
   pageToOffset,
   serializeRow,
   type DrizzleService,
@@ -29,15 +29,18 @@ import type {
   UpdatePromoOfferInput,
 } from '../contract/index.js';
 import {
+  promoGrant,
+  promoGrantDeposit,
   promoOffer,
   promoOptIn,
   promoOptInDeposit,
+  type PromoGrant,
   type PromoOffer as PromoOfferRow,
   type PromoOptIn as PromoOptInRow,
 } from '../schema/index.js';
-import { grantAmountFor } from '../shared/grant-amount.js';
 import { maxBetTermsIssues } from '../shared/max-bet.js';
 import { BonusSlotTakenError, isSlotTaken } from '../shared/grant-slot.js';
+import { DEFAULT_FUND_SETTINGS, depositBuckets, wageringBase } from '../shared/fund-buckets.js';
 import { offerIneligibility } from '../shared/offer-eligibility.js';
 
 export const OfferNotFoundError = makeNotFoundError('Offer');
@@ -191,6 +194,32 @@ export class OfferService {
     return lifetime !== null && moneyCompare(lifetime, depositAmount) === 0;
   }
 
+  /**
+   * A first-deposit-only offer is for the first deposit that could qualify for it, so an earlier
+   * deposit below its minimum or in another currency does not use it up. Undefined when the
+   * offer has no such rule, the caller already supplied the fact, or the wallet cannot answer.
+   */
+  private async firstQualifying(
+    userId: Uuid,
+    offer: PromoOfferRow,
+    context: OfferContext,
+    scope: { tx?: DrizzleTx; before?: Uuid } = {},
+  ): Promise<boolean | undefined> {
+    if (
+      !offer.rules.firstDepositOnly ||
+      context.isFirstDeposit !== undefined ||
+      !this.wallet.hasQualifyingDeposit
+    ) {
+      return undefined;
+    }
+    const earlier = await this.wallet.hasQualifyingDeposit(
+      userId,
+      { currency: offer.currency, minAmount: offer.minDeposit, before: scope.before },
+      scope.tx,
+    );
+    return !earlier;
+  }
+
   /** The offers open to this player right now, with what their deposits have put toward each. */
   async listForPlayer(userId: Uuid, context: OfferContext = {}): Promise<PlayerOffer[]> {
     const rows = await this.drizzle.db
@@ -205,9 +234,15 @@ export class OfferService {
 
     const at = new Date();
     const facts = await this.offerFacts(userId, context);
-    return rows
-      .filter(({ offer }) => offerIneligibility({ offer: toOffer(offer), at, ...facts }) === null)
-      .map(({ offer, optIn }) => toPlayerOffer(offer, optIn));
+    const open: PlayerOffer[] = [];
+    for (const { offer, optIn } of rows) {
+      const isFirstDeposit =
+        (await this.firstQualifying(userId, offer, context)) ?? facts.isFirstDeposit;
+      if (offerIneligibility({ offer: toOffer(offer), at, ...facts, isFirstDeposit }) === null) {
+        open.push(toPlayerOffer(offer, optIn));
+      }
+    }
+    return open;
   }
 
   /**
@@ -238,7 +273,14 @@ export class OfferService {
     const facts = await this.offerFacts(userId, context);
     return this.drizzle.db.transaction(async (tx) => {
       const offer = await this.requireOffer(tx, offerId);
-      const refusal = offerIneligibility({ offer: toOffer(offer), at: new Date(), ...facts });
+      const isFirstDeposit =
+        (await this.firstQualifying(userId, offer, context, { tx })) ?? facts.isFirstDeposit;
+      const refusal = offerIneligibility({
+        offer: toOffer(offer),
+        at: new Date(),
+        ...facts,
+        isFirstDeposit,
+      });
       if (refusal !== null) {
         throw new OfferNotEligibleError();
       }
@@ -278,8 +320,8 @@ export class OfferService {
   }
 
   /**
-   * A confirmed deposit, put toward every offer the player has taken. Deposits accumulate, so
-   * two below the minimum still qualify - the progress bar the operator asked for is this column.
+   * A confirmed deposit, checked against every offer the player has taken. Each deposit must meet
+   * the minimum on its own; one short of it counts toward nothing.
    *
    * Runs on the caller's transaction: the grant and the deposit that earned it commit together.
    */
@@ -288,15 +330,13 @@ export class OfferService {
     deposit: { userId: Uuid; amount: string; currency: string; transactionId: Uuid },
     context: OfferContext = {},
   ): Promise<GrantedBonus[]> {
-    // The deposit has already committed by the time this job runs, and a second deposit can
-    // commit and have its own job run first. Comparing the running lifetime total to this
-    // deposit's amount would then answer for whichever deposit happened to be summed last, not
-    // for this one - `isFirstDeposit` instead compares this transaction's own committed
-    // `created_at` against every other completed deposit, which does not move once written.
+    // Comparing the running lifetime total to this deposit's amount would answer for whichever
+    // deposit happened to be summed last, not for this one - `isFirstDeposit` instead compares
+    // this transaction's own `created_at` against every other completed deposit.
     const isFirstDeposit = this.wallet.isFirstDeposit
       ? await this.wallet.isFirstDeposit(deposit.userId, deposit.transactionId, tx)
       : await this.isFirstDepositByLifetimeTotal(deposit.userId, deposit.amount, tx);
-    // Re-evaluated here rather than trusted from opt-in time: this job can run after a
+    // Re-evaluated here rather than trusted from opt-in time: the deposit can land after a
     // self-exclusion or ban that landed between the opt-in and this deposit settling, and the
     // forfeit sweep that reacted to that exclusion has no way to know a grant would appear later.
     const isRestricted = await this.playEligibility.isRestricted(deposit.userId, tx);
@@ -305,13 +345,20 @@ export class OfferService {
     // caller's transaction, and a notification promising a bonus that then rolled back is worse
     // than a late one.
     const granted: GrantedBonus[] = [];
+    let realBalance: string | null = null;
+    const currentRealBalance = async () => {
+      realBalance ??=
+        (await this.wallet.getBalances(deposit.userId, tx)).balances.find(
+          (row) => row.currency === deposit.currency,
+        )?.balance ?? '0';
+      return realBalance;
+    };
 
     for (const { optIn, offer } of await this.claimsFor(tx, deposit)) {
       if (offer.currency !== deposit.currency) {
         continue;
       }
-      // At-least-once delivery: the unique index is what stops a redelivered deposit adding
-      // itself to the running total twice and paying a bonus the deposits never earned.
+      // At-least-once delivery: the unique index stops a redelivered deposit granting twice.
       const [counted] = await tx
         .insert(promoOptInDeposit)
         .values({ optInId: optIn.id, transactionId: deposit.transactionId, amount: deposit.amount })
@@ -321,47 +368,48 @@ export class OfferService {
         continue;
       }
 
-      const accumulated = moneyAdd(optIn.accumulatedDeposit, deposit.amount);
       const refusal = offerIneligibility({
         offer: toOffer(offer),
         at,
-        isFirstDeposit,
-        deposit: { amount: accumulated, currency: deposit.currency },
+        isFirstDeposit:
+          (await this.firstQualifying(deposit.userId, offer, context, {
+            tx,
+            before: deposit.transactionId,
+          })) ?? isFirstDeposit,
+        deposit: { amount: deposit.amount, currency: deposit.currency },
         ...context,
       });
-      if (refusal !== null) {
-        // Only a deposit short of the minimum banks toward it. Banking one the offer refused for
-        // any other reason means re-activating a paused offer pays a match on every deposit made
-        // while it was shut.
-        if (refusal === 'below_minimum_deposit') {
-          await tx
-            .update(promoOptIn)
-            .set({ accumulatedDeposit: accumulated })
-            .where(eq(promoOptIn.id, optIn.id));
-        }
+      if (refusal !== null || isRestricted) {
         continue;
       }
 
-      const amount = grantAmountFor(accumulated, offer.matchPercent, offer.maxGrantAmount);
+      const funds = offer.terms.funds ?? DEFAULT_FUND_SETTINGS;
+      const buckets = depositBuckets({
+        deposit: deposit.amount,
+        matchPercent: offer.matchPercent,
+        maxGrantAmount: offer.maxGrantAmount,
+        decimals: funds.decimals,
+      });
+      const amount = buckets.bonus;
       if (moneyCompare(amount, '0') <= 0) {
         continue;
       }
 
-      if (isRestricted) {
-        // The deposit already credited the player's real balance; only the bonus is withheld.
-        // Banked like a below-minimum deposit rather than dropped, so the progress is not lost
-        // if the restriction lifts before this offer's window closes.
-        await tx
-          .update(promoOptIn)
-          .set({ accumulatedDeposit: accumulated })
-          .where(eq(promoOptIn.id, optIn.id));
-        continue;
-      }
-
+      // With a locked existing balance, every real unit the player holds is tied to the grant.
+      const unlinked =
+        funds.existingBalance === 'locked'
+          ? positiveOrZero(moneySubtract(await currentRealBalance(), buckets.linked))
+          : buckets.unlinked;
+      const wageringRequired = moneyScaleBy(
+        wageringBase(funds.rolloverBase, buckets),
+        offer.terms.wageringMultiplier,
+      );
       const created = await this.grants.grant(tx, {
         userId: deposit.userId,
         currency: offer.currency,
         amount,
+        buckets: { linked: buckets.linked, unlinked },
+        wageringRequired,
         source: 'deposit',
         // Per offer, not per deposit: one deposit can qualify several claims, and a shared
         // reference would make the second one collide with the first.
@@ -377,8 +425,6 @@ export class OfferService {
         continue;
       }
       if (!created.ok) {
-        // The accumulator stays where it was: banking a total the grant refused would pay the
-        // match on all of it the next time a deposit lands.
         this.logger.error(
           { userId: deposit.userId, offerId: offer.id, reason: created.reason },
           'promo offer grant refused',
@@ -387,19 +433,70 @@ export class OfferService {
       }
       await tx
         .update(promoOptIn)
-        .set({ accumulatedDeposit: accumulated, grantId: created.grantId })
+        .set({ accumulatedDeposit: deposit.amount, grantId: created.grantId })
         .where(eq(promoOptIn.id, optIn.id));
       granted.push({
         userId: deposit.userId,
         grantId: created.grantId,
         currency: offer.currency,
         grantedAmount: amount,
-        wageringRequired: moneyScaleBy(amount, offer.terms.wageringMultiplier),
+        wageringRequired,
         offerId: offer.id,
       });
     }
 
+    const earned = granted.find((bonus) => bonus.currency === deposit.currency);
+    if (earned) {
+      await this.countDeposit(tx, deposit, earned.grantId);
+    } else if (!isRestricted) {
+      await this.addToUnlinked(tx, deposit);
+    }
     return granted;
+  }
+
+  /**
+   * A deposit made while a grant runs is real money tied to it (bucket A), whatever offer or
+   * payment method it came through. Goes to the grant a bet would be attributed to.
+   */
+  private async addToUnlinked(
+    tx: DrizzleTx,
+    deposit: { userId: Uuid; amount: string; currency: string; transactionId: Uuid },
+  ) {
+    const [grant] = await tx
+      .select({ id: promoGrant.id })
+      .from(promoGrant)
+      .where(
+        and(
+          eq(promoGrant.userId, deposit.userId),
+          eq(promoGrant.currency, deposit.currency),
+          eq(promoGrant.status, 'active'),
+          sql`${promoGrant.expiresAt} > now()`,
+        ),
+      )
+      .orderBy(asc(promoGrant.expiresAt), asc(promoGrant.createdAt), asc(promoGrant.id))
+      .limit(1)
+      .for('update');
+    if (!grant || !(await this.countDeposit(tx, deposit, grant.id))) {
+      return;
+    }
+    await tx
+      .update(promoGrant)
+      .set({ unlinkedCash: sql`${promoGrant.unlinkedCash} + ${deposit.amount}::numeric` })
+      .where(eq(promoGrant.id, grant.id));
+  }
+
+  /** False when this deposit was already counted into a grant's buckets. */
+  private async countDeposit(
+    tx: DrizzleTx,
+    deposit: { amount: string; transactionId: Uuid },
+    grantId: PromoGrant['id'],
+  ): Promise<boolean> {
+    const inserted = await tx
+      .insert(promoGrantDeposit)
+      .values({ transactionId: deposit.transactionId, grantId, amount: deposit.amount })
+      .onConflictDoNothing()
+      .returning({ transactionId: promoGrantDeposit.transactionId });
+    return inserted.length > 0;
   }
 
   /**
@@ -468,6 +565,8 @@ function assertCoherentTerms(terms: PromoOffer['terms']) {
     throw new InvalidOfferTermsError(issue);
   }
 }
+
+const positiveOrZero = (amount: string) => (moneyCompare(amount, '0') > 0 ? amount : '0');
 
 function toOffer(row: PromoOfferRow): PromoOffer {
   return serializeRow(row, { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELDS] });

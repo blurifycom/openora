@@ -24,6 +24,7 @@ import {
   isNotNull,
   like,
   lt,
+  ne,
   notInArray,
   sql,
   sum,
@@ -332,6 +333,42 @@ export class WalletReaderService implements WalletReader {
       )
       .limit(1);
     return !earlier;
+  }
+
+  async hasQualifyingDeposit(
+    userId: string,
+    args: { currency: string; minAmount: string; before?: string },
+    tx?: unknown,
+  ): Promise<boolean> {
+    const db = this.on(tx);
+    let cutoff: Date | null = null;
+    if (args.before !== undefined) {
+      const [txn] = await db
+        .select({ createdAt: walletTransaction.createdAt })
+        .from(walletTransaction)
+        .where(eq(walletTransaction.id, args.before));
+      if (!txn) {
+        return false;
+      }
+      cutoff = txn.createdAt;
+    }
+    const [earlier] = await db
+      .select({ id: walletTransaction.id })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.type, 'deposit'),
+          eq(walletTransaction.status, 'completed'),
+          eq(walletTransaction.currency, args.currency),
+          gte(walletTransaction.amount, args.minAmount),
+          cutoff === null ? undefined : lt(walletTransaction.createdAt, cutoff),
+          args.before === undefined ? undefined : ne(walletTransaction.id, args.before),
+        ),
+      )
+      .limit(1);
+    return earlier !== undefined;
   }
 
   async getLifetimeWithdrawals(userId: string): Promise<WalletLifetimeWithdrawals> {

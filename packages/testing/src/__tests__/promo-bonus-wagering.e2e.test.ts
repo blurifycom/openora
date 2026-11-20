@@ -109,6 +109,20 @@ const bet = (userId: string, amount: string, round: string) =>
     },
   });
 
+const lose = (userId: string, round: string) =>
+  debit({
+    userId,
+    amount: '0',
+    type: 'loss',
+    currency: 'USD',
+    context: CASINO,
+    providerRef: {
+      providerName: 'aggregator',
+      providerRefId: `loss-${round}`,
+      externalRoundId: round,
+    },
+  });
+
 const reverse = (userId: string, amount: string, round: string, ref: string) =>
   credit({
     userId,
@@ -405,11 +419,14 @@ describe('concurrent bets against one grant', () => {
 });
 
 describe('meeting the requirement', () => {
-  it('converts what is left to the real balance and closes the grant', async () => {
+  it('converts what is left to the real balance and closes the grant once the round settles', async () => {
     const { userId } = await player('200');
     const grantId = await grantBonus(userId, '100', '1');
+    const round = randomUUID();
+    await bet(userId, '100', round);
+    expect((await grantRow(grantId)).status).toBe('active');
 
-    await bet(userId, '100', randomUUID());
+    await lose(userId, round);
 
     const row = await grantRow(grantId);
     expect(row.status).toBe('completed');
@@ -605,7 +622,10 @@ describe('the terms a grant was created under', () => {
       },
     });
 
-    await bet(userId, '90', randomUUID());
+    const last = randomUUID();
+    await bet(userId, '90', last);
+
+    await lose(userId, last);
 
     const row = await grantRow(grantId);
     expect(row.status).toBe('completed');
@@ -798,8 +818,9 @@ describe('a voided round', () => {
     const { userId } = await player('0');
     const grantId = await grantBonus(userId, '100', '0.4');
     const round = randomUUID();
-    // Meets the requirement in one bet: the remaining $60 converts to real cash immediately.
+    // Meets the requirement in one bet; the remaining $60 converts once the round settles.
     await bet(userId, '40', round);
+    await lose(userId, round);
     expect(await realBalanceOf(userId)).toBe('60.000000000000000000');
 
     await reverse(userId, '40', round, 'after-completion');
@@ -844,6 +865,7 @@ describe('a voided round', () => {
     const grantId = await grantBonus(userId, '100', '1');
     const round = randomUUID();
     await bet(userId, '100', round);
+    await lose(userId, round);
     expect((await grantRow(grantId)).status).toBe('completed');
 
     await credit({

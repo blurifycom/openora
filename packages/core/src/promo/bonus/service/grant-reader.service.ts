@@ -23,6 +23,8 @@ const MONEY_FIELDS = [
   'bonusBalance',
   'wageringRequired',
   'wageringProgress',
+  'linkedCash',
+  'unlinkedCash',
 ] as const;
 const DATE_FIELDS = ['expiresAt', 'activatedAt', 'closedAt', 'createdAt'] as const;
 const SERIALIZE = { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELDS] };
@@ -38,8 +40,11 @@ const GRANT_COLUMNS = {
   bonusBalance: promoGrant.bonusBalance,
   wageringRequired: promoGrant.wageringRequired,
   wageringProgress: promoGrant.wageringProgress,
+  linkedCash: promoGrant.linkedCash,
+  unlinkedCash: promoGrant.unlinkedCash,
   forfeitReason: promoGrant.forfeitReason,
   maxBet: sql<string | null>`${promoGrant.terms} ->> 'maxBet'`,
+  playerForfeitable: sql<boolean>`coalesce((${promoGrant.terms}->>'allowPlayerForfeit')::boolean, false)`,
   expiresAt: promoGrant.expiresAt,
   activatedAt: promoGrant.activatedAt,
   closedAt: promoGrant.closedAt,
@@ -264,8 +269,8 @@ export class GrantReaderService {
 type OfferLabel = { offerKey: string | null; offerName: string | null };
 
 type PlayerGrantRow = {
-  [K in Exclude<keyof typeof GRANT_COLUMNS, 'maxBet'>]: PromoGrant[K];
-} & OfferLabel & { maxBet: string | null };
+  [K in Exclude<keyof typeof GRANT_COLUMNS, 'maxBet' | 'playerForfeitable'>]: PromoGrant[K];
+} & OfferLabel & { maxBet: string | null; playerForfeitable: boolean };
 
 type AdminGrantRow = PlayerGrantRow & {
   userId: PromoGrant['userId'];
