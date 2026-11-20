@@ -161,6 +161,11 @@ export function createIamRouter(
         );
       }),
 
+      policy: os.mcpTokens.policy.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'mcp-access', 'use');
+        return mcpTokens.policy();
+      }),
+
       listMine: os.mcpTokens.listMine.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'mcp-access', 'use');
         return mcpTokens.listMine(caller.userId, input);
