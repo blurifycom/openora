@@ -156,9 +156,9 @@ function shortfall<C extends TokenCatalog>(
   plugins: ReadonlyMap<string, Plugin<C>>,
   binders: ReadonlyMap<symbol, readonly string[]>,
 ) {
-  const selected = new Set(
-    applyServiceManifest([...check.entries], check.manifest).map((e) => e.id),
-  );
+  const selectedEntries = applyServiceManifest([...check.entries], check.manifest);
+  const selected = new Set(selectedEntries.map((e) => e.id));
+  const routeless = new Set(selectedEntries.filter((e) => e.noRoutes).map((e) => e.id));
   const loaded = new Set(selected);
   const added: string[] = [];
   const findings: Finding[] = [];
@@ -233,7 +233,9 @@ function shortfall<C extends TokenCatalog>(
         requirePort(id, port);
       }
       for (const control of plugin?.controlPorts ?? []) {
-        requireControl(id, control);
+        if (!(control.routesOnly && routeless.has(id))) {
+          requireControl(id, control);
+        }
       }
     }
     if (!hostRead) {
@@ -316,11 +318,12 @@ export async function assertServiceComplete<C extends TokenCatalog>(
   check: ServiceManifestCheck<C>,
 ) {
   const listed = new Set(check.entries.map((e) => e.id));
-  const selected = await Promise.all(
-    applyServiceManifest([...check.entries], check.manifest).map((e) => check.readPlugin(e)),
-  );
+  const entries = applyServiceManifest([...check.entries], check.manifest);
+  const selected = await Promise.all(entries.map((e) => check.readPlugin(e)));
   const controls = [
-    ...selected.flatMap((plugin) => plugin.controlPorts ?? []),
+    ...selected.flatMap((plugin, i) =>
+      (plugin.controlPorts ?? []).filter((c) => !(c.routesOnly && entries[i]?.noRoutes)),
+    ),
     ...check.hostControls,
   ];
   const refused =

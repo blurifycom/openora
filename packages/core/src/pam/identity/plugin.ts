@@ -212,12 +212,13 @@ export default {
       boundBy: 'iam',
     },
     {
-      // Fail closed: wallet refuses a user it has no row for, so a split that loads wallet but
-      // leaves this unbound would turn every write into an outbox-lag window. Without wallet in
-      // the plugin list nothing is staked, and the outbox event alone carries it.
+      // Refuse the boot: without it a restriction reaches the ledger only when its outbox event does,
+      // and a player keeps staking until then. Every other writer of one depends on wallet,
+      // which binds it, so only identity's own routes can write one here.
       port: PLAY_ELIGIBILITY_PROJECTION,
       without: 'a restriction reaches the ledger only when its outbox event is delivered',
       boundBy: 'wallet',
+      routesOnly: true,
     },
   ],
   register(ctx) {
