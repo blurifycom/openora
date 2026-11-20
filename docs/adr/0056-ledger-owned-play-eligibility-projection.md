@@ -32,9 +32,11 @@ commit or roll back together. `LOGIN_ENFORCEMENT.block`/`unblock` and
 publishes in the transaction that creates the player row.
 
 **The port is internal, not on the Ledger API.** `PLAY_ELIGIBILITY_PROJECTION` is bound by the
-wallet and declared in identity's `controlPorts` with `boundBy: 'wallet'`, so a split that loads
-the wallet but leaves the port unbound refuses to boot. Without the wallet, identity only emits the
-event. Identity holds the user row lock when it writes, so its version is the truth: a held version
+wallet and declared in identity's `controlPorts` with `boundBy: 'wallet'`, and `routesOnly: true`:
+a split that serves identity's routes refuses to boot without the wallet, since a restriction it
+writes would reach the ledger only through the event. Every other writer of a restriction
+(compliance, player management, the back office) depends on the wallet, so an `identity:no-routes`
+split without it writes none. (Updated 2026-11-20.) Identity holds the user row lock when it writes, so its version is the truth: a held version
 ahead of it came from outside identity, is overwritten, and is logged as an error.
 
 **Replays and repairs never regress.** The event handler and the backfill call `reconcile`, which

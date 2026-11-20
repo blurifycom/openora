@@ -186,6 +186,11 @@ export type OptionalPort<C extends TokenCatalog> = {
 export type ControlPort<C extends TokenCatalog> = OptionalPort<C> & {
   /** The module that binds the port, named when a SERVICE_MANIFEST leaves the port unbound. */
   boundBy: string;
+  /**
+   * Enforced only where the plugin serves its routes: only a route reaches what the port guards,
+   * so a `:no-routes` selection runs without it.
+   */
+  routesOnly?: boolean;
 };
 
 export type Plugin<C extends TokenCatalog> = {

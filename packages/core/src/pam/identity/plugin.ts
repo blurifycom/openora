@@ -199,15 +199,7 @@ export default {
   id: 'identity',
   dependsOn: ['audit'],
   requiresPorts: [MAIL_DISPATCH],
-  optionalPorts: [
-    { port: PLAYER_PROVISIONING, without: 'registration is refused' },
-    // Wallet binds it wherever it loads, so a service that stakes always projects in the same
-    // transaction. A split without wallet (chat, back office) leaves it to the outbox event.
-    {
-      port: PLAY_ELIGIBILITY_PROJECTION,
-      without: 'a restriction reaches the ledger only when its outbox event is delivered',
-    },
-  ],
+  optionalPorts: [{ port: PLAYER_PROVISIONING, without: 'registration is refused' }],
   controlPorts: [
     {
       port: GEO_CHECK_COMMANDS,
@@ -218,6 +210,15 @@ export default {
       port: MCP_TOKEN_REVOCATION,
       without: "ending an admin's sessions leaves their MCP tokens valid",
       boundBy: 'iam',
+    },
+    {
+      // Refuse the boot: without it a restriction reaches the ledger only when its outbox event does,
+      // and a player keeps staking until then. Every other writer of one depends on wallet,
+      // which binds it, so only identity's own routes can write one here.
+      port: PLAY_ELIGIBILITY_PROJECTION,
+      without: 'a restriction reaches the ledger only when its outbox event is delivered',
+      boundBy: 'wallet',
+      routesOnly: true,
     },
   ],
   register(ctx) {

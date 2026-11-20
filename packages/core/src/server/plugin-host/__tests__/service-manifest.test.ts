@@ -145,7 +145,7 @@ function checkOf(
       path: p.id,
       ...(infra.includes(p.id) ? { kind: 'infra' as const } : {}),
     })),
-    manifest: manifest.map((id) => ({ id, noRoutes: false })),
+    manifest: parseServiceManifest(manifest.join(',')) ?? [],
     readPlugin,
     hostControls,
     isBound: (port) => bound.includes(port),
@@ -309,6 +309,47 @@ describe('the one error a manifest boot fails with', () => {
 
     await expect(run).rejects.toThrow(/- wallet runs without RG_LIMITS \(bound by compliance\)/);
     await expect(run).rejects.not.toThrow(/Add them/);
+  });
+
+  describe('a control only routes reach', () => {
+    const routed = [
+      ...withoutModules('wallet'),
+      plugin('wallet', {
+        dependsOn: ['identity'],
+        controlPorts: [
+          {
+            port: RG_LIMITS,
+            without: 'limits go unenforced',
+            boundBy: 'compliance',
+            routesOnly: true,
+          },
+        ],
+      }),
+    ];
+
+    it('boots a :no-routes selection without it', async () => {
+      const { check } = checkOf(routed, ['wallet:no-routes', 'identity', 'mail', 'audit'], {
+        bound: [MAIL],
+      });
+
+      await expect(assertServiceComplete(check)).resolves.toBeUndefined();
+    });
+
+    it('leaves it out of the error a :no-routes selection fails with for something else', async () => {
+      const { check } = checkOf(routed, ['wallet:no-routes', 'identity', 'audit']);
+      const run = assertServiceComplete(check);
+
+      await expect(run).rejects.toThrow(/- identity requires MAIL/);
+      await expect(run).rejects.not.toThrow(/RG_LIMITS|compliance/);
+    });
+
+    it('refuses a selection that serves the routes, adding the module', async () => {
+      const { check } = checkOf(routed, ['wallet', 'identity', 'mail', 'audit'], { bound: [MAIL] });
+
+      await expect(assertServiceComplete(check)).rejects.toThrow(
+        /- wallet runs without RG_LIMITS \(bound by compliance\): limits go unenforced\n[\s\S]*Add them: SERVICE_MANIFEST=wallet,identity,mail,audit,compliance,gaming\n/,
+      );
+    });
   });
 
   it('names the module that failed to register when no binder of a required port is known', async () => {
