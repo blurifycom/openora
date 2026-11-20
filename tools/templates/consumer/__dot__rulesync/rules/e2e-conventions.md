@@ -20,11 +20,11 @@ Two kinds of spec live here:
 
 ## Which kind a check belongs to
 
-A browser test costs several times an API test, so each check goes to the cheapest kind that still sees it:
+Each check goes to the cheapest kind that still sees it:
 
-- **Browser spec** - what a player or admin sees: the balance updating live after a money action, a saved option still there after a reload, the journey itself. One happy path plus the refusal the user must see.
-- **API spec** - rule matrices: every status, limit, ledger row, audit row, and refusal reason. A browser spec never loops over these.
-- **Desktop and mobile** - a behaviour the two layouts render with the same components is tested once, on mobile. Test both only where the layouts use different components.
+- **Browser spec** - what a player or admin sees: the balance updating live after a money action, a saved option still there after a reload, the journey itself. One happy path plus the refusal the user must see. Every money, KYC and responsible-gambling journey keeps at least one browser spec; API specs add to it, never replace it.
+- **API spec** - rule matrices: every status, limit and refusal reason the browser spec does not show, and the ledger and audit effects a follow-up request reports. A browser spec never loops over these.
+- **Desktop and mobile** (player app) - a behaviour both layouts render with the same component is tested once, at the mobile viewport. A difference in CSS only counts as the same component; a separate component or a branch per viewport gets a spec on each. Back-office specs stay desktop.
 
 ## Real stack by default
 
