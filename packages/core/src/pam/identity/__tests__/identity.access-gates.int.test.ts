@@ -1,10 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import type { GeoCheckCommands, PlayerProvisioning, SmsAdapter } from '@openora/core/contracts';
 import { definePlatformConfig } from '@openora/core/contracts';
 import { makeAuditWriter, makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
+import { user } from '../schema/index.js';
 import { migrate } from '../migrate.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 import { TwoFactorDeliveryService } from '../service/two-factor-delivery.service.js';
 import type { PlayEligibilityPublisher } from '../service/play-eligibility.service.js';
@@ -20,7 +23,7 @@ import { UsernameBlockedError } from '../../shared/username.js';
 
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
-  return { ...actual, createAuth: vi.fn(() => ({ api: authApi })) };
+  return { ...actual, createAuth: vi.fn(() => ({ api: authApi, options: {} })) };
 });
 
 const events = makeEventBus();
@@ -60,7 +63,7 @@ function makeService(overrides: Partial<IdentityServiceDeps> = {}) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
   drizzle = db.drizzle;
   redis = await createTestRedis();
 });
@@ -212,6 +215,59 @@ describe('IdentityService.login - country access gate', () => {
 
     await expect(svc.login(credentials, headers, new Headers())).rejects.toThrow();
     expect(authApi.signInEmail).toHaveBeenCalled();
+  });
+});
+
+describe('IdentityService.login - audience gate', () => {
+  const headers = { 'x-real-ip': '203.0.113.7' };
+
+  async function seedAccount(role: 'player' | 'admin') {
+    const id = randomUUID();
+    const email = `${role}-${id}@x.dev`;
+    await drizzle.db.insert(user).values({
+      id,
+      name: role,
+      username: `aud_${id.replaceAll('-', '').slice(0, 13)}`,
+      email,
+      role,
+    });
+    return { email, password: 'password1234' };
+  }
+
+  it.each([
+    ['player', 'staff'],
+    ['admin', 'player'],
+  ] as const)('refuses a %s account signing in for the %s surface', async (role, audience) => {
+    const credentials = await seedAccount(role);
+    const svc = makeService();
+    authApi.signInEmail.mockResolvedValueOnce(signedIn());
+    const resHeaders = new Headers();
+
+    await expect(
+      svc.login({ ...credentials, audience }, headers, resHeaders),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { code: 'AUDIENCE_MISMATCH' } });
+    expect(resHeaders.get('set-cookie')).toBeNull();
+    expect(loginFailures()).toEqual([
+      expect.objectContaining({ reason: 'audience_mismatch', ip: '203.0.113.7' }),
+    ]);
+  });
+
+  it('signs a matching account in', async () => {
+    const credentials = await seedAccount('admin');
+    const svc = makeService();
+    authApi.signInEmail.mockResolvedValueOnce(signedIn());
+
+    await expect(
+      svc.login({ ...credentials, audience: 'staff' }, headers, new Headers()),
+    ).resolves.toMatchObject({ session: { token: 'minted-session-token' } });
+  });
+
+  it('keeps accepting a login that names no audience', async () => {
+    const credentials = await seedAccount('player');
+    const svc = makeService();
+    authApi.signInEmail.mockResolvedValueOnce(signedIn());
+
+    await expect(svc.login(credentials, headers, new Headers())).resolves.toHaveProperty('session');
   });
 });
 
