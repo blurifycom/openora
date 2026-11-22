@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import {
   ADMIN_GUARD,
@@ -28,7 +28,6 @@ import {
 import {
   makeAdminGuard,
   makeAuditWriter,
-  makeDrizzle,
   makeEventBus,
   makeIdentityReader,
   makeWithdrawalSecurity,
@@ -37,13 +36,25 @@ import {
   mock,
 } from '../../testing/mock.js';
 import { walletBalanceChannel } from '../router/index.js';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate } from '../migrate.js';
 import walletPlugin from '../plugin.js';
+
+let db: TestDb;
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
 
 function boot() {
   const container = new Container<CoreTokenCatalog>();
   const events = makeEventBus();
   const realtime = makeRealtimeTransport();
-  container.register(DRIZZLE, () => makeDrizzle());
+  container.register(DRIZZLE, () => db.drizzle);
   container.register(EVENT_BUS, () => events);
   container.register(REALTIME_TRANSPORT, () => realtime);
   container.register(ADMIN_GUARD, () => makeAdminGuard());
