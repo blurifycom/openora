@@ -44,4 +44,7 @@ runs:
       with:
         path: .turbo/cache
         key: turbo-${{ runner.os }}-${{ inputs.turbo-cache-scope }}-${{ github.event.pull_request.head.sha || github.sha }}
-        restore-keys: turbo-${{ runner.os }}-${{ inputs.turbo-cache-scope }}-
+        # A test scope's first run still restores the builds from the `build` scope.
+        restore-keys: |
+          turbo-${{ runner.os }}-${{ inputs.turbo-cache-scope }}-
+          turbo-${{ runner.os }}-build-

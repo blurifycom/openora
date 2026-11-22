@@ -27,6 +27,8 @@
     },
     "test:integration": {
       "dependsOn": ["^build", "build"],
+      // Postgres and Redis come from these, not from the package, so a change there re-runs the tier.
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.github/actions/**", "$TURBO_ROOT$/tools/db/**"],
       "outputs": [],
       "passThroughEnv": [
         "TEST_DATABASE_URL",
@@ -40,6 +42,14 @@
     },
     "test:e2e": {
       "dependsOn": ["^build", "build"],
+      // Postgres and Redis come from the first two, and suites read the last two from the root.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.github/actions/**",
+        "$TURBO_ROOT$/tools/db/**",
+        "$TURBO_ROOT$/tools/create/service-example.json",
+        "$TURBO_ROOT$/tools/gen/gen-catalog.ts"
+      ],
       "outputs": [],
       "passThroughEnv": [
         "TEST_DATABASE_URL",
