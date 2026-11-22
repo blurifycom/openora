@@ -184,7 +184,7 @@ export const gamingContract = {
 
   listProviders: oc
     .route({ method: 'GET', path: '/gaming/providers' })
-    .input(PageQuerySchema)
+    .input(PageQuerySchema.extend({ categoryId: UuidSchema.optional() }))
     .output(paginated(GameProviderSummarySchema)),
 
   getProviderBySlug: oc
