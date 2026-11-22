@@ -30,6 +30,7 @@ async function seedTransaction(
   amount: string,
   currency: string,
   rail: WalletRail | null = null,
+  createdAt?: Date,
 ) {
   const record = findOneOrThrow(
     await db.drizzle.db.insert(wallet).values({ userId: randomUUID(), currency }).returning(),
@@ -37,7 +38,7 @@ async function seedTransaction(
   );
   await db.drizzle.db
     .insert(walletTransaction)
-    .values({ walletId: record.id, type, amount, currency, rail, status: 'completed' });
+    .values({ walletId: record.id, type, amount, currency, rail, status: 'completed', createdAt });
 }
 
 const byCurrency = <T extends { currency: string }>(rows: T[]) =>
@@ -91,6 +92,39 @@ describe('FinancialAnalyticsService.summary (real PG)', () => {
     const fresh = await new FinancialAnalyticsService(db.drizzle, makeCache()).summary({});
     expect(fresh.deposits).toEqual([
       { currency: 'USD', rail: 'fiat', total: expect.stringMatching(/^100(\.0+)?$/) },
+    ]);
+  });
+});
+
+describe('FinancialAnalyticsService.ggr (real PG)', () => {
+  it('returns one series per currency with a zero bucket on a day without rounds', async () => {
+    const day = (d: string) => new Date(`2026-03-${d}T10:00:00Z`);
+    await seedTransaction('bet', '100', 'USD', null, day('03'));
+    await seedTransaction('win', '40', 'USD', null, day('03'));
+    await seedTransaction('bet', '10', 'USD', null, day('05'));
+    await seedTransaction('bet', '50', 'EUR', null, day('03'));
+    await seedTransaction('win', '20', 'EUR', null, day('03'));
+    await seedTransaction('bet', '5', 'EUR', null, day('05'));
+    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+
+    const series = await service.ggr({
+      dateFrom: '2026-03-03T00:00:00.000Z',
+      dateTo: '2026-03-05T23:59:59.999Z',
+      granularity: 'day',
+    });
+
+    expect(series.map((s) => s.currency)).toEqual(['EUR', 'USD']);
+    const totals = (currency: string) =>
+      series.find((s) => s.currency === currency)?.points.map((p) => [p.bucket, Number(p.ggr)]);
+    expect(totals('USD')).toEqual([
+      ['2026-03-03', 60],
+      ['2026-03-04', 0],
+      ['2026-03-05', 10],
+    ]);
+    expect(totals('EUR')).toEqual([
+      ['2026-03-03', 30],
+      ['2026-03-04', 0],
+      ['2026-03-05', 5],
     ]);
   });
 });

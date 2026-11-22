@@ -13,6 +13,7 @@ import {
   bootE2e,
   closeE2e,
   readJson,
+  newStaff,
 } from '../index.js';
 
 let db: TestDb;
@@ -184,17 +185,27 @@ describe('analytics e2e', () => {
     expect(registered?.dropOffRate).toBeNull();
   });
 
+  const analyticsPaths = [
+    '/analytics/financial/summary',
+    '/analytics/financial/ggr',
+    '/analytics/financial/products',
+    '/analytics/funnel/conversion',
+  ];
+
   it('rejects an analytics read from a non-admin caller', async () => {
     const email = `no-access-${randomUUID()}@example.com`;
     await registerPlayer(app, { email });
     const player = await asPlayer(app.app, { email });
-    for (const path of [
-      '/analytics/financial/summary',
-      '/analytics/financial/ggr',
-      '/analytics/financial/products',
-      '/analytics/funnel/conversion',
-    ]) {
+    for (const path of analyticsPaths) {
       const res = await player.get(path);
+      expect(res.status, path).toBe(403);
+    }
+  });
+
+  it('rejects an analytics read from staff whose role lacks analytics:view', async () => {
+    const { client: agent } = await newStaff(app, 'analytics-no-view', 'customer-support-agent');
+    for (const path of analyticsPaths) {
+      const res = await agent.get(path);
       expect(res.status, path).toBe(403);
     }
   });

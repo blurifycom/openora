@@ -200,22 +200,32 @@ SELECT * FROM mig_fail_missing;`,
 
   it('refuses an extension name outside the allowlist without touching the database', async () => {
     const migrationsFolder = writeFolder([{ tag: '0000_noop', sql: 'SELECT 1;' }]);
+    await db.drizzle.db.execute(sql`create table mig_ext_sentinel (id int)`);
 
     await expect(
       runMigrations({
         migrationsFolder,
         migrationsTable: 'mig_ext',
         databaseUrl: db.url,
-        extensions: ['pg_trgm; DROP TABLE mig_zero_item'],
+        extensions: ['pg_trgm; DROP TABLE mig_ext_sentinel'],
       }),
     ).rejects.toThrow(/Invalid extension name/);
 
     expect(await exists('drizzle.mig_ext')).toBe(false);
-    expect(await exists('mig_zero_item')).toBe(true);
+    expect(await exists('mig_ext_sentinel')).toBe(true);
   });
 
   it('closes its connections and never reads migrations when a preSql statement throws', async () => {
     const migrationsFolder = join(root, 'does-not-exist');
+    const observer = new Client({ connectionString: db.url });
+    await observer.connect();
+    const openConnections = async () => {
+      const { rows: counted } = await observer.query<{ open: number }>(
+        'SELECT count(*)::int AS open FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()',
+      );
+      return counted[0]?.open;
+    };
+    const before = await openConnections();
 
     await expect(
       runMigrations({
@@ -227,6 +237,8 @@ SELECT * FROM mig_fail_missing;`,
     ).rejects.toThrow('mig_prefail_missing');
 
     expect(await exists('drizzle.mig_prefail')).toBe(false);
+    await vi.waitFor(async () => expect(await openConnections()).toBe(before));
+    await observer.end();
   });
 
   it('treats current hashes aliased from an applied legacy hash as applied', async () => {
