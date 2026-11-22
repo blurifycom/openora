@@ -188,7 +188,14 @@ describe('analytics e2e', () => {
     const email = `no-access-${randomUUID()}@example.com`;
     await registerPlayer(app, { email });
     const player = await asPlayer(app.app, { email });
-    const res = await player.get('/analytics/financial/summary');
-    expect(res.status).toBe(403);
+    for (const path of [
+      '/analytics/financial/summary',
+      '/analytics/financial/ggr',
+      '/analytics/financial/products',
+      '/analytics/funnel/conversion',
+    ]) {
+      const res = await player.get(path);
+      expect(res.status, path).toBe(403);
+    }
   });
 });

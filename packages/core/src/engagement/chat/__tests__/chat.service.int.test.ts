@@ -38,14 +38,6 @@ import {
   UNKNOWN_PLAYER_USERNAME,
 } from '../contract/constants.js';
 import { migrate } from '../migrate.js';
-// import {
-//   mock,
-//   mockDb,
-//   makeDrizzle,
-//   makeEvents,
-//   readPrivate,
-//   NO_CLIENT_META,
-// } from '../../../testing/mock.js';
 import {
   ACCESS_REVOKED_SIGNAL,
   GLOBAL_CHAT_ROOM_ID,

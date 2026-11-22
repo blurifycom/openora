@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import { mock, makeDrizzle } from '../../../../testing/mock.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sql } from 'drizzle-orm';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock } from '../../../../testing/mock.js';
 import type {
   AdminUserDirectory,
   AuditWritePort,
@@ -7,8 +9,23 @@ import type {
   ChatRoomAccess,
   RealtimeTransport,
 } from '@openora/core/contracts';
+import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
+import { migrate } from '../../migrate.js';
+import { chatCommandConfig } from '../../schema/index.js';
 import { ChatCommandsService } from '../chat-commands.service.js';
 import { ChatCommandDescriptorSchema } from '../../contract/index.js';
+
+let db: TestDb;
+
+beforeAll(async () => {
+  db = await createTestDb([migrateChat, migrate]);
+});
+
+afterAll(() => db.drop());
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE chat_command_config`);
+});
 
 const ENABLED_ROW = {
   key: 'gift',
@@ -16,13 +33,16 @@ const ENABLED_ROW = {
   label: 'Gift',
   description: null,
   config: null,
-  updatedAt: new Date(),
 };
-const DISABLED_ROW = { ...ENABLED_ROW, enabled: false };
+const DISABLED_ROW = { ...ENABLED_ROW, key: 'rain', label: 'Rain', enabled: false };
 
-function makeService(select: Record<string, unknown>[][] = []) {
+async function seed(...rows: (typeof chatCommandConfig.$inferInsert)[]) {
+  await db.drizzle.db.insert(chatCommandConfig).values(rows);
+}
+
+function makeService() {
   return new ChatCommandsService(
-    makeDrizzle({ select }),
+    db.drizzle,
     mock<AdminUserDirectory>({
       findPlayerIds: vi.fn().mockResolvedValue([]),
       lookupPlayers: vi.fn().mockResolvedValue([]),
@@ -46,7 +66,7 @@ type MentionDeps = {
 function makeMentionService(deps: MentionDeps = {}) {
   const players = deps.players ?? [];
   return new ChatCommandsService(
-    makeDrizzle({ select: [] }),
+    db.drizzle,
     mock<AdminUserDirectory>({
       findPlayerIds: vi.fn().mockResolvedValue(deps.findPlayerIds ?? []),
       lookupPlayers: vi
@@ -78,14 +98,17 @@ const SEARCH = { limit: 20, roomId: null, viewerId: 'viewer' } as const;
 
 describe('ChatCommandsService command registry', () => {
   it('returns only enabled commands by default', async () => {
-    const result = await makeService([[ENABLED_ROW]]).listCommands();
+    await seed(ENABLED_ROW, DISABLED_ROW);
 
-    expect(result).toHaveLength(1);
-    expect(result[0]?.key).toBe('gift');
+    const result = await makeService().listCommands();
+
+    expect(result.map((c) => c.key)).toEqual(['gift']);
   });
 
   it('returns disabled commands for administrators', async () => {
-    const result = await makeService([[ENABLED_ROW, DISABLED_ROW], [{ n: 2 }]]).adminListCommands({
+    await seed(ENABLED_ROW, DISABLED_ROW);
+
+    const result = await makeService().adminListCommands({
       page: 1,
       limit: 10,
       sortBy: 'key',
@@ -98,7 +121,9 @@ describe('ChatCommandsService command registry', () => {
 
   it('emits a descriptor the route contract accepts for a single-currency limit', async () => {
     const config = { minAmount: { currency: 'USD', amount: '1.00000000' }, maxRecipients: 100 };
-    const result = await makeService([[{ ...ENABLED_ROW, config }], [{ n: 1 }]]).adminListCommands({
+    await seed({ ...ENABLED_ROW, config });
+
+    const result = await makeService().adminListCommands({
       page: 1,
       limit: 10,
       sortBy: 'key',
@@ -164,7 +189,7 @@ describe('ChatCommandsService searchMentions', () => {
   it('excludes the caller and blocked users before limiting a typed query', async () => {
     const findPlayerIds = vi.fn().mockResolvedValue(['wanted']);
     const service = new ChatCommandsService(
-      makeDrizzle({ select: [] }),
+      db.drizzle,
       mock<AdminUserDirectory>({
         findPlayerIds,
         lookupPlayers: vi.fn().mockResolvedValue([{ userId: 'wanted', username: 'dave' }]),
