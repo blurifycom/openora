@@ -55,14 +55,41 @@ jobs:
         if: github.event_name != 'pull_request'
         run: echo "commitlint runs on pull requests only"
 
-  # Everything in `pnpm verify` except the integration tiers (sharded below).
+  # Everything in `pnpm verify` that needs no Postgres or Redis, minus the tests.
+  # `build` is what typechecks (every package builds with tsc).
   checks:
+    name: Build & lint
     if: github.event.action != 'edited'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read # download dev's trace baseline from the last merge-queue run
-    services:
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/bootstrap
+      - run: >-
+          pnpm exec turbo run build check:lint check:format check:boundaries check:shape
+          check:hygiene check:refs check:deprecations
+      - run: pnpm check:drift
+
+  unit:
+    name: Unit tests
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache-scope: unit
+      - run: pnpm exec turbo run test:unit test:tools
+
+  # packages/core `*.int.test.ts` against real Postgres + Redis, one pair per shard.
+  integration:
+    name: Integration tests (${{ matrix.shard }}/2)
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    services: &test-services
       postgres:
         image: postgres:16-alpine
         env:
@@ -88,27 +115,50 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache-scope: integration-${{ matrix.shard }}
       - uses: ./.github/actions/test-infra
-      # Same task list as the root `verify` script, minus `test:integration` (it runs in
-      # `integration`). `build` is what typechecks (every package builds with tsc).
-      - name: Verify
-        run: >-
-          pnpm exec turbo run build check:lint check:format check:boundaries check:shape
-          check:hygiene check:refs check:deprecations test:unit test:tools &&
-          pnpm check:drift
+      - run: pnpm exec turbo run test:integration -- --shard=${{ matrix.shard }}/2
+
+  # packages/testing: the booted app over HTTP against real Postgres + Redis, one pair per shard.
+  e2e:
+    name: E2E tests (${{ matrix.shard }}/4)
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # download dev's trace baseline from the last merge-queue run
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services: *test-services
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache-scope: e2e-${{ matrix.shard }}
+      - uses: ./.github/actions/test-infra
+      - run: pnpm exec turbo run test:e2e -- --shard=${{ matrix.shard }}/4
       # The E2E tier records a span per request, oRPC step and pg query. The latest
       # merge-queue run's spans are the baseline a PR run's job summary is compared against.
+      # A turbo cache hit runs no test, so it records no spans and the report is empty.
       - name: Backend trace report
         if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          SHARD: ${{ matrix.shard }}
         run: |
-          mkdir -p packages/testing/trace-results
+          mkdir -p packages/testing/trace-results trace-baseline
+          for f in packages/testing/trace-results/spans-*.jsonl; do
+            [ -e "$f" ] && mv "$f" "${f%.jsonl}-shard$SHARD.jsonl"
+          done
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             run_id=$(gh run list --workflow ci.yml --event merge_group --status success --limit 1 \
               --json databaseId --jq '.[0].databaseId // empty' || true)
-            if [ -n "$run_id" ] && gh run download "$run_id" --name trace-spans --dir trace-baseline; then
+            if [ -n "$run_id" ] && gh run download "$run_id" --pattern 'trace-spans-*' --dir trace-download; then
+              find trace-download -name '*.jsonl' -exec mv {} trace-baseline/ \;
               echo "Baseline: [merge-queue run $run_id]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id)" >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
@@ -118,58 +168,17 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: trace-spans
+          name: trace-spans-${{ matrix.shard }}
           path: packages/testing/trace-results/
           # Only merge-queue spans are read back, as the next PRs' baseline.
           retention-days: ${{ github.event_name == 'merge_group' && 30 || 7 }}
           if-no-files-found: ignore
 
-  # Both integration tiers (packages/core `vitest.integration.config.ts` and packages/testing),
-  # 4 shards. Each job has its own postgres + redis, so per-suite databases and redis
-  # partitions are isolated; within a job the two tiers share them as in `pnpm verify`.
-  integration:
-    if: github.event.action != 'edited'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/bootstrap
-        with:
-          turbo-cache: 'false'
-      - uses: ./.github/actions/test-infra
-      - name: Integration (shard ${{ matrix.shard }}/4)
-        run: pnpm exec turbo run test:integration -- --shard=${{ matrix.shard }}/4
-
   # A new user's first run against this commit's packages: scaffold, install, `pnpm bootstrap`
   # (Docker), start the API, log in as the seeded admin. Catches boot crashes no in-repo test
   # sees, because `@openora/testing` binds seams a real app has to get from `createApp`.
   consumer:
+    name: Consumer smoke test
     if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -188,6 +197,7 @@ jobs:
   # Advisory: unused code is fixable debt, not a merge gate. Not in `verify.needs`, and
   # continue-on-error keeps a red result from failing the run.
   unused:
+    name: Unused code (advisory)
     if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -201,7 +211,7 @@ jobs:
   # Stable required-check name; aggregates the jobs above.
   verify:
     if: always() && github.event.action != 'edited'
-    needs: [checks, integration, consumer]
+    needs: [checks, unit, integration, e2e, consumer]
     runs-on: ubuntu-latest
     steps:
       - name: Require all verify jobs green

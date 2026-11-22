@@ -5,11 +5,17 @@ inputs:
   turbo-cache:
     description: >-
       Restore and save .turbo/cache. Only a job that actually runs turbo may set this.
-      Jobs share one cache key per commit, so a job that touches the cache without
-      producing task outputs would save an empty one and lock the real producer out
-      of saving (actions/cache refuses to overwrite its own primary key).
+      Jobs in one scope share one cache key per commit, so a job that touches the cache
+      without producing task outputs would save an empty one and lock the real producer
+      out of saving (actions/cache refuses to overwrite its own primary key).
     required: false
     default: 'true'
+  turbo-cache-scope:
+    description: >-
+      Cache key scope. Every job running different turbo tasks (or another test shard)
+      needs its own, or the first to finish saves the commit's key and the rest are dropped.
+    required: false
+    default: 'build'
 
 runs:
   using: composite
@@ -37,5 +43,5 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .turbo/cache
-        key: turbo-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
-        restore-keys: turbo-${{ runner.os }}-
+        key: turbo-${{ runner.os }}-${{ inputs.turbo-cache-scope }}-${{ github.event.pull_request.head.sha || github.sha }}
+        restore-keys: turbo-${{ runner.os }}-${{ inputs.turbo-cache-scope }}-

@@ -10,7 +10,7 @@ If filter provided, run: `pnpm verify --filter <package>`
 Otherwise run: `pnpm verify`
 
 This executes `turbo run build check:lint check:format check:boundaries check:shape check:hygiene
-check:deprecations test:unit test:integration test:tools`, then `pnpm check:drift` (or scoped to the
+check:deprecations test:unit test:integration test:e2e test:tools`, then `pnpm check:drift` (or scoped to the
 filter). `build` is what typechecks - see `docs/standards/enforcement.md`.
 
 After completion:

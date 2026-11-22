@@ -42,7 +42,8 @@ Scripts are grouped by prefix: `check:*` reports, `fix:*` rewrites, `gen:*` emit
 | `pnpm fix:lint`           | oxlint `--fix`                                                      |
 | `pnpm fix:format`         | oxfmt write + final-newline pass                                    |
 | `pnpm test:unit`          | vitest, no external services                                        |
-| `pnpm test:integration`   | service/router tests on `postgres-test` + `redis-test`              |
+| `pnpm test:integration`   | core `*.int.test.ts` on `postgres-test` + `redis-test`              |
+| `pnpm test:e2e`           | `@openora/testing`: the booted app over HTTP, same services         |
 | `pnpm test:tools`         | `node --test` over `tools/__tests__`                                |
 | `pnpm test:scaffold`      | scaffolds a throwaway module and verifies it, then cleans up        |
 | `pnpm gen:agents`         | regenerate the per-tool agent files from `.rulesync/` via rulesync  |

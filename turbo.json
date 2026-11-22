@@ -27,7 +27,20 @@
     },
     "test:integration": {
       "dependsOn": ["^build", "build"],
-      "cache": false,
+      "outputs": [],
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "DATABASE_URL",
+        "DATABASE_ADMIN_URL",
+        "TEST_ADMIN_DATABASE_URL",
+        "TEST_REDIS_URL",
+        "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_URL"
+      ]
+    },
+    "test:e2e": {
+      "dependsOn": ["^build", "build"],
+      "outputs": [],
       "passThroughEnv": [
         "TEST_DATABASE_URL",
         "DATABASE_URL",

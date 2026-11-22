@@ -114,7 +114,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
     // DEFAULT (5 tags, a starting value only - not an enforced floor) applies, matching a
     // genuine "just upgraded, never touched by an admin" install. Delete any pre-existing
     // row first: this file's
-    // apps share one physical test database across the whole `test:integration` run (per
+    // apps share one physical test database across the whole `test:e2e` run (per
     // @openora/testing's AGENTS.md), so a sibling suite may have already seeded/edited the
     // singleton before this file runs - this test needs the row to be genuinely
     // untouched-since-insert to prove the DEFAULT, not whatever a previous file left behind.

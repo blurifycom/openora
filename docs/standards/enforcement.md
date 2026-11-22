@@ -2,7 +2,7 @@
 
 Detail for the enforcement line in `conventions`. Read this when a gate fails or when adding a lint rule.
 
-- `pnpm verify` = build (which typechecks) + lint + format + boundaries + module-shape + `check:hygiene` + deprecations + `test:unit` + `test:integration` + `test:tools`, then `pnpm check:drift`.
+- `pnpm verify` = build (which typechecks) + lint + format + boundaries + module-shape + `check:hygiene` + deprecations + `test:unit` + `test:integration` + `test:e2e` + `test:tools`, then `pnpm check:drift`.
 - `pnpm check:hygiene` (`tools/lint/verify-oss-hygiene.ts`) scans every tracked `.ts`/`.tsx`/`.md`/`.json` for a client ticket id or a client/vendor name. This repo is public, so both are build failures, in a filename as well as in content. Naming a vendor as an illustrative example is exempt only under `docs/adapters/` and in the two files the script lists.
 - `pnpm check:drift` verifies the tsconfig paths and regenerates `docs/catalog.json`. The catalog is generated, not committed - `pnpm gen:catalog` rebuilds it, and the `post-merge` / `post-checkout` hooks keep it current.
 - Two-layer boundaries - per-edit oxlint (`oss-boundaries/*`) plus the whole-graph dependency-cruiser (`pnpm check:boundaries`, catches transitive edges, barrel laundering, dynamic `import()`). Don't work around a violation; fix the import.

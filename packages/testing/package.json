@@ -22,7 +22,7 @@
     "build": "tsc && tsc -p scripts",
     "check:types": "tsc --noEmit && tsc -p scripts",
     "clean": "rm -rf dist",
-    "test:integration": "vitest run --passWithNoTests"
+    "test:e2e": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@openora/core": "workspace:*",

@@ -17,7 +17,7 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
 - **A file that calls `createTestDb`/`createTestRedis` is named `<name>.int.test.ts`** and runs in `test:integration` (needs docker Postgres + Redis); `test:unit` is the infra-free suite and stays a ~4s loop. Lint-enforced by `oss-module-shape/int-test-file-naming`.
 - **Name a test for the behaviour it verifies, never a client ticket id.** openora is public; a downstream client's Jira key does not belong in a file name, comment, or `describe()`/`it()` title. Enforced by `pnpm check:hygiene` (`tools/lint/verify-oss-hygiene.ts`).
 - The end-to-end tier lives in `@openora/testing` (`bootTestApp` against a shared test db). Recreate that db with `pnpm db:setup:test:fresh` if a migration was edited after it was applied locally - drizzle hashes each migration file's bytes, so a stale hash re-runs an applied migration.
-- Integration Vitest configs using `@openora/testing` run with `poolOptions.threads.singleThread = true`: the harness shares one test database. Build before `pnpm test:integration`, because extension loading resolves compiled plugins.
+- Integration Vitest configs using `@openora/testing` run with `poolOptions.threads.singleThread = true`: the harness shares one test database. Build before `pnpm test:e2e`, because extension loading resolves compiled plugins.
 
 ## What is real, what is doubled
 
