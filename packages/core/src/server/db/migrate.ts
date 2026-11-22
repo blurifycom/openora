@@ -253,16 +253,16 @@ export async function runMigrations(opts: RunMigrationsOptions) {
     };
     const schema = quoteIdentifier(migrationsSchema);
     const table = quoteIdentifier(migrationsTable);
-    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS ${schema}.${table} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
-    );
     const lockClient = await pool.connect();
     try {
       await withMigrationAdvisoryLock(
         lockClient,
         `${migrationsSchema}.${migrationsTable}`,
         async () => {
+          await lockClient.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+          await lockClient.query(
+            `CREATE TABLE IF NOT EXISTS ${schema}.${table} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
+          );
           for (const sql of opts.lockedPreSql ?? []) {
             await lockClient.query(sql);
           }
