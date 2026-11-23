@@ -2,8 +2,8 @@ name: Mutation
 
 # Weekly StrykerJS (packages/core `stryker.config.mjs`), one job per shard of the high-risk modules,
 # against the core unit and integration tiers and the e2e tier in packages/testing. Incremental: the
-# cached result means only mutants in code or tests that changed since the last run are re-tested. A
-# report, not a gate.
+# previous run's report artifact means only mutants in code or tests that changed since then are
+# re-tested. A report, not a gate.
 on:
   schedule:
     # Saturday 01:00 UTC. Nightly runs were a third of the repo's Actions minutes.
@@ -82,9 +82,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHARD: ${{ matrix.shard }}
         run: |
-          for id in $(gh run list --workflow mutation.yml --limit 6 --json databaseId --jq '.[].databaseId'); do
+          # Only dev runs started by the schedule or by hand: another branch's run could upload a
+          # crafted baseline that marks every mutant killed.
+          for id in $(gh run list --workflow mutation.yml --branch dev --limit 10 --json databaseId,event \
+            --jq '.[] | select(.event == "schedule" or .event == "workflow_dispatch") | .databaseId'); do
             [ "$id" = "$GITHUB_RUN_ID" ] && continue
-            gh run download "$id" --name "mutation-report-$SHARD" --dir "packages/core/reports/$SHARD" && break
+            # `gh run download` refuses to overwrite, so each try gets a fresh folder.
+            tmp=$(mktemp -d)
+            if gh run download "$id" --name "mutation-report-$SHARD" --dir "$tmp" &&
+              [ -s "$tmp/stryker-incremental.json" ]; then
+              mkdir -p "packages/core/reports/$SHARD"
+              mv "$tmp"/* "packages/core/reports/$SHARD/"
+              break
+            fi
           done
       - run: pnpm --filter @openora/core test:mutation
         env:
