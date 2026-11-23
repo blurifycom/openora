@@ -188,8 +188,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     const coolingDown = (this.failedUntil.get(currency) ?? 0) > Date.now();
 
     if (row && ageMs < this.hardMaxAgeMs) {
-      // The cooldown covers the background refresh too: without it a rate-limited vendor is
-      // called again on every read of the leg, which keeps it rate-limiting us.
       if (!coolingDown) {
         void this.fetchLeg(currency).then(
           () => this.failedUntil.delete(currency),

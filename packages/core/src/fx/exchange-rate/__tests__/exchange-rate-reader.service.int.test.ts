@@ -376,7 +376,6 @@ describe('ExchangeRateReaderService.getRate - failure cooldown', () => {
     expect((await reader.getRate('EUR', 'USD'))?.rate).toBe('1.100000000000000000');
     await wait(20);
 
-    // A rate-limited vendor must not be called on every read of a soft-stale leg.
     expect(getRate).toHaveBeenCalledTimes(1);
   });
 });
