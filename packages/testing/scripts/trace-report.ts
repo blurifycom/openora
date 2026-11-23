@@ -3,10 +3,14 @@
 // changed procedure, with spans new since the baseline on `+` lines of a diff block.
 //
 //   node scripts/trace-report.ts <trace-results dir> [baseline trace-results dir]
+//   node scripts/trace-report.ts <trace-results dir> [baseline dir] --gantt <procedure text>
 //
-// Without a baseline it lists the procedures with the most queries per request.
+// Without a baseline it lists the procedures with the most queries per request. `--gantt` prints
+// the PR "Trace" section instead: a mermaid gantt of one request per status of each matching
+// procedure (the happy path and its refusals), statements new since the baseline in red.
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import type { SpanRecord } from '../src/trace-recorder.ts';
 
@@ -313,6 +317,56 @@ function typicalRequest(
   );
 }
 
+// Mermaid reads `:` as the field separator and `#`/`;` as comment and statement ends.
+const ganttLabel = (text: string): string =>
+  text.replace(/[:#;]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** One request as a mermaid gantt: times in ms from the request start, new statements `crit`. */
+function gantt(request: Request, baselineSignatures: Set<string> | undefined): string {
+  const { root } = request;
+  const tasks = rows(request, baselineSignatures).map((row) => {
+    const start = Math.max(0, Math.floor(row.startMs - root.startMs));
+    const end = Math.max(Math.ceil(row.startMs + row.durationMs - root.startMs), start + 1);
+    const name = `${'· '.repeat(row.depth)}${ganttLabel(row.label)} ${ms(row.durationMs)}`;
+    return `  ${name} :${row.isNew ? 'crit, ' : ''}${start}, ${end}`;
+  });
+  return [
+    `Trace \`${root.traceId}\` (${request.test}): ${request.queries.length} queries.`,
+    '',
+    '```mermaid',
+    'gantt',
+    `  title ${ganttLabel(request.procedure)} · ${ms(root.durationMs)}`,
+    '  dateFormat x',
+    // `dateFormat x` reads times as epoch ms; `%L` is the millisecond within a second.
+    `  axisFormat ${root.durationMs < 1000 ? '%L ms' : '%S.%L s'}`,
+    `  section ${ganttLabel(root.name)}`,
+    ...tasks,
+    '```',
+  ].join('\n');
+}
+
+export function ganttReport(
+  currentDir: string,
+  baselineDir: string | undefined,
+  match: string,
+): string {
+  const current = stats(toRequests(readSpans(currentDir)));
+  const baseline = baselineDir ? stats(toRequests(readSpans(baselineDir))) : new Map();
+  const matching = [...current.values()]
+    .filter((stat) => stat.procedure.includes(match))
+    .toSorted((a, b) => a.procedure.localeCompare(b.procedure));
+  if (matching.length === 0) {
+    return `No recorded request matches "${match}". Run the suite that drives it first.\n`;
+  }
+  return `${matching
+    .flatMap((stat) => {
+      const base = baseline.get(stat.procedure);
+      const request = typicalRequest(stat, base);
+      return request ? [gantt(request, baselineDir ? (base?.seen ?? new Set()) : undefined)] : [];
+    })
+    .join('\n\n')}\n`;
+}
+
 const TABLE_HEADER = [
   '| procedure | n | p50 | Δ p50 | queries/req | Δ queries |',
   '|---|--:|--:|--:|--:|--:|',
@@ -373,9 +427,21 @@ function report(currentDir: string, baselineDir: string | undefined): string {
   ].join('\n');
 }
 
-const [currentDir, baselineDir] = process.argv.slice(2);
-if (!currentDir) {
-  console.error('usage: node scripts/trace-report.ts <trace-results dir> [baseline dir]');
-  process.exit(1);
+if (import.meta.main) {
+  const { positionals, values } = parseArgs({
+    allowPositionals: true,
+    options: { gantt: { type: 'string' } },
+  });
+  const [currentDir, baselineDir] = positionals;
+  if (!currentDir) {
+    console.error(
+      'usage: node scripts/trace-report.ts <trace-results dir> [baseline dir] [--gantt <procedure>]',
+    );
+    process.exit(1);
+  }
+  process.stdout.write(
+    values.gantt === undefined
+      ? report(currentDir, baselineDir)
+      : ganttReport(currentDir, baselineDir, values.gantt),
+  );
 }
-process.stdout.write(report(currentDir, baselineDir));
