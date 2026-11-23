@@ -166,11 +166,13 @@ function signatureSets(requests: Request[]): Pick<ProcedureStats, 'signatures' |
   };
 }
 
+const withoutStatus = (procedure: string): string => procedure.replace(/ \d{3}$/, '');
+
 /** Which branch a racing test lands on varies by run, so a statement is new only if no status ran it. */
 function withSeenAcrossStatuses(
   baseline: Map<string, ProcedureStats>,
 ): Map<string, ProcedureStats> {
-  const byName = Map.groupBy(baseline.values(), (stat) => stat.procedure.replace(/ \d{3}$/, ''));
+  const byName = Map.groupBy(baseline.values(), (stat) => withoutStatus(stat.procedure));
   for (const group of byName.values()) {
     const seen = new Set(group.flatMap((stat) => [...stat.seen]));
     for (const stat of group) {
@@ -339,7 +341,7 @@ function gantt(request: Request, baselineSignatures: Set<string> | undefined): s
     '  dateFormat x',
     // `dateFormat x` reads times as epoch ms; `%L` is the millisecond within a second.
     `  axisFormat ${root.durationMs < 1000 ? '%L ms' : '%S.%L s'}`,
-    `  section ${ganttLabel(root.name)}`,
+    `  section ${ganttLabel(root.name.replace(ID_SEGMENT, '/:id'))}`,
     ...tasks,
     '```',
   ].join('\n');
@@ -350,10 +352,18 @@ export function ganttReport(
   baselineDir: string | undefined,
   match: string,
 ): string {
+  const baselineSpans = baselineDir ? readSpans(baselineDir) : [];
+  if (baselineDir && baselineSpans.length === 0) {
+    throw new Error(`No spans in the baseline ${baselineDir}: run the suite there first.`);
+  }
   const current = stats(toRequests(readSpans(currentDir)));
-  const baseline = baselineDir ? stats(toRequests(readSpans(baselineDir))) : new Map();
+  // Same rule as the CI report: a statement is new only if no status of the procedure ran it.
+  const baseline = withSeenAcrossStatuses(stats(toRequests(baselineSpans)));
+  const seenByName = new Map(
+    [...baseline.values()].map((stat) => [withoutStatus(stat.procedure), stat.seen]),
+  );
   const matching = [...current.values()]
-    .filter((stat) => stat.procedure.includes(match))
+    .filter((stat) => withoutStatus(stat.procedure) === match || stat.procedure === match)
     .toSorted((a, b) => a.procedure.localeCompare(b.procedure));
   if (matching.length === 0) {
     return `No recorded request matches "${match}". Run the suite that drives it first.\n`;
@@ -362,7 +372,10 @@ export function ganttReport(
     .flatMap((stat) => {
       const base = baseline.get(stat.procedure);
       const request = typicalRequest(stat, base);
-      return request ? [gantt(request, baselineDir ? (base?.seen ?? new Set()) : undefined)] : [];
+      const seen = baselineDir
+        ? (seenByName.get(withoutStatus(stat.procedure)) ?? new Set<string>())
+        : undefined;
+      return request ? [gantt(request, seen)] : [];
     })
     .join('\n\n')}\n`;
 }

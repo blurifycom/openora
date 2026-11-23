@@ -1,10 +1,10 @@
 // `trace-report.ts --gantt` prints the PR "Trace" section: one mermaid gantt per status of a
 // procedure, statements new since the baseline marked `crit`.
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { ganttReport } from '../../packages/testing/scripts/trace-report.ts';
 
 const span = (traceId, spanId, parentId, name, startMs, durationMs, extra = {}) => ({
@@ -41,8 +41,11 @@ const spans = [
     pgClient: 2,
   }),
 ];
+const made = [];
+after(() => made.forEach((path) => rmSync(path, { recursive: true, force: true })));
 const dir = (rows) => {
   const path = mkdtempSync(join(tmpdir(), 'trace-gantt-'));
+  made.push(path);
   writeFileSync(join(path, 'spans-0.jsonl'), rows.map((row) => JSON.stringify(row)).join('\n'));
   return path;
 };
@@ -65,4 +68,32 @@ test('marks a statement the baseline never ran, and names a missing procedure', 
   assert.match(out, /pg INSERT ledger_entry 2\.0 ms :crit, 3, 6$/m);
   assert.match(out, /pg SELECT wallet 1\.0 ms :1, 2$/m);
   assert.match(ganttReport(dir(spans), undefined, 'nope'), /No recorded request matches "nope"/);
+});
+
+test('a statement the baseline ran under another status is not new; a bare name matches no other procedure', () => {
+  // The baseline ran the insert only in a 403 request, the current run in the 200.
+  const baseline = dir([
+    ...spans.filter((row) => row.traceId === refused),
+    span(refused, '10', '8', 'pg.query', 202, 1, {
+      sql: 'insert into "ledger_entry" values ($1)',
+      pgClient: 2,
+    }),
+  ]);
+  const out = ganttReport(dir(spans), baseline, 'wallet.deposit');
+  assert.doesNotMatch(out, /crit/);
+  const other = span('c'.repeat(32), '20', null, 'POST /rpc/wallet/depositLimits', 300, 2, {
+    httpStatus: 200,
+  });
+  const limits = span('c'.repeat(32), '21', '20', 'orpc.wallet.depositLimits', 300.1, 1.8);
+  assert.doesNotMatch(
+    ganttReport(dir([...spans, other, limits]), undefined, 'wallet.deposit'),
+    /depositLimits/,
+  );
+});
+
+test('refuses an empty baseline instead of marking every statement new', () => {
+  assert.throws(
+    () => ganttReport(dir(spans), dir([]), 'wallet.deposit'),
+    /No spans in the baseline/,
+  );
 });
