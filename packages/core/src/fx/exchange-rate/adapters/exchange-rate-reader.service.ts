@@ -76,7 +76,9 @@ export type ExchangeRateReaderServiceDeps = {
  *   - soft-stale (freshTtlMs <= age < hardMaxAgeMs): return the stored value
  *     immediately, kick a single-flight background refresh that is invisible to
  *     the caller (its failure is logged, never thrown, and starts the same failure cooldown
- *     as a synchronous fetch, so a rate-limited vendor is not re-called on every read).
+ *     as a synchronous fetch, so a rate-limited vendor is not re-called on every read; a
+ *     refresh that brings nothing newer than the stored quote, from a provider serving its
+ *     own cache, starts it too).
  *   - hard-stale (age >= hardMaxAgeMs) or no row at all: fetch synchronously
  *     through the same single-flight path; on success return it and persist it in
  *     the background; on failure return `null`.
@@ -190,7 +192,13 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     if (row && ageMs < this.hardMaxAgeMs) {
       if (!coolingDown) {
         void this.fetchLeg(currency).then(
-          () => this.failedUntil.delete(currency),
+          (quote) => {
+            if (new Date(quote.asOf).getTime() > row.providerAsOf.getTime()) {
+              this.failedUntil.delete(currency);
+            } else {
+              this.rememberFailure(currency);
+            }
+          },
           (err: unknown) => {
             this.rememberFailure(currency);
             logger.warn(
