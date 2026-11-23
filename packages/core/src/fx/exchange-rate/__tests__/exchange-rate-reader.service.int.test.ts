@@ -362,6 +362,23 @@ describe('ExchangeRateReaderService.getRate - failure cooldown', () => {
 
     expect(getRate).toHaveBeenCalledTimes(2);
   });
+
+  it('a failed soft-stale refresh holds off further refreshes for failureCooldownMs', async () => {
+    await seedQuote('EUR', 'USD', '1.100000000000000000', { ageMs: SOFT_STALE_AGE_MS });
+    const { provider, getRate } = failingProvider();
+    const reader = new ExchangeRateReaderService(
+      baseDeps({ fiatProvider: provider, failureCooldownMs: 60_000 }),
+    );
+
+    expect((await reader.getRate('EUR', 'USD'))?.rate).toBe('1.100000000000000000');
+    await vi.waitFor(() => expect(getRate).toHaveBeenCalledTimes(1));
+    await wait(20);
+    expect((await reader.getRate('EUR', 'USD'))?.rate).toBe('1.100000000000000000');
+    await wait(20);
+
+    // A rate-limited vendor must not be called on every read of a soft-stale leg.
+    expect(getRate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('ExchangeRateReaderService.getRate - single-flight', () => {

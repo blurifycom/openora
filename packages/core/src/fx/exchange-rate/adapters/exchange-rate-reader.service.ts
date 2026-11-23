@@ -75,7 +75,8 @@ export type ExchangeRateReaderServiceDeps = {
  *   - fresh (age < freshTtlMs): return the stored value, no provider call.
  *   - soft-stale (freshTtlMs <= age < hardMaxAgeMs): return the stored value
  *     immediately, kick a single-flight background refresh that is invisible to
- *     the caller (its failure is logged, never thrown).
+ *     the caller (its failure is logged, never thrown, and starts the same failure cooldown
+ *     as a synchronous fetch, so a rate-limited vendor is not re-called on every read).
  *   - hard-stale (age >= hardMaxAgeMs) or no row at all: fetch synchronously
  *     through the same single-flight path; on success return it and persist it in
  *     the background; on failure return `null`.
@@ -184,18 +185,27 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       return { rate: row.rate, asOf: row.providerAsOf.toISOString() };
     }
 
+    const coolingDown = (this.failedUntil.get(currency) ?? 0) > Date.now();
+
     if (row && ageMs < this.hardMaxAgeMs) {
-      void this.fetchLeg(currency).catch((err: unknown) => {
-        logger.warn(
-          { err, currency, pivot: this.pivot },
-          'background exchange rate refresh failed',
+      // The cooldown covers the background refresh too: without it a rate-limited vendor is
+      // called again on every read of the leg, which keeps it rate-limiting us.
+      if (!coolingDown) {
+        void this.fetchLeg(currency).then(
+          () => this.failedUntil.delete(currency),
+          (err: unknown) => {
+            this.rememberFailure(currency);
+            logger.warn(
+              { err, currency, pivot: this.pivot },
+              'background exchange rate refresh failed',
+            );
+          },
         );
-      });
+      }
       return { rate: row.rate, asOf: row.providerAsOf.toISOString() };
     }
 
-    const cooldownUntil = this.failedUntil.get(currency);
-    if (cooldownUntil !== undefined && Date.now() < cooldownUntil) {
+    if (coolingDown) {
       return null;
     }
 
