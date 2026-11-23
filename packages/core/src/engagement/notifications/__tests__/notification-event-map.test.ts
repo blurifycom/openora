@@ -727,6 +727,27 @@ describe('notificationEventMap', () => {
     });
   });
 
+  it('tells the player a rank reward is waiting to be claimed, naming the reward', () => {
+    const userId = randomUUID();
+    const rewardId = randomUUID();
+
+    const input = entryFor('promo.rank.reward.claimable').buildNotification({
+      userId,
+      rewardId,
+      kind: 'weekly',
+      periodKey: 'rank-weekly:2026-11-09',
+      amount: '7.5',
+      currency: 'USDT',
+    });
+
+    expect(input).toEqual({
+      userId,
+      type: 'rank.reward.claimable',
+      params: { kind: 'weekly', amount: '7.5', currency: 'USDT' },
+      data: { rewardId },
+    });
+  });
+
   describe('promo.rank.changed', () => {
     const rankChanged = (bonuses: {
       dailyBonus: string | null;
@@ -910,6 +931,14 @@ describe('notificationEventMap', () => {
         grantId: null,
       },
       'promo.rakeback.claimable': { userId: id(), amount: '12.5', currency: 'USDT' },
+      'promo.rank.reward.claimable': {
+        userId: id(),
+        rewardId: id(),
+        kind: 'daily',
+        periodKey: 'rank-daily:2026-11-21T00',
+        amount: '1.5',
+        currency: 'USDT',
+      },
       'chat.user.mentioned': {
         mentionedUserId: id(),
         byUserId: id(),

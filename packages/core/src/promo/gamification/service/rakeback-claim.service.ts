@@ -48,6 +48,12 @@ import type {
 } from '../contract/index.js';
 import { claimedByCurrency, priceRakeback, unclaimedRakeback } from '../shared/rakeback-totals.js';
 import { announceCashCredits } from '../shared/cash-credit-event.js';
+import {
+  CLAIM_BLOCKED_STATUSES,
+  cashClaimBlocker,
+  isDueForAutoPayout,
+  isDueForAutoPayoutLocked,
+} from '../shared/cash-claim-eligibility.js';
 
 export const RakebackNothingToClaimError = makeConflictError(
   'RakebackNothingToClaimError',
@@ -75,7 +81,6 @@ export const RakebackClaimConflictError = makeConflictError(
   { reason: 'claim_conflict' },
 );
 
-const BLOCKED_STATUSES = ['suspended', 'closed'] as const;
 const PROVIDER_NAME = 'rakeback-claim';
 const NOTIFY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const AUTO_PAYOUT_CHECK_CONCURRENCY = 10;
@@ -144,7 +149,7 @@ export class RakebackClaimService {
   async autoPay(userId: Uuid): Promise<RakebackClaimed | null> {
     try {
       return await this.deps.drizzle.db.transaction(async (tx) =>
-        (await this.isDue(tx, userId))
+        (await isDueForAutoPayoutLocked(tx, this.deps.exclusions, userId))
           ? this.settle(tx, userId, `auto:${randomUUID()}`, 'auto_paid')
           : null,
       );
@@ -173,27 +178,9 @@ export class RakebackClaimService {
         ),
       );
     const due = await mapConcurrent(rows, AUTO_PAYOUT_CHECK_CONCURRENCY, (row) =>
-      this.dueOn(row.userId, row.status),
+      isDueForAutoPayout(this.deps.exclusions, row.userId, row.status),
     );
     return rows.filter((_, index) => due[index]).map((row) => row.userId);
-  }
-
-  private async isDue(tx: DrizzleTx, userId: Uuid): Promise<boolean> {
-    const [account] = await tx
-      .select({ status: player.status })
-      .from(player)
-      .where(eq(player.userId, userId))
-      .for('share');
-    return this.dueOn(userId, account?.status ?? null, tx);
-  }
-
-  private async dueOn(userId: Uuid, status: string | null, tx?: DrizzleTx): Promise<boolean> {
-    if (status === 'closed' || status === 'self_excluded') {
-      return true;
-    }
-    // An RG block is also a cooling-off, which keeps the rakeback for the player to claim later.
-    const state = await this.deps.exclusions?.getExclusionState(userId, tx);
-    return state?.isSelfExcluded === true;
   }
 
   /**
@@ -217,7 +204,7 @@ export class RakebackClaimService {
       .where(
         and(
           eq(promoRakebackAccrual.status, 'accrued'),
-          notInArray(player.status, [...BLOCKED_STATUSES, 'self_excluded']),
+          notInArray(player.status, [...CLAIM_BLOCKED_STATUSES, 'self_excluded']),
           or(
             eq(user.rgBlocked, false),
             and(isNotNull(user.rgBlockedUntil), lte(user.rgBlockedUntil, now)),
@@ -435,24 +422,14 @@ export class RakebackClaimService {
   }
 
   private async assertMayClaim(tx: DrizzleTx, userId: Uuid) {
-    const eligibility = this.deps.eligibility;
-    if (!eligibility) {
+    if (!this.deps.eligibility) {
       throw new Error('rakeback claim needs PLAY_ELIGIBILITY bound');
     }
-    // The player row before the user row: a status writer holds the player row while identity
-    // republishes play eligibility, which takes the user row, so the other order deadlocks.
-    const [account] = await tx
-      .select({ status: player.status })
-      .from(player)
-      .where(eq(player.userId, userId))
-      .for('share');
-    if (await eligibility.isRestricted(userId, tx)) {
+    const blocker = await cashClaimBlocker(tx, this.deps.eligibility, userId, { lock: true });
+    if (blocker === 'restricted') {
       throw new RakebackClaimRestrictedError();
     }
-    if (!account || account.status === 'self_excluded') {
-      throw new RakebackClaimRestrictedError();
-    }
-    if ((BLOCKED_STATUSES as readonly string[]).includes(account.status)) {
+    if (blocker === 'account_blocked') {
       throw new RakebackAccountBlockedError();
     }
   }
@@ -461,19 +438,11 @@ export class RakebackClaimService {
     userId: Uuid,
     totals: { unclaimed: unknown[]; referenceTotal: string },
   ): Promise<RakebackClaimBlocker | null> {
-    const db = this.deps.drizzle.db;
-    if (!this.deps.eligibility || (await this.deps.eligibility.isRestricted(userId))) {
-      return 'restricted';
-    }
-    const [account] = await db
-      .select({ status: player.status })
-      .from(player)
-      .where(eq(player.userId, userId));
-    if (!account || account.status === 'self_excluded') {
-      return 'restricted';
-    }
-    if ((BLOCKED_STATUSES as readonly string[]).includes(account.status)) {
-      return 'account_blocked';
+    const blocked = await cashClaimBlocker(this.deps.drizzle.db, this.deps.eligibility, userId, {
+      lock: false,
+    });
+    if (blocked !== null) {
+      return blocked;
     }
     if (totals.unclaimed.length === 0) {
       return 'nothing_to_claim';
