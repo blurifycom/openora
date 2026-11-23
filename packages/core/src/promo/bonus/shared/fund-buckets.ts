@@ -16,7 +16,7 @@ const ZERO = '0';
 
 /** Free real money, bucket A (unlinked), bucket B (linked) and bucket C (bonus). */
 export type FundSplit = { free: string; unlinked: string; linked: string; bonus: string };
-export type FundBucket = keyof FundSplit;
+type FundBucket = keyof FundSplit;
 
 export const DEFAULT_FUND_SETTINGS: BonusFundSettings = {
   rolloverBase: 'bonus',
@@ -26,7 +26,7 @@ export const DEFAULT_FUND_SETTINGS: BonusFundSettings = {
   decimals: 18,
 };
 
-export const EMPTY_SPLIT: FundSplit = { free: ZERO, unlinked: ZERO, linked: ZERO, bonus: ZERO };
+const EMPTY_SPLIT: FundSplit = { free: ZERO, unlinked: ZERO, linked: ZERO, bonus: ZERO };
 
 /** The most restricted bucket first: where a return's rounding residue lands. */
 const RESIDUE_ORDER: readonly FundBucket[] = ['bonus', 'linked', 'unlinked', 'free'];
@@ -75,7 +75,7 @@ export function clampCounters(args: { real: string; unlinked: string; linked: st
   return { unlinked, linked };
 }
 
-export function spendOrder(order: BonusFreeFundsOrder): readonly FundBucket[] {
+function spendOrder(order: BonusFreeFundsOrder): readonly FundBucket[] {
   return order === 'first'
     ? ['free', 'unlinked', 'linked', 'bonus']
     : ['unlinked', 'linked', 'bonus', 'free'];
