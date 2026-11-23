@@ -21,6 +21,7 @@ copyFileSync(join(hooks, 'guard-mr.mjs'), guard);
 writeFileSync(join(repo, '.gitignore'), 'node_modules\n');
 const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
 git('init', '-q');
+git('remote', 'add', 'origin', 'git@github.com:o/r.git');
 git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
 git('add', '-A');
 git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'hooks');
@@ -130,4 +131,99 @@ test('aliases, combined short flags and quoted separators are read', () => {
   assert.equal(exitCode('gh pr create -H=dev'), ALLOWED);
   assert.equal(exitCode("gh pr create -t 'x;y' -H unverified"), DENIED);
   assert.equal(exitCode("gh pr create -t 'x;y' -H verified"), ALLOWED);
+});
+
+test('a guarded checkout is held to its stamp whatever repository a create names', () => {
+  assert.equal(exitCode('gh pr create -R other/repo -H unverified'), DENIED);
+  assert.equal(exitCode('gh pr create -R other/x -H verified; gh pr create -H unverified'), DENIED);
+  assert.equal(exitCode(`cd "${repo}" && gh pr create -H unverified`), DENIED);
+  assert.equal(exitCode("sh -c 'gh pr create -H unverified'"), DENIED);
+  assert.equal(exitCode('eval "glab mr create -s unverified"'), DENIED);
+});
+
+test("a checkout of another repository is left to that repository's rules", () => {
+  const other = realpathSync(mkdtempSync(join(tmpdir(), 'guard-mr-other-')));
+  execFileSync('git', ['init', '-q'], { cwd: other });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/other/repo.git'], {
+    cwd: other,
+  });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'],
+    { cwd: other },
+  );
+  const from = (command) =>
+    spawnSync('node', [guard], {
+      cwd: other,
+      input: JSON.stringify({ tool_input: { command }, cwd: other }),
+    }).status;
+  try {
+    assert.equal(from('gh pr create --draft --base dev --head feat'), ALLOWED);
+    assert.equal(
+      from(`gh pr create --draft -B dev -H feat --title 'fix: a; b' --body-file "b.md"`),
+      ALLOWED,
+    );
+    // Anything but one plain create could reach back into the guarded repository.
+    assert.equal(from('gh pr create -R other/repo --head feat'), DENIED);
+    assert.equal(from('gh pr create -R o/r --head unverified'), DENIED);
+    assert.equal(from('gh pr create -R other/repo -R github.com/O/R.git --head x'), DENIED);
+    assert.equal(from('gh -R other/repo pr create --repo=o/r/ -H x'), DENIED);
+    assert.equal(from('GH_REPO=o/r gh pr create -H x'), DENIED);
+    assert.equal(from(`cd ${repo} && gh pr create -H unverified`), DENIED);
+    assert.equal(from('cd "$PWD" && gh pr create -H x'), DENIED);
+    assert.equal(from('pushd /tmp; glab mr new -s x'), DENIED);
+    assert.equal(from('gh api repos/o/r/pulls -f head=x -f base=dev'), DENIED);
+    assert.equal(
+      from("gh api graphql -f query='mutation { createPullRequest(input: {}) { x } }'"),
+      DENIED,
+    );
+    assert.equal(from('git push -o merge_request.create'), DENIED);
+    assert.equal(from(`git -C ${repo} push -o merge_request.create`), DENIED);
+    assert.equal(from(`GIT_DIR=${repo}/.git gh pr create -H x`), DENIED);
+    assert.equal(from(`chdir ${repo} && gh pr create -H x`), DENIED);
+    assert.equal(from('export GH_REPO=o/r; gh pr create -H x'), DENIED);
+    assert.equal(from('R=o/r; gh pr create -R $R -H x'), DENIED);
+    assert.equal(from('gh pr create -R "$(echo o/r)" -H x'), DENIED);
+    assert.equal(from(`sh -c 'cd ${repo} && gh pr create -H x'`), DENIED);
+    assert.equal(from('eval "gh pr create -H x"'), DENIED);
+    assert.equal(from('gh pr create -R "o"/r -H x'), DENIED);
+    assert.equal(from('gh pr create --repo=o/{r,} -H x'), DENIED);
+    assert.equal(from('\\cd ../r && gh pr create -H x'), DENIED);
+    assert.equal(from('env --chdir=../r gh pr create -H x'), DENIED);
+    assert.equal(from("dash -c 'gh pr create -H x'"), DENIED);
+    assert.equal(from('gh pr create -H x\ngh pr create -H y'), DENIED);
+    assert.equal(from('gh pr create --title "$(id)" -H x'), DENIED);
+    assert.equal(from('gh pr create -"R" o/r -H x'), DENIED);
+    assert.equal(from("gh pr create -''R o/r -H x"), DENIED);
+    assert.equal(from('gh pr create --re""po=o/r -H x'), DENIED);
+    assert.equal(from('gh pr create -H x "-R" o/r'), DENIED);
+    assert.equal(from("gh pr create -H x '--repo' o/r"), DENIED);
+    // A rewrite that sends the other checkout's own remote here.
+    execFileSync(
+      'git',
+      ['config', 'url.git@github.com:o/r.git.insteadOf', 'https://github.com/other/repo.git'],
+      { cwd: other },
+    );
+    assert.equal(from('gh pr create --draft --base dev --head feat'), DENIED);
+    execFileSync('git', ['config', '--unset', 'url.git@github.com:o/r.git.insteadOf'], {
+      cwd: other,
+    });
+    assert.equal(from('gh pr create --draft --base dev --head feat'), ALLOWED);
+    // A remote that gh would decode or normalise into this repository.
+    for (const url of [
+      'https://github.com/o/r?x=1',
+      'https://github.com/o%2Fr',
+      'https://github.com/O/R.GIT',
+      'https://github.com/other/repo git@github.com:o/r.git',
+    ]) {
+      execFileSync('git', ['remote', 'add', 'odd', url], { cwd: other });
+      assert.equal(from('gh pr create --draft --base dev --head feat'), DENIED, url);
+      execFileSync('git', ['remote', 'remove', 'odd'], { cwd: other });
+    }
+    // A remote of the other checkout pointing here sends even a plain create here.
+    execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/o/r'], { cwd: other });
+    assert.equal(from('gh pr create --draft --base dev --head feat'), DENIED);
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
 });
