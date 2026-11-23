@@ -55,6 +55,7 @@ import {
   type CreateMcpTokenInput,
   type ListMcpTokensInput,
   type ListMyMcpTokensInput,
+  type McpTokenPolicy,
   type McpTokenStatus,
 } from '../contract/mcp-token.js';
 import {
@@ -311,6 +312,10 @@ export class McpTokenService implements McpTokenRevocation {
         throw sanitizeIssuanceFailure(err);
       });
     return { ...toMcpTokenDto(created, createdAt), token };
+  }
+
+  policy(): McpTokenPolicy {
+    return { enabled: this.config.enabled, ttlDays: { ...this.config.tokenTtlDays } };
   }
 
   listMine(adminUserId: User['id'], query: ListMyMcpTokensInput) {
