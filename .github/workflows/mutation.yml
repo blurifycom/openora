@@ -1,12 +1,13 @@
 name: Mutation
 
-# Nightly StrykerJS (packages/core `stryker.config.mjs`), one job per shard of the high-risk modules,
+# Weekly StrykerJS (packages/core `stryker.config.mjs`), one job per shard of the high-risk modules,
 # against the core unit and integration tiers and the e2e tier in packages/testing. Incremental: the
 # cached result means only mutants in code or tests that changed since the last run are re-tested. A
 # report, not a gate.
 on:
   schedule:
-    - cron: '0 1 * * 2-6'
+    # Saturday 01:00 UTC. Nightly runs were a third of the repo's Actions minutes.
+    - cron: '0 1 * * 6'
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +23,9 @@ env:
 jobs:
   mutation:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # download the previous run's incremental baseline
     timeout-minutes: 350
     strategy:
       fail-fast: false
@@ -70,11 +74,18 @@ jobs:
         with:
           turbo-cache: 'false'
       - uses: ./.github/actions/test-infra
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: packages/core/reports/${{ matrix.shard }}/stryker-incremental.json
-          key: stryker-incremental-${{ matrix.shard }}-${{ github.run_id }}
-          restore-keys: stryker-incremental-${{ matrix.shard }}-
+      # The incremental baseline is the shard's report from the latest earlier run that has one.
+      # Not actions/cache: it evicts an entry nobody read for 7 days, a weekly run's exact gap.
+      - name: Restore incremental baseline
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          for id in $(gh run list --workflow mutation.yml --limit 6 --json databaseId --jq '.[].databaseId'); do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            gh run download "$id" --name "mutation-report-$SHARD" --dir "packages/core/reports/$SHARD" && break
+          done
       - run: pnpm --filter @openora/core test:mutation
         env:
           MUTATION_SHARD: ${{ matrix.shard }}
