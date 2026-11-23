@@ -4,7 +4,14 @@ import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
+import {
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameProviderAggregatorMapping,
+} from '../schema/index.js';
+import { catalogCacheKeys } from '../service/game-catalog-cache.service.js';
 import {
   GameProviderService,
   GameProviderLogoHostNotAllowedError,
@@ -36,6 +43,35 @@ async function seedProvider(
       .insert(gameProviderAggregatorMapping)
       .values(mappings.map((mapping) => ({ providerId: row!.id, ...mapping })));
   }
+  return row!;
+}
+
+async function seedCategory(overrides: Partial<typeof gameCategory.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(gameCategory)
+    .values({ slug: `category-${randomUUID()}`, name: 'Category', ...overrides })
+    .returning();
+  return row!;
+}
+
+async function seedGameIn(
+  providerId: string,
+  categoryId: string,
+  overrides: Partial<typeof game.$inferInsert> = {},
+) {
+  const [row] = await db.drizzle.db
+    .insert(game)
+    .values({
+      name: 'Game',
+      slug: `game-${randomUUID()}`,
+      providerId,
+      aggregator: 'aggregation-a',
+      isActive: true,
+      reviewStatus: 'approved',
+      ...overrides,
+    })
+    .returning();
+  await db.drizzle.db.insert(gameCategoryGame).values({ gameId: row!.id, categoryId });
   return row!;
 }
 
@@ -79,6 +115,87 @@ describe('GameProviderService (real PG)', () => {
     });
     const secondPage = await svc.listActiveProviders({ page: 2, limit: 1 });
     expect(secondPage.items.map((r) => r.slug)).toEqual(['zeta-studio']);
+  });
+
+  describe('listActiveProviders by category', () => {
+    const seedActive = (overrides: Partial<typeof gameProvider.$inferInsert> = {}) =>
+      seedProvider({ isActive: true, ...overrides });
+    const slugsIn = async (categoryId?: string) =>
+      (await makeService().svc.listActiveProviders({ page: 1, limit: 50, categoryId })).items.map(
+        (item) => item.slug,
+      );
+
+    it('returns every active provider without a categoryId', async () => {
+      const slots = await seedCategory();
+      const withGame = await seedActive({ slug: 'with-game', name: 'With Game' });
+      await seedActive({ slug: 'no-game', name: 'No Game' });
+      await seedActive({ slug: 'retired', name: 'Retired', isActive: false });
+      await seedGameIn(withGame.id, slots.id);
+
+      expect(await slugsIn()).toEqual(['no-game', 'with-game']);
+    });
+
+    it('returns only active providers with a playable game in the category, counted once', async () => {
+      const slots = await seedCategory();
+      const other = await seedCategory();
+      const playable = await seedActive({ slug: 'playable', name: 'Playable' });
+      const inactiveGame = await seedActive({ slug: 'inactive-game', name: 'Inactive Game' });
+      const unavailableGame = await seedActive({ slug: 'unavailable', name: 'Unavailable' });
+      const inactiveProvider = await seedActive({
+        slug: 'inactive-provider',
+        name: 'Inactive Provider',
+        isActive: false,
+      });
+      const otherCategory = await seedActive({ slug: 'other-category', name: 'Other Category' });
+      await seedGameIn(playable.id, slots.id);
+      await seedGameIn(playable.id, slots.id);
+      await seedGameIn(inactiveGame.id, slots.id, { isActive: false });
+      await seedGameIn(unavailableGame.id, slots.id, { isUnavailable: true });
+      await seedGameIn(inactiveProvider.id, slots.id);
+      await seedGameIn(otherCategory.id, other.id);
+
+      const { svc } = makeService();
+      expect(await svc.listActiveProviders({ page: 1, limit: 50, categoryId: slots.id })).toEqual({
+        items: [expect.objectContaining({ slug: 'playable' })],
+        total: 1,
+        page: 1,
+        limit: 50,
+      });
+      expect(await slugsIn(other.id)).toEqual(['other-category']);
+    });
+
+    it('returns an empty list for an inactive or unknown category', async () => {
+      const retired = await seedCategory({ isActive: false });
+      const studio = await seedActive();
+      await seedGameIn(studio.id, retired.id);
+
+      expect(await slugsIn(retired.id)).toEqual([]);
+      expect(await slugsIn(randomUUID())).toEqual([]);
+    });
+
+    it('paginates the filtered list with a matching total', async () => {
+      const slots = await seedCategory();
+      for (const name of ['A', 'B', 'C']) {
+        await seedGameIn((await seedActive({ slug: `p-${name}`, name })).id, slots.id);
+      }
+      await seedActive({ slug: 'p-none', name: 'D' });
+
+      const { svc } = makeService();
+      const page = await svc.listActiveProviders({ page: 2, limit: 2, categoryId: slots.id });
+      expect(page.total).toBe(3);
+      expect(page.items.map((item) => item.slug)).toEqual(['p-C']);
+    });
+
+    it('keys the public cache per category so lists never collide', () => {
+      const a = randomUUID();
+      const b = randomUUID();
+      const keys = [
+        catalogCacheKeys.providers({ page: 1, limit: 20, categoryId: a }),
+        catalogCacheKeys.providers({ page: 1, limit: 20, categoryId: b }),
+        catalogCacheKeys.providers({ page: 1, limit: 20 }),
+      ];
+      expect(new Set(keys).size).toBe(3);
+    });
   });
 
   it('listProvidersAdmin paginates with totals', async () => {
