@@ -13,10 +13,10 @@ does not repeat it.
   chain and no vendor holds a per-player balance. A database trigger denies deleting a
   `wallet_transaction` row and rewriting what defines it (amount, type, currency, time, idempotency
   key, reference value); only the status, review, provider reference and `turnoverState` columns
-  move (`turnoverState` once set only from `deferred` to `counted`), and `balanceAfter`, `realShare` and `turnoverContribution` are filled once and then
-  frozen. `balanceAfter` is the
-  player's balance in that currency after the row moved money, set in the same transaction as the
-  move; it is null on older rows, on a deposit that has not settled, and on a refund (which writes
+  move, and `turnoverState` may go from unset to any state, then only from `deferred` to `counted`.
+  `balanceAfter`, `realShare` and `turnoverContribution` are filled once and then frozen.
+  `balanceAfter` is the player's balance in that currency after the row moved money, set in the same
+  transaction as the move; it is null on older rows, on a deposit that has not settled, and on a refund (which writes
   no row of its own). A withdrawal request is stamped when it is made, since that is when the
   balance is debited. For a stake partly funded by a bonus the ledger `amount` is the whole stake
   while the balance moved by the real part only; a win or bet reversal on such a round likewise
@@ -42,7 +42,7 @@ does not repeat it.
   currency and amount, each by `transactionId` and `playerId` (a withdrawal's `transactionId` is
   its `withdrawalId`). All are served only through the MCP kernel (ADR-0042).
 - **Read-only money facts for other modules.** Lifetime deposits and withdrawals, the last
-  deposit, turnover and recent withdrawal requests, read through the wallet's read port rather
+  deposit, wagered turnover and recent withdrawal requests, read through the wallet's read port rather
   than its tables. Every total is priced into the fx pivot at today's rates and reads as
   unknown, never as a partial sum, when one of its currencies has no rate. A deposit counts from
   when it reached the balance, so a held one counts from its release, and a withdrawal request
@@ -165,16 +165,18 @@ is `SPORTSBOOK_LEDGER` unchanged.
 - **Every ledger row records its direction explicitly.** Direction is never inferred from the kind
   of transaction: a cash transfer between players writes the same kind for the sender's debit and
   the recipient's credit.
-- **A donation, a gift and a rain credit their recipient a bonus grant, never cash.** The sender's
-  leg is an ordinary cash debit of the transfer's own kind. The recipient's leg is a wagered bonus
-  grant: it writes no ledger row and moves no settled balance, and when the recipient's bonus slot is
+- **A donation, a gift and a rain credit their recipient a bonus grant, never cash, by default.** The
+  sender's leg is an ordinary cash debit of the transfer's own kind. In the default `bonus_grant`
+  mode the recipient's leg is a wagered bonus grant: it writes no ledger row and moves no settled balance, and when the recipient's bonus slot is
   taken it is created pending until they activate it. A credit of any other kind is paid as that
   kind says, and an integration that wants a wagered transfer sends a donation. The grant is
   deduplicated on the recipient, the transfer's kind and the caller's reference, without the
   provider name, so that reference must be unique per transfer across provider names. A credit the
   wallet refuses for a missing wallet or a currency mismatch is reported as a refused outcome, not
   thrown, so a caller that has already debited the sender in the same transaction must fail on it to
-  roll the debit back.
+  roll the debit back. With `wallet.transferCredits` set to `cash`, the recipient's leg is a ledger
+  credit of real money instead, which needs a provider reference and carries a turnover requirement
+  when its kind is in `wallet.turnover.creditTypes` (see the turnover section below).
 - **A deposit, withdrawal or manual adjustment records its reference value once, when written.**
   The reference currency is the player's deposit-limit currency, else their wager-limit currency,
   else `wallet.defaultReferenceCurrency`. The rate and its timestamp are stored with it and never
@@ -285,13 +287,16 @@ is `SPORTSBOOK_LEDGER` unchanged.
   when `promo.bonus.withdrawalWhileActive` is `block`; under the default `forfeit` it forfeits
   every live grant instead, through `BONUS_LIFECYCLE.forfeitHeld` when no module binds the lock.
   The optional `WALLET_COMMANDS.movableFunds` reports the same figure under the same locks, for a
-  transfer's own transaction (ADR-0064). For display, `GET /wallet/balance`, `GET /wallet/balances`
-  and the `wallet.activity` agent tool add optional `locked` and `free` to each balance when a
-  bonus module is loaded, from the same computation in one snapshot without row locks. Staff
-  read the same figures for one player on `GET /backoffice/promo/players/{userId}/funds`
-  (`transaction:view` and `bonus:view`), where `locked` and `free` are always present. `locked`
-  holds back a swap or transfer always, and a withdrawal only in `block` mode; in `forfeit` mode a
-  withdrawal of any size forfeits every live grant. An operator clawback goes through an admin or correction debit,
+  transfer's own transaction (ADR-0064), and the whole balance as locked while a turnover
+  requirement is unmet. For display, `GET /wallet/balance`, `GET /wallet/balances` and the
+  `wallet.activity` agent tool add optional `locked` and `free` to each balance when a bonus module
+  is bound or a turnover requirement is on, from the same computation in one snapshot without row
+  locks. Staff read the same figures for one player on `GET /backoffice/promo/players/{userId}/funds`
+  (`transaction:view` and `bonus:view`), where `locked` and `free` are always present. A swap is
+  refused only by the bonus lock, so what a swap may still move is `bonusLocked`, the bonus lock
+  alone, which appears on each balance while a turnover requirement is on. A withdrawal is held back
+  by the bonus lock only in `block` mode; in `forfeit` mode a withdrawal of any size forfeits every
+  live grant. An operator clawback goes through an admin or correction debit,
   which the lock never checks. A process that loads the wallet without the bonus module, a split
   manifest included, fails its boot in `block` mode and locks nothing in `forfeit` mode.
 - **A correction debit is never refused for a short balance.** It collects what the balance holds
@@ -351,6 +356,62 @@ is `SPORTSBOOK_LEDGER` unchanged.
   audit entry naming the actor and the reason.
 - **The webhook path resolves the verifier and the adapter from the same provider entry,** and
   fails closed when either is missing.
+
+## Deposit turnover requirement
+
+An opt-in rule (ADR-0065): money credited to a player must be wagered a set number of times, valued
+in the pivot currency, before it can leave by withdrawal or by a gift, rain or donation. It is off
+while `wallet.turnover.multiplier` is zero. Then no hook writes or checks it, and the read routes
+answer `enabled: false`.
+
+- **Config.** `wallet.turnover` holds the multiplier; `creditTypes` (deposits by default) names the
+  credits that add a requirement; `productPercent` is the share of a real stake that counts, full for
+  casino, live casino and sportsbook and none for pvp by default; `countAtSettle` lists the products
+  that count when their round settles (sportsbook by default); `dustThreshold` is the remainder at or
+  below which nothing is locked; `pricingCron` schedules pricing; `lockedMessage` is the refusal text
+  shown to players. `wallet.transferCredits` decides how a gift, rain or donation credit lands.
+- **What adds a requirement.** Each credit of a kind in `creditTypes` adds the multiplier times its
+  pivot value at credit time, once per credit. A gift, rain or donation adds one only when it lands
+  as cash. Each real stake adds its pivot value times the
+  product's percent; only the part of the stake not paid from bonus funds counts. A stake with no
+  pivot rate counts nothing. A reversal takes its share back. Play past a met requirement is not
+  banked.
+- **Pending entries.** A credit with no pivot rate is still credited. Its entry waits as pending and
+  is priced at the first rate available, by the pricing schedule and at each withdrawal request, each
+  in its own transaction, so a price found at a refused withdrawal stays. While any entry is pending
+  the requirement counts as unmet.
+- **What it refuses.** A withdrawal request and a gift, rain or donation debit are refused whole
+  while more than the dust remains or an entry is pending. The refusal carries the figures, so a
+  client can show what is left. It is checked after the bonus lock, so bonus-locked money answers
+  first. It does not refuse a swap (the bonus lock still applies to it), a bet, a loss, an admin debit,
+  a correction, or approving a queued withdrawal, which was debited when it was requested.
+- **Balance reads.** `locked` is the stricter of the turnover lock and the bonus lock: the whole
+  balance while the requirement is unmet, otherwise the bonus lock. `bonusLocked` is the bonus lock
+  alone. Neither is summed with the other.
+- **Routes and permissions.** A player reads their own requirement and its entries. Staff read a
+  player's requirement and entries, clear it with a reason, and read and update the per-product
+  percents, which override the config for stakes placed after the change. The view, clear and update
+  rights are separate permissions. Compliance Manager and KYC/AML Officer hold read-write on both
+  resources by default; several other default roles hold read only.
+- **Staff clear.** A clear zeroes the requirement and its progress, marks the live entries cleared,
+  and writes an audit row and an event in the same transaction. A stake placed before the clear
+  neither counts toward a later requirement nor is taken back from it: only stakes and reversals
+  after the player's last clear count. An event also fires when a write meets the requirement.
+- **Transfers between players.** With `transferCredits` set to cash, a caller that moves money
+  between players first calls the wallet's `lockWallets` with the sender and every recipient, which
+  locks their wallet rows in one order. Two transfers in opposite directions then queue instead of
+  deadlocking. A custom binding without it has no safe order for that caller.
+- **Grant conversion.** The bonus module's super-admin route turns live gift, rain and donation
+  grants into real cash, with a requirement equal to the wagering each still owed. It answers a
+  conflict while the requirement is off. A grant that pays no cash completes with no requirement. A
+  grant with an open bet is skipped and counted, not converted. Each grant converts in its own
+  transaction, and a dry run writes nothing. A pass pages by grant id: each call returns a
+  `nextCursor`, which the next call passes as `after`. The pass is finished when `nextCursor` is
+  null. Grants skipped for an open bet are not revisited in that pass, so `remaining` can still be
+  above zero; a later pass converts them.
+- **Rollout.** Turn the multiplier on only after every instance runs this release, because an older
+  instance applies no gate. The wallet logs a warning at boot when `transferCredits` is cash but some
+  transfer kind carries no requirement.
 
 ## Upgrading past the removed `tip` type
 
