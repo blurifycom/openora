@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { BonusCompletion } from '@openora/core/contracts';
 import { moneyCompare, moneyScaleBy, moneySubtract, type DrizzleTx } from '@openora/core/server';
 import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js';
@@ -23,13 +23,15 @@ export function capConversion(
 }
 
 /**
- * Moves a grant the caller holds locked from `active` to `completed`: C leaves the grant as the
- * amount the caller credits to the real balance, A and B are released. Null when the grant is no
- * longer active, so a second completion of the same grant writes nothing.
+ * Moves a grant the caller holds locked from a status in `from` (default `active`) to
+ * `completed`: C leaves the grant as the amount the caller credits to the real balance, A and B
+ * are released. Null when the grant has left those statuses, so a second completion of the same
+ * grant writes nothing.
  */
 export async function completeGrant(
   tx: DrizzleTx,
   grant: PromoGrant,
+  { from = ['active'] }: { from?: readonly PromoGrant['status'][] } = {},
 ): Promise<BonusCompletion | null> {
   // The cap bites here, at the single point where bonus funds become real money, rather than
   // on every win along the way: what the terms limit is the payout, and winnings that are
@@ -48,7 +50,7 @@ export async function completeGrant(
       linkedCash: ZERO,
       closedAt: sql`now()`,
     })
-    .where(and(eq(promoGrant.id, grant.id), eq(promoGrant.status, 'active')))
+    .where(and(eq(promoGrant.id, grant.id), inArray(promoGrant.status, [...from])))
     .returning({ id: promoGrant.id });
   if (!closed) {
     return null;

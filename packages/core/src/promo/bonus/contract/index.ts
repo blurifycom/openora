@@ -23,6 +23,7 @@ import {
   TurnoverEntryStatusSchema,
   TurnoverSummarySchema,
   UuidSchema,
+  WALLET_TRANSFER_CREDIT_KINDS,
   WagerProductSchema,
   type BonusGrantSource,
   type WagerProduct,
@@ -353,11 +354,8 @@ export const ForfeitGrantInputSchema = z.object({
 });
 
 /** Grant sources a player-to-player transfer creates, which a conversion may turn into cash. */
-export const TRANSFER_GRANT_SOURCES = [
-  'gift',
-  'rain',
-  'donation',
-] as const satisfies readonly BonusGrantSource[];
+export const TRANSFER_GRANT_SOURCES =
+  WALLET_TRANSFER_CREDIT_KINDS satisfies readonly BonusGrantSource[];
 export const TransferGrantSourceSchema = z.enum(TRANSFER_GRANT_SOURCES);
 export type TransferGrantSource = z.infer<typeof TransferGrantSourceSchema>;
 
@@ -388,11 +386,25 @@ export const ConvertedTransferGrantSchema = z.object({
 });
 export type ConvertedTransferGrant = z.infer<typeof ConvertedTransferGrantSchema>;
 
+/** Why a grant failed to convert; it stays live and a later run retries it. */
+export const TRANSFER_GRANT_CONVERSION_FAILURES = [
+  'credit_refused',
+  'replay_mismatch',
+  'invalid_amount',
+  'failed',
+] as const;
+export const TransferGrantConversionFailureSchema = z.enum(TRANSFER_GRANT_CONVERSION_FAILURES);
+export type TransferGrantConversionFailure = z.infer<typeof TransferGrantConversionFailureSchema>;
+
 export const ConvertTransferGrantsResultSchema = z.object({
   converted: z.array(ConvertedTransferGrantSchema),
+  /** Grants this call tried and could not convert; present only when there is one. */
+  failed: z
+    .array(z.object({ grantId: UuidSchema, reason: TransferGrantConversionFailureSchema }))
+    .optional(),
   /** Grants left live because a bet on them is still open; a later run converts them. */
   skippedOpenRound: z.number().int().nonnegative(),
-  /** Live grants of the requested sources still left after this call. */
+  /** Live grants of the requested sources still left after this call, queued ones included. */
   remaining: z.number().int().nonnegative(),
   /**
    * The last grant this call looked at; pass it as `after` to go on. Null when this call returned

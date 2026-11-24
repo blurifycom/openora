@@ -4,6 +4,8 @@ import { and, eq, sql } from 'drizzle-orm';
 import { findOneOrThrow, moneyAdd, moneyCompare, moneyScaleBy } from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import {
+  WalletCommandAmountError,
+  WalletReplayMismatchError,
   WalletTurnoverConfigSchema,
   definePlatformConfig,
   type ExchangeRateReader,
@@ -371,6 +373,73 @@ describe('turnover stakes without the bonus module', () => {
     }
   });
 
+  it('takes back only what counted when a stake that met the requirement is reversed', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    const first = await bet(commands, userId, '150');
+    await owe(turnover, userId, '100');
+    await bet(commands, userId, '100');
+
+    await reverse(commands, userId, first, '150');
+
+    expect(await turnover.summary(userId)).toMatchObject({
+      required: '200.000000000000000000',
+      progress: '100.000000000000000000',
+      remaining: '100.000000000000000000',
+    });
+  });
+
+  it('stamps a stake larger than the remainder with the remainder', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    await bet(commands, userId, '30');
+
+    const placed = await bet(commands, userId, '100');
+
+    expectMoney((await rowOf(placed.id)).turnoverContribution, '70', 'stamp');
+    expectMoney(await progressOf(userId), '100', 'progress');
+  });
+
+  it('stamps the whole stake while an entry waits for a rate', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    await db.drizzle.db.transaction((tx) =>
+      turnover.addCredit(tx, {
+        userId,
+        kind: 'deposit',
+        sourceRef: randomUUID(),
+        currency: 'XQZ',
+        amount: '10',
+      }),
+    );
+
+    const placed = await bet(commands, userId, '150');
+
+    expectMoney((await rowOf(placed.id)).turnoverContribution, '150', 'stamp');
+    expectMoney(await progressOf(userId), '150', 'progress');
+  });
+
+  it('stamps a deferred stake in full and adds at most the remainder when it settles', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    const sports = await bet(commands, userId, '150', { product: 'sportsbook' });
+    expectMoney((await rowOf(sports.id)).turnoverContribution, '150', 'stamp');
+
+    await db.drizzle.db.transaction((tx) =>
+      commands.closeRound(tx, {
+        userId,
+        currency: 'USD',
+        providerRef: { providerName: 'agg', externalRoundId: sports.round },
+      }),
+    );
+
+    expectMoney(await progressOf(userId), '100', 'progress');
+  });
+
   it('touches nothing with multiplier 0', async () => {
     const { userId } = await player();
     vi.mocked(reader.convert).mockClear();
@@ -393,5 +462,104 @@ describe('turnover stakes without the bonus module', () => {
     expect(
       await db.drizzle.db.select().from(walletTurnover).where(eq(walletTurnover.userId, userId)),
     ).toEqual([]);
+  });
+});
+
+describe('turnover requirement entries', () => {
+  const requirement = (userId: string, sourceRef: string, requiredInCurrency: string) =>
+    db.drizzle.db.transaction((tx) =>
+      on.turnover.addRequirement(tx, {
+        userId,
+        currency: 'USD',
+        requiredInCurrency,
+        source: 'grant_conversion',
+        sourceRef,
+      }),
+    );
+
+  it('refuses a requirement that is not above zero', async () => {
+    const { userId } = await player();
+
+    await expect(requirement(userId, randomUUID(), '0')).rejects.toBeInstanceOf(
+      WalletCommandAmountError,
+    );
+    await expect(requirement(userId, randomUUID(), '-5')).rejects.toBeInstanceOf(
+      WalletCommandAmountError,
+    );
+    expect(
+      await db.drizzle.db.select().from(walletTurnover).where(eq(walletTurnover.userId, userId)),
+    ).toEqual([]);
+  });
+
+  it('refuses a requirement replay naming another player, currency or amount', async () => {
+    const { userId } = await player();
+    const sourceRef = randomUUID();
+    const first = await requirement(userId, sourceRef, '50');
+
+    expect(await requirement(userId, sourceRef, '50.0')).toEqual({ ...first, replayed: true });
+    await expect(requirement(randomUUID(), sourceRef, '50')).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    await expect(requirement(userId, sourceRef, '60')).rejects.toBeInstanceOf(
+      WalletReplayMismatchError,
+    );
+    await expect(
+      db.drizzle.db.transaction((tx) =>
+        on.turnover.addRequirement(tx, {
+          userId,
+          currency: 'EUR',
+          requiredInCurrency: '50',
+          source: 'grant_conversion',
+          sourceRef,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(WalletReplayMismatchError);
+    expectMoney((await on.turnover.summary(userId)).required, '50', 'required');
+  });
+
+  it('refuses a credit replay naming another player or amount', async () => {
+    const { userId } = await player();
+    const sourceRef = randomUUID();
+    const credit = (owner: string, amount: string) =>
+      db.drizzle.db.transaction((tx) =>
+        on.turnover.addCredit(tx, {
+          userId: owner,
+          kind: 'deposit',
+          sourceRef,
+          currency: 'USD',
+          amount,
+        }),
+      );
+    await credit(userId, '40');
+
+    await expect(credit(randomUUID(), '40')).rejects.toBeInstanceOf(WalletReplayMismatchError);
+    await expect(credit(userId, '41')).rejects.toBeInstanceOf(WalletReplayMismatchError);
+    expect(await credit(userId, '40')).toMatchObject({ replayed: true });
+    expectMoney((await on.turnover.summary(userId)).required, '40', 'required');
+  });
+});
+
+describe('staff turnover reads while the multiplier is 0', () => {
+  it('shows the stored requirement and entries to staff and nothing to the player', async () => {
+    const { userId } = await player();
+    await owe(on.turnover, userId, '100');
+    await bet(on.commands, userId, '30');
+
+    expect(await off.turnover.adminSummary(userId)).toMatchObject({
+      enabled: false,
+      locked: false,
+      required: '100.000000000000000000',
+      progress: '30.000000000000000000',
+      remaining: '70.000000000000000000',
+    });
+    const page = await off.turnover.adminEntries(userId, { limit: 10 });
+    expect(page.items).toEqual([
+      expect.objectContaining({ source: 'deposit', status: 'counted', clearedBy: null }),
+    ]);
+    expect(await off.turnover.summary(userId)).toMatchObject({ enabled: false, required: '0' });
+    expect(await off.turnover.entries(userId, { limit: 10 })).toEqual({
+      items: [],
+      nextCursor: null,
+    });
   });
 });

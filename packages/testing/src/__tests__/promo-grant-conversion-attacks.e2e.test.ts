@@ -101,21 +101,3 @@ describe('a grant with nothing left to wager', () => {
     expect((await withdraw(client, '15')).status).toBe(200);
   });
 });
-
-describe('a converted grant', () => {
-  it('leaves the cash locked behind the wagering the grant still owed', async () => {
-    const { client, userId } = await player('5');
-    const grantId = await grant(userId, {
-      source: 'gift',
-      amount: '10',
-      linked: '0',
-      multiplier: '3',
-    });
-    expect((await admin().post(CONVERT, { sources: ['gift'] })).status).toBe(200);
-    const summary = await readJson(await client.get('/wallet/turnover'));
-    expectMoney(summary.required, '30', 'required');
-    expectMoney(summary.progress, '0', 'progress');
-    expect((await grantRow(grantId)).status).toBe('completed');
-    expect((await withdraw(client, '1')).status).toBe(409);
-  });
-});

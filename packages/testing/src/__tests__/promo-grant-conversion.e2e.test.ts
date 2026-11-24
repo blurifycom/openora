@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { moneyAdd, moneySubtract } from '@openora/core/server';
+import { moneyAdd, moneySubtract, type DrizzleTx } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { adminRole, adminRoleAssignment, adminRolePermission } from '@openora/core/iam/schema';
 import { user } from '@openora/core/pam/schema/identity';
@@ -13,7 +13,7 @@ import { TEST_TURNOVER_LOCKED_MESSAGE } from './fixtures/turnover-gate-config.js
 
 const CONVERT = '/backoffice/promo/grants/convert-transfer-grants';
 
-const { app, admin, drizzle, player, grant, grantRow, realBalance, withdraw, bet, lose } =
+const { app, admin, drizzle, commands, player, grant, grantRow, realBalance, withdraw, bet, lose } =
   useBonusLockHarness('block', {
     config: {
       id: 'testing-promo-grant-conversion-config',
@@ -287,41 +287,123 @@ describe('who may convert', () => {
 });
 
 describe('a conversion racing a bet on the same grant', () => {
-  it('either converts the grant or leaves the bet its round, never both', async () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const { userId } = await player('5');
-      const grantId = await grant(userId, {
-        source: 'gift',
-        amount: '10',
-        linked: '0',
-        multiplier: '3',
-        order: 'last',
-      });
-      const round = randomUUID();
+  const lockWaiters = async () => {
+    const rows = await drizzle().execute<{ n: number }>(
+      sql`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`,
+    );
+    return Number(rows.rows[0]?.n ?? 0);
+  };
 
-      const [conversion, staked] = await Promise.all([
-        admin().post(CONVERT, { sources: ['gift'] }),
-        bet(userId, '10', round),
-      ]);
-
-      expect(conversion.status).toBe(200);
-      expect(staked).toMatchObject({ ok: true });
-      const result = await readJson(conversion);
-      const row = await grantRow(grantId);
-      if (convertedIds(result).includes(grantId)) {
-        expect(row.status).toBe('completed');
-        expect(await openRounds(grantId)).toEqual([]);
-        expectMoney(await realBalance(userId), '5', 'real balance after conversion then bet');
-      } else {
-        expect(result.skippedOpenRound).toBe(1);
-        expect(row.status).toBe('active');
-        expectMoney(row.bonusBalance, '0', 'bonus balance after the bet');
-        expectMoney(await realBalance(userId), '5', 'real balance after bet then skip');
-        expect(await conversionCredits(userId)).toEqual([]);
-        await lose(userId, round);
-        await convert({ sources: ['gift'] });
+  const untilWaiters = async (n: number) => {
+    for (let poll = 0; poll < 200; poll += 1) {
+      if ((await lockWaiters()) >= n) {
+        return;
       }
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
+    throw new Error(`expected ${n} lock waiters`);
+  };
+
+  const holdOpen = async (work: (tx: DrizzleTx) => Promise<unknown>) => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let ready = () => {};
+    const started = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const done = drizzle().transaction(async (tx) => {
+      const value = await work(tx);
+      ready();
+      await gate;
+      return value;
+    });
+    await Promise.race([started, done]);
+    return { release, done };
+  };
+
+  const giftGrant = async () => {
+    const { userId } = await player('5');
+    const grantId = await grant(userId, {
+      source: 'gift',
+      amount: '10',
+      linked: '0',
+      multiplier: '3',
+      order: 'last',
+    });
+    return { userId, grantId, round: randomUUID() };
+  };
+
+  it('skips the grant when the bet holds the wallet first', async () => {
+    const { userId, grantId, round } = await giftGrant();
+    const placed = await holdOpen((tx) =>
+      commands().debit(tx, {
+        userId,
+        amount: '10',
+        type: 'bet',
+        currency: 'USD',
+        context: { provider: 'aggregator', product: 'casino' },
+        providerRef: {
+          providerName: 'aggregator',
+          providerRefId: `bet-${round}`,
+          externalRoundId: round,
+        },
+      }),
+    );
+
+    const conversion = admin().post(CONVERT, { sources: ['gift'] });
+    await untilWaiters(1);
+    placed.release();
+
+    expect(await placed.done).toMatchObject({ ok: true, moved: true });
+    const res = await conversion;
+    expect(res.status).toBe(200);
+    expect(convertedIds(await readJson(res))).not.toContain(grantId);
+    const row = await grantRow(grantId);
+    expect(row.status).toBe('active');
+    expectMoney(row.bonusBalance, '0', 'bonus balance after the bet');
+    expect(await openRounds(grantId)).toHaveLength(1);
+    expectMoney(await realBalance(userId), '5', 'real balance');
+    expect(await conversionCredits(userId)).toEqual([]);
+
+    await lose(userId, round);
+    expect((await grantRow(grantId)).status).toBe('depleted');
+  });
+
+  it('converts the grant when the conversion takes the wallet first, and the bet then pays from cash', async () => {
+    const { userId, grantId, round } = await giftGrant();
+    const holder = await holdOpen(
+      (tx) => commands().lockWallets?.(tx, { userIds: [userId] }) ?? Promise.resolve(),
+    );
+
+    const conversion = admin().post(CONVERT, { sources: ['gift'] });
+    await untilWaiters(1);
+    const staked = bet(userId, '10', round);
+    await untilWaiters(2);
+    holder.release();
+    await holder.done;
+
+    const res = await conversion;
+    expect(res.status).toBe(200);
+    expect(convertedIds(await readJson(res))).toContain(grantId);
+    const placed = await staked;
+    expect(placed).toMatchObject({ ok: true, moved: true, bonusSpent: '0' });
+    expect((await grantRow(grantId)).status).toBe('completed');
+    expect(await openRounds(grantId)).toEqual([]);
+    const tracked =
+      placed.ok && placed.moved
+        ? (placed.wagerTrackingCredits ?? []).reduce(
+            (sum, { amount }) => moneyAdd(sum, amount),
+            '0',
+          )
+        : '0';
+    expectMoney(
+      await realBalance(userId),
+      moneyAdd('5', tracked),
+      'deposit plus converted cash less the bet',
+    );
+    expect(await conversionCredits(userId)).toHaveLength(1);
   });
 });
 

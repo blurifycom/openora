@@ -5,6 +5,7 @@ import {
   WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
   WALLET_LOCK_EXEMPT_DEBIT_TYPES,
+  WALLET_TRANSFER_CREDIT_KINDS,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
@@ -66,7 +67,7 @@ import {
   type WalletTransaction,
 } from '../schema/index.js';
 import type { ManualAdjustmentDirection } from '../contract/index.js';
-import type { TurnoverService } from './turnover.service.js';
+import type { TurnoverService, TurnoverStakeStamp } from './turnover.service.js';
 import {
   creditWalletBalance,
   balanceKey,
@@ -197,7 +198,7 @@ export type WalletCommandsPorts = {
 const isLockExemptDebit = (type: WalletTransactionType): boolean =>
   (WALLET_LOCK_EXEMPT_DEBIT_TYPES as readonly WalletTransactionType[]).includes(type);
 
-const TRANSFER_CREDIT_TYPES = ['gift', 'rain', 'donation'] as const;
+const TRANSFER_CREDIT_TYPES = WALLET_TRANSFER_CREDIT_KINDS;
 type TransferCreditType = (typeof TRANSFER_CREDIT_TYPES)[number];
 const isTransferCredit = (type: WalletTransactionType): type is TransferCreditType =>
   (TRANSFER_CREDIT_TYPES as readonly WalletTransactionType[]).includes(type);
@@ -293,7 +294,7 @@ export class WalletCommandsService implements WalletCommands {
       wager?: WagerContext;
       realShare?: string;
       reversedTransactionId?: string;
-      turnover?: { contribution: string; state: 'counted' | 'deferred' } | null;
+      turnover?: TurnoverStakeStamp | null;
     } = {},
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
@@ -354,13 +355,19 @@ export class WalletCommandsService implements WalletCommands {
     return row;
   }
 
-  private async writeTransferCreditRow(
-    txn: DrizzleDb,
-    row: { id: string; currency: string },
-    type: TransferCreditType,
-    amount: string,
-    providerRef: WalletProviderRef,
-  ): Promise<{ row: WalletTransaction; replayed: boolean }> {
+  private async writeTransferCreditRow({
+    txn,
+    row,
+    type,
+    amount,
+    providerRef,
+  }: {
+    txn: DrizzleDb;
+    row: { id: string; currency: string };
+    type: TransferCreditType;
+    amount: string;
+    providerRef: WalletProviderRef;
+  }): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const idempotencyKey = namespacedIdempotencyKey(
       TRANSFER_CREDIT_NAMESPACE,
       JSON.stringify([type, providerRef.providerName, providerRef.providerRefId]),
@@ -622,7 +629,7 @@ export class WalletCommandsService implements WalletCommands {
         }
         // After `wager()` and its grant locks: the turnover row is always the last lock a bet takes.
         if (stake?.state === 'counted') {
-          await turnover?.countStake(sp, userId, stake.contribution);
+          await turnover?.countStake(sp, stake);
         }
         return { wagered, ledgerRow, debitedBalance };
       })
@@ -705,9 +712,13 @@ export class WalletCommandsService implements WalletCommands {
     // After the grant locks above, so the turnover row stays the last lock taken.
     const turnover = this.activeTurnover();
     if (turnover && (await turnover.refusal(txn, { userId, outflow: 'transfer' }))) {
-      return { real, locked: real, free: '0' };
+      return isPositiveMoney(real)
+        ? { real, locked: real, free: '0', lockedBy: 'turnover' }
+        : { real, locked: real, free: '0' };
     }
-    return { real, ...bonus };
+    return isPositiveMoney(bonus.locked)
+      ? { real, ...bonus, lockedBy: 'bonus' }
+      : { real, ...bonus };
   }
 
   /**
@@ -899,7 +910,13 @@ export class WalletCommandsService implements WalletCommands {
         // transaction, and its NO KEY UPDATE strength still lets another transaction insert a ledger row.
         const { row: ledgerRow, replayed } =
           cashTransfer !== null && providerRef
-            ? await this.writeTransferCreditRow(sp, creditRow, cashTransfer, amount, providerRef)
+            ? await this.writeTransferCreditRow({
+                txn: sp,
+                row: creditRow,
+                type: cashTransfer,
+                amount,
+                providerRef,
+              })
             : await this.writeLedgerRow(
                 sp,
                 creditRow,

@@ -122,6 +122,8 @@ export const WalletTurnoverConfigSchema = z
 export type WalletTurnoverConfig = z.infer<typeof WalletTurnoverConfigSchema>;
 
 export const WALLET_TRANSFER_CREDIT_MODES = ['bonus_grant', 'cash'] as const;
+/** The player-to-player credits `transferCredits` decides. */
+export const WALLET_TRANSFER_CREDIT_KINDS = ['gift', 'rain', 'donation'] as const;
 
 export const WalletConfigSchema = z
   .object({

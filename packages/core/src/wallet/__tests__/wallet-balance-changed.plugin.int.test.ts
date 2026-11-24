@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import {
   ADMIN_GUARD,
@@ -15,7 +15,10 @@ import {
   PLAY_ELIGIBILITY,
   WITHDRAWAL_SECURITY,
   JOB_QUEUE,
+  PLATFORM_CONFIG,
   RATE_LIMITER,
+  definePlatformConfig,
+  type PlatformConfig,
   KYC_WITHDRAWAL_POLICY,
   PLAYER_TAGS,
   type KycWithdrawalPolicy,
@@ -50,7 +53,7 @@ afterAll(async () => {
   await db.drop();
 });
 
-function boot() {
+function boot(platformConfig?: PlatformConfig) {
   const container = new Container<CoreTokenCatalog>();
   const events = makeEventBus();
   const realtime = makeRealtimeTransport();
@@ -66,7 +69,11 @@ function boot() {
   container.register(RATE_LIMITER, () => mock<RateLimiterAdapter<string>>({}));
   container.register(PLAYER_TAGS, () => mock<PlayerTags>({}));
   container.register(KYC_WITHDRAWAL_POLICY, () => mock<KycWithdrawalPolicy>({}));
-  container.register(JOB_QUEUE, () => makeJobQueue());
+  const jobQueue = makeJobQueue();
+  container.register(JOB_QUEUE, () => jobQueue);
+  if (platformConfig) {
+    container.register(PLATFORM_CONFIG, () => platformConfig);
+  }
 
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   walletPlugin.register(registry);
@@ -75,7 +82,7 @@ function boot() {
   // run before any real event arrives.
   registry.routers.getAll().get('wallet')?.(container);
 
-  return { registry, realtime };
+  return { registry, realtime, jobQueue };
 }
 
 describe('wallet plugin wallet.balance.changed wiring', () => {
@@ -128,5 +135,29 @@ describe('wallet plugin wallet.balance.changed wiring', () => {
     );
 
     expect(realtime.publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('wallet plugin turnover pricing schedule', () => {
+  const pricingSchedules = (jobQueue: ReturnType<typeof makeJobQueue>) =>
+    vi
+      .mocked(jobQueue.schedule)
+      .mock.calls.filter(([, name]) => name === 'wallet-turnover-pricing.cron');
+
+  it('schedules no pricing job while the multiplier is 0', () => {
+    expect(pricingSchedules(boot().jobQueue)).toEqual([]);
+    expect(
+      pricingSchedules(
+        boot(definePlatformConfig({ wallet: { turnover: { multiplier: '0' } } })).jobQueue,
+      ),
+    ).toEqual([]);
+  });
+
+  it('schedules the pricing job once the multiplier is on', () => {
+    expect(
+      pricingSchedules(
+        boot(definePlatformConfig({ wallet: { turnover: { multiplier: '1' } } })).jobQueue,
+      ),
+    ).toHaveLength(1);
   });
 });

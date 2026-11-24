@@ -35,6 +35,22 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
   ],
 });
 
+// An entry is the record of a requirement: it is priced once and only ever cleared.
+const TURNOVER_ENTRY_SQL = appendOnlyTableSql('wallet_turnover_entry', {
+  mutableColumns: ['status', 'cleared_at', 'cleared_by', 'clear_reason'],
+  setOnceColumns: ['pivot_value', 'required', 'priced_at'],
+  transitions: [
+    {
+      column: 'status',
+      allowed: [
+        ['pending', 'counted'],
+        ['pending', 'cleared'],
+        ['counted', 'cleared'],
+      ],
+    },
+  ],
+});
+
 // A baseline moved after the fact would hide any breach before it.
 const BALANCE_BASELINE_SQL = appendOnlyTableSql('wallet_balance_baseline', { mutableColumns: [] });
 
@@ -73,7 +89,7 @@ export function migrate(databaseUrl?: string) {
     // 0051 rewrites wallet_transaction twice under ACCESS EXCLUSIVE; wait on live traffic for
     // at most this long, then fail the deploy rather than stall every bet behind the lock.
     lockTimeout: '5s',
-    postSql: [LEDGER_RECORD_SQL, BALANCE_BASELINE_SQL, LEDGER_API_REQUEST_SQL],
+    postSql: [LEDGER_RECORD_SQL, BALANCE_BASELINE_SQL, LEDGER_API_REQUEST_SQL, TURNOVER_ENTRY_SQL],
     ...(databaseUrl ? { databaseUrl } : {}),
   });
 }

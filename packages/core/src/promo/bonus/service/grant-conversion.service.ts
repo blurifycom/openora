@@ -1,10 +1,12 @@
 import { and, asc, count, eq, gt, inArray, isNull, not, sql } from 'drizzle-orm';
-import type {
-  AuditWritePort,
-  ClientMeta,
-  TurnoverEntryStatus,
-  Uuid,
-  WalletCommands,
+import {
+  WalletCommandAmountError,
+  WalletReplayMismatchError,
+  type AuditWritePort,
+  type ClientMeta,
+  type TurnoverEntryStatus,
+  type Uuid,
+  type WalletCommands,
 } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import {
@@ -19,6 +21,7 @@ import type {
   ConvertTransferGrantsInput,
   ConvertTransferGrantsResult,
   ConvertedTransferGrant,
+  TransferGrantConversionFailure,
   TransferGrantSource,
 } from '../contract/index.js';
 import { promoGrant, promoGrantRound, type PromoGrant } from '../schema/index.js';
@@ -29,6 +32,32 @@ export const TransferGrantConversionUnavailableError = makeConflictError(
   'Transfer grants convert into turnover-locked cash only while the turnover requirement is on',
   { reason: 'turnover_disabled' },
 );
+
+export const TransferGrantConversionWalletUnavailableError = makeConflictError(
+  'TransferGrantConversionWalletUnavailableError',
+  'Transfer grants cannot convert: this process has no wallet commands bound',
+  { reason: 'wallet_unavailable' },
+);
+
+/** The wallet refused a conversion's cash credit; `reason` is the wallet's own. */
+export class TransferGrantCreditRefusedError extends Error {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super(`grant conversion credit refused: ${reason}`);
+    this.name = 'TransferGrantCreditRefusedError';
+    this.reason = reason;
+  }
+}
+
+const failureOf = (err: unknown): TransferGrantConversionFailure =>
+  err instanceof TransferGrantCreditRefusedError
+    ? 'credit_refused'
+    : err instanceof WalletReplayMismatchError
+      ? 'replay_mismatch'
+      : err instanceof WalletCommandAmountError
+        ? 'invalid_amount'
+        : 'failed';
 
 /** The ledger reference of a conversion's cash credit: one per grant, so a retry replays it. */
 const CONVERSION_PROVIDER = 'promo:grant-conversion';
@@ -43,9 +72,12 @@ type WalletPorts = Required<
 
 type Outcome = ConvertedTransferGrant | 'open_round' | null;
 
+// A queued (`pending`) grant converts too: activation re-checks `pending` under the grant lock.
+const LIVE_STATUSES = ['pending', 'active'] as const;
+
 const isLiveTransferGrant = (sources: readonly TransferGrantSource[]) =>
   and(
-    eq(promoGrant.status, 'active'),
+    inArray(promoGrant.status, [...LIVE_STATUSES]),
     sql`${promoGrant.expiresAt} > now()`,
     inArray(promoGrant.source, [...sources]),
   );
@@ -92,14 +124,16 @@ export class GrantConversionService {
       .limit(limit);
 
     const converted: ConvertedTransferGrant[] = [];
+    const failed: { grantId: PromoGrant['id']; reason: TransferGrantConversionFailure }[] = [];
     for (const { id } of candidates) {
       const outcome = dryRun
         ? await this.preview(id, sources)
         : await this.convertOne(wallet, id, sources, actor).catch((err: unknown) => {
             this.logger.error(
-              { grantId: id, error: err instanceof Error ? err.name : 'unknown' },
+              { grantId: id, err },
               'transfer grant conversion failed; the grant stays live',
             );
+            failed.push({ grantId: id, reason: failureOf(err) });
             return null;
           });
       if (outcome !== null && outcome !== 'open_round') {
@@ -118,6 +152,7 @@ export class GrantConversionService {
       .where(and(isLiveTransferGrant(sources), openRound));
     return {
       converted,
+      ...(failed.length > 0 ? { failed } : {}),
       skippedOpenRound: open?.n ?? 0,
       remaining: left?.n ?? 0,
       nextCursor: candidates.length < limit ? null : (candidates.at(-1)?.id ?? null),
@@ -125,9 +160,12 @@ export class GrantConversionService {
   }
 
   private walletPorts(): WalletPorts {
-    const wallet = this.wallet();
-    if (!this.turnoverOn || !wallet?.addTurnoverRequirement || !wallet.movableFunds) {
+    if (!this.turnoverOn) {
       throw new TransferGrantConversionUnavailableError();
+    }
+    const wallet = this.wallet();
+    if (!wallet?.addTurnoverRequirement || !wallet.movableFunds) {
+      throw new TransferGrantConversionWalletUnavailableError();
     }
     return {
       credit: wallet.credit.bind(wallet),
@@ -177,8 +215,7 @@ export class GrantConversionService {
       if (!owner) {
         return null;
       }
-      // The wallet and balance row locks a bet takes before it locks a grant, so a conversion
-      // and a bet on the same grant queue rather than deadlock.
+      // Taken first, the wallet row lock serialises this with every path that locks grants or the turnover row.
       await wallet.movableFunds(tx, owner);
       const [grant] = await tx
         .select()
@@ -191,7 +228,7 @@ export class GrantConversionService {
       if (await this.hasOpenRound(tx, grantId)) {
         return 'open_round';
       }
-      const completion = await completeGrant(tx, grant);
+      const completion = await completeGrant(tx, grant, { from: LIVE_STATUSES });
       if (!completion) {
         return null;
       }
@@ -264,7 +301,7 @@ export class GrantConversionService {
       providerRef: { providerName: CONVERSION_PROVIDER, providerRefId: grant.id },
     });
     if (!credited.ok) {
-      throw new Error(`grant conversion credit refused: ${credited.reason}`);
+      throw new TransferGrantCreditRefusedError(credited.reason);
     }
     if (!credited.moved) {
       return;

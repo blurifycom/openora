@@ -42,11 +42,6 @@ type GrantOptions = {
   order?: BonusFreeFundsOrder;
 };
 
-/**
- * Boots one app per file with the bonus withdrawal mode under test and an admin that is not the
- * seeded one. `config` names a fixture plugin that replaces the mode's own config; `rates: false`
- * leaves out the rate provider that quotes every currency, so a currency without a quote stays unpriced.
- */
 export function useBonusLockHarness(
   mode: 'block' | 'forfeit',
   { config, rates = true }: { config?: { id: string; file: string }; rates?: boolean } = {},
@@ -227,7 +222,6 @@ export function useBonusLockHarness(
       }),
     );
 
-  /** 0.02 BTC of real money, 0.015 of it tied to a locking manual grant. */
   async function btcHolder() {
     const { client, userId } = await registerAndMaterializePlayer(app, {
       email: `bonus-lock-swap-${randomUUID()}@e2e.test`,

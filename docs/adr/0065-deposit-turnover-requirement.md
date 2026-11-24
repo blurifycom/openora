@@ -6,9 +6,8 @@
 ## Context
 
 Anti-money-laundering rules in many markets require a deposit to be wagered a set number of times
-before it leaves. Without it a player can deposit, place nothing, and withdraw or gift the
-money, layering funds through the operator. ADR-0064 locks only bonus
-money. Many operators need none, so it is generic, opt-in and off by default.
+before it leaves; otherwise a player can deposit and withdraw or gift it untouched, layering funds.
+ADR-0064 locks only bonus money. Many operators need none, so it is opt-in and off by default.
 
 ## Decision
 
@@ -20,7 +19,8 @@ rebinding it could unlock money. Consumers reach it through the optional `Wallet
 **The rule.** `wallet.turnover.multiplier` (default `'0'`, off). Each credit of a kind in
 `creditTypes` (default `deposit`) adds `multiplier x` its pivot-currency value at credit time, one
 entry per credit, deduplicated on `(source, source_ref)`. A real stake adds its pivot value times the
-product percent at bet time; a reversal subtracts it. Sportsbook counts at settlement. The
+product percent at bet time, stamped with at most what remains unless an entry is pending; a
+reversal subtracts the stamp. Sportsbook counts at settlement, adding at most what remains. The
 requirement is pooled across currencies and never expires. Play past it is not banked.
 
 **The gate.** While `remaining` exceeds `dustThreshold`, or any entry is unpriced, every withdrawal
@@ -61,7 +61,10 @@ and `after`/`nextCursor` page the batch.
 
 - One wallet migration adds three tables and two nullable `wallet_transaction` columns.
 - Approving a queued withdrawal does not re-check the requirement.
-- With multiplier `0` the rule is off, and the read routes answer `enabled: false`.
+- With multiplier `0` player reads answer `enabled: false`; staff reads still show stored data.
+  Stakes, settles and reversals go unrecorded, so clear open requirements before turning it on again.
+- A settled sportsbook stake later voided takes back its whole stamp, which can exceed what it
+  added.
 - A priced entry keeps its rate, so a later rate change does not move it.
 - The staff-clear cut-off is by timestamp: a reversal whose transaction opened before a clear that
   committed first subtracts nothing, even for a stake placed after that clear. The window is the

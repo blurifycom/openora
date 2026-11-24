@@ -490,11 +490,13 @@ export const TurnoverEntriesPageSchema = z.object({
   items: z.array(TurnoverEntrySchema),
   nextCursor: UuidSchema.nullable(),
 });
+export type TurnoverEntriesPage = z.infer<typeof TurnoverEntriesPageSchema>;
 
 export const AdminTurnoverEntriesPageSchema = z.object({
   items: z.array(AdminTurnoverEntrySchema),
   nextCursor: UuidSchema.nullable(),
 });
+export type AdminTurnoverEntriesPage = z.infer<typeof AdminTurnoverEntriesPageSchema>;
 
 export const ClearTurnoverInputSchema = TurnoverPlayerKeySchema.extend({
   reason: z.string().trim().min(3).max(500),

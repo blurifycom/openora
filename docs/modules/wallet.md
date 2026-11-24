@@ -361,8 +361,11 @@ is `SPORTSBOOK_LEDGER` unchanged.
 
 An opt-in rule (ADR-0065): money credited to a player must be wagered a set number of times, valued
 in the pivot currency, before it can leave by withdrawal or by a gift, rain or donation. It is off
-while `wallet.turnover.multiplier` is zero. Then no hook writes or checks it, and the read routes
-answer `enabled: false`.
+while `wallet.turnover.multiplier` is zero. Then no hook writes or checks it, the pricing job is not
+scheduled, and the player read routes answer `enabled: false` with nothing in them. The staff reads
+still show the stored requirement and entries, with `enabled: false`. Stakes, settles and reversals
+are not recorded while it is off, so an operator turning it back on clears the open requirements
+first.
 
 - **Config.** `wallet.turnover` holds the multiplier; `creditTypes` (deposits by default) names the
   credits that add a requirement; `productPercent` is the share of a real stake that counts, full for
@@ -374,12 +377,18 @@ answer `enabled: false`.
   pivot value at credit time, once per credit. A gift, rain or donation adds one only when it lands
   as cash. Each real stake adds its pivot value times the
   product's percent; only the part of the stake not paid from bonus funds counts. A stake with no
-  pivot rate counts nothing. A reversal takes its share back. Play past a met requirement is not
-  banked.
+  pivot rate counts nothing. A stake counted at bet time is stamped with at most what was left of the
+  requirement, unless an entry is pending; a reversal takes back that stamp. A stake that counts at
+  settle keeps its full share as its stamp and adds at most what is left when its round settles, so
+  voiding it later takes back the whole share. Play past a met requirement is not banked.
 - **Pending entries.** A credit with no pivot rate is still credited. Its entry waits as pending and
   is priced at the first rate available, by the pricing schedule and at each withdrawal request, each
-  in its own transaction, so a price found at a refused withdrawal stays. While any entry is pending
-  the requirement counts as unmet.
+  in its own transaction, so a price found at a refused withdrawal stays. The scheduled run looks
+  each pending currency's rate up once, visits only players holding an entry it can price, and
+  prices each player's entries in one statement. One player's failure is logged with the player id
+  and the error name and does not stop the others. While any entry is pending the requirement
+  counts as unmet. An entry is append-only: a database trigger refuses any change but its pricing,
+  set once, and its move from pending to counted or cleared, and refuses a delete.
 - **What it refuses.** A withdrawal request and a gift, rain or donation debit are refused whole
   while more than the dust remains or an entry is pending. The refusal carries the figures, so a
   client can show what is left. It is checked after the bonus lock, so bonus-locked money answers
@@ -387,7 +396,8 @@ answer `enabled: false`.
   a correction, or approving a queued withdrawal, which was debited when it was requested.
 - **Balance reads.** `locked` is the stricter of the turnover lock and the bonus lock: the whole
   balance while the requirement is unmet, otherwise the bonus lock. `bonusLocked` is the bonus lock
-  alone. Neither is summed with the other.
+  alone. Neither is summed with the other. The `WalletCommands.movableFunds` port names the lock in
+  force as `lockedBy`, `turnover` over `bonus`, and leaves it out when nothing is locked.
 - **Routes and permissions.** A player reads their own requirement and its entries. Staff read a
   player's requirement and entries, clear it with a reason, and read and update the per-product
   percents, which override the config for stakes placed after the change. The view, clear and update
@@ -402,13 +412,17 @@ answer `enabled: false`.
   locks their wallet rows in one order. Two transfers in opposite directions then queue instead of
   deadlocking. A custom binding without it has no safe order for that caller.
 - **Grant conversion.** The bonus module's super-admin route turns live gift, rain and donation
-  grants into real cash, with a requirement equal to the wagering each still owed. It answers a
-  conflict while the requirement is off. A grant that pays no cash completes with no requirement. A
+  grants into real cash, with a requirement equal to the wagering each still owed. Queued (pending)
+  grants convert too, and can no longer be activated once converted. It answers a conflict,
+  `turnover_disabled` while the requirement is off and `wallet_unavailable` when the process has
+  no wallet commands bound. A grant whose conversion fails stays live, is logged with its id, and
+  is listed in `failed` with a reason (`credit_refused`, `replay_mismatch`, `invalid_amount` or
+  `failed`); the batch goes on. A grant that pays no cash completes with no requirement. A
   grant with an open bet is skipped and counted, not converted. Each grant converts in its own
   transaction, and a dry run writes nothing. A pass pages by grant id: each call returns a
   `nextCursor`, which the next call passes as `after`. The pass is finished when `nextCursor` is
-  null. Grants skipped for an open bet are not revisited in that pass, so `remaining` can still be
-  above zero; a later pass converts them.
+  null. Grants skipped for an open bet are not revisited in that pass, so `remaining`, which counts
+  queued grants too, can still be above zero; a later pass converts them.
 - **Rollout.** Turn the multiplier on only after every instance runs this release, because an older
   instance applies no gate. The wallet logs a warning at boot when `transferCredits` is cash but some
   transfer kind carries no requirement.

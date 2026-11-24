@@ -30,11 +30,17 @@ const {
   },
 });
 
-type Expected = { remaining: string; pending?: boolean; outflow?: 'withdrawal' | 'transfer' };
+type Expected = {
+  required: string;
+  progress: string;
+  remaining: string;
+  pending?: boolean;
+  outflow?: 'withdrawal' | 'transfer';
+};
 
 async function expectTurnoverLocked(
   res: Response,
-  { remaining, pending = false, outflow = 'withdrawal' }: Expected,
+  { required, progress, remaining, pending = false, outflow = 'withdrawal' }: Expected,
 ): Promise<void> {
   expect(res.status).toBe(409);
   const body = await readJson(res);
@@ -42,6 +48,8 @@ async function expectTurnoverLocked(
     message: TEST_TURNOVER_LOCKED_MESSAGE,
     data: { reason: 'turnover_requirement_unmet', outflow, pivotCurrency: 'USD', pending },
   });
+  expectMoney(body.data.required, required, 'required');
+  expectMoney(body.data.progress, progress, 'progress');
   expectMoney(body.data.remaining, remaining, 'remaining');
 }
 
@@ -112,7 +120,11 @@ describe('a withdrawal while turnover is unmet', () => {
   it('refuses any amount, moves nothing, and pays once the deposit is wagered', async () => {
     const { client, userId } = await player('100');
 
-    await expectTurnoverLocked(await withdraw(client, '1'), { remaining: '100' });
+    await expectTurnoverLocked(await withdraw(client, '1'), {
+      required: '100',
+      progress: '0',
+      remaining: '100',
+    });
 
     expectMoney(await realBalance(userId), '100', 'balance');
     expect(await ledgerRows(userId, 'withdrawal')).toHaveLength(0);
@@ -133,7 +145,7 @@ describe('a withdrawal while turnover is unmet', () => {
       currency: 'EUR',
     });
 
-    await expectTurnoverLocked(res, { remaining: '100' });
+    await expectTurnoverLocked(res, { required: '100', progress: '0', remaining: '100' });
     expectMoney(await realBalance(userId, 'EUR'), '20', 'EUR balance');
   });
 
@@ -148,7 +160,11 @@ describe('a withdrawal while turnover is unmet', () => {
 
   it('accepts a withdrawal after staff clear the requirement', async () => {
     const { client, userId } = await player('100');
-    await expectTurnoverLocked(await withdraw(client, '10'), { remaining: '100' });
+    await expectTurnoverLocked(await withdraw(client, '10'), {
+      required: '100',
+      progress: '0',
+      remaining: '100',
+    });
 
     const cleared = await clear(userId);
 
@@ -244,7 +260,11 @@ describe('a locking bonus and unmet turnover together', () => {
       message: TEST_LOCKED_FUNDS_MESSAGE,
       data: { reason: 'bonus_funds_locked', outflow: 'withdrawal' },
     });
-    await expectTurnoverLocked(await withdraw(client, '10'), { remaining: '150' });
+    await expectTurnoverLocked(await withdraw(client, '10'), {
+      required: '150',
+      progress: '0',
+      remaining: '150',
+    });
 
     expect((await clear(userId)).status).toBe(200);
     const after = await balanceRead(client);

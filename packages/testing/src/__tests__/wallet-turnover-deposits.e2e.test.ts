@@ -123,10 +123,20 @@ describe('a completed deposit', () => {
   it('starts a new requirement from progress = required once the last one was met', async () => {
     const player = await ratedPlayer('2');
     expect((await deliver(player.deposit({ amount: '10' }))).status).toBe(200);
-    await drizzle()
-      .update(walletTurnover)
-      .set({ progress: '25' })
-      .where(eq(walletTurnover.userId, player.userId));
+    const staked = await drizzle().transaction((tx) =>
+      app()
+        .container.get(WALLET_COMMANDS)
+        .debit(tx, {
+          userId: player.userId,
+          amount: '9.996',
+          currency: player.currency,
+          type: 'bet',
+          context: { provider: 'aggregator', product: 'casino' },
+          providerRef: { providerName: 'aggregator', providerRefId: randomUUID() },
+        }),
+    );
+    expect(staked).toMatchObject({ ok: true, moved: true });
+    expect(await summaryOf(player.client)).toMatchObject({ locked: false });
 
     expect((await deliver(player.deposit({ amount: '10' }))).status).toBe(200);
 

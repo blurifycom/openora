@@ -345,7 +345,12 @@ export type WalletWithdrawalHoldArgs = {
 export const WALLET_LOCK_EXEMPT_DEBIT_TYPES = ['bet', 'loss', 'manual_debit'] as const;
 
 export type MovableFundsArgs = { userId: string; currency: string };
-export type MovableFunds = { real: string; locked: string; free: string };
+export type MovableFunds = {
+  real: string;
+  locked: string;
+  free: string;
+  lockedBy?: 'turnover' | 'bonus';
+};
 
 export type WalletCommands = {
   /**
@@ -360,7 +365,8 @@ export type WalletCommands = {
    * wallet row and balance row locks a debit takes, so a debit later in `tx` sees the same figure;
    * a transfer check, not a display read. Optional so a custom binding written before it compiles.
    * While the turnover requirement is unmet, `locked` is the whole balance and `free` is '0',
-   * because a transfer debit would throw `TurnoverLockedError`.
+   * because a transfer debit would throw `TurnoverLockedError`. `lockedBy` names the lock when
+   * `locked` is above zero: `turnover` when the requirement is unmet, which wins over a bonus lock.
    */
   movableFunds?(tx: unknown, args: MovableFundsArgs): Promise<MovableFunds>;
   /** @throws WalletReplayMismatchError when `providerRef` is already on a different request's move. */
@@ -397,6 +403,8 @@ export type WalletCommands = {
    * a repeat answers the first entry with `replayed: true`. Priced into the pivot now, or `pending`
    * until a rate exists. Optional so a custom binding written before it compiles.
    * @throws TurnoverDisabledError while `wallet.turnover.multiplier` is '0'.
+   * @throws WalletCommandAmountError when `requiredInCurrency` is not above zero.
+   * @throws WalletReplayMismatchError when `sourceRef` already holds another player's, currency's or amount's entry.
    */
   addTurnoverRequirement?(
     tx: unknown,

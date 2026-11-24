@@ -522,7 +522,7 @@ export function createWalletRouter({
       turnover: {
         get: os.admin.turnover.get.handler(async ({ input, context }) => {
           await adminGuard.assert(context, 'turnover', 'view');
-          return turnover.summary(input.userId);
+          return turnover.adminSummary(input.userId);
         }),
 
         entries: os.admin.turnover.entries.handler(async ({ input, context }) => {

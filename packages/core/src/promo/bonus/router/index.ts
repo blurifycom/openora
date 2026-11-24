@@ -27,6 +27,7 @@ import { BonusSlotTakenError } from '../shared/grant-slot.js';
 import {
   GrantConversionService,
   TransferGrantConversionUnavailableError,
+  TransferGrantConversionWalletUnavailableError,
 } from '../service/grant-conversion.service.js';
 import {
   GrantLifecycleService,
@@ -176,7 +177,12 @@ export function createBonusRouter({
               action: 'convert-transfer-grants',
             });
             const result = await mapErrors(
-              { CONFLICT: TransferGrantConversionUnavailableError },
+              {
+                CONFLICT: [
+                  TransferGrantConversionUnavailableError,
+                  TransferGrantConversionWalletUnavailableError,
+                ],
+              },
               () => conversion.convert(input, { id: userId, meta: context.clientMeta }),
             );
             if (!input.dryRun) {

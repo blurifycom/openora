@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq, inArray } from 'drizzle-orm';
-import { findOneOrThrow, moneyAdd, moneyCompare, moneyScaleBy } from '@openora/core/server';
+import { findOneOrThrow, moneyCompare, moneyScaleBy } from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import {
   TurnoverLockedError,
+  type BonusFundLockCommands,
   WalletTurnoverConfigSchema,
   definePlatformConfig,
   type ExchangeRateReader,
@@ -14,7 +15,7 @@ import {
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, makeOutboxEventBus, mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTurnover, walletTurnoverEntry } from '../schema/index.js';
+import { wallet, walletBalance, walletTurnoverEntry } from '../schema/index.js';
 import { TurnoverService } from '../service/turnover.service.js';
 import { WalletCommandsService } from '../service/wallet-commands.service.js';
 
@@ -200,53 +201,50 @@ describe('a debit through the command port', () => {
   });
 });
 
-describe('a cash transfer between players', () => {
-  const gift = (
-    commands: WalletCommandsService,
-    from: string,
-    to: string,
-    providerRefId = randomUUID(),
-  ) =>
-    db.drizzle.db.transaction(async (tx) => {
-      await commands.lockWallets(tx, { userIds: [from, to] });
-      const providerRef = { providerName: 'gifts', providerRefId };
-      const sent = await commands.debit(tx, {
-        userId: from,
-        amount: '1',
-        currency: 'USD',
-        type: 'gift',
-        providerRef,
-      });
-      const received = await commands.credit(tx, {
-        userId: to,
-        amount: '1',
-        currency: 'USD',
-        type: 'gift',
-        providerRef,
-      });
-      return { sent, received };
+describe('movable funds', () => {
+  const bonusLocked = mock<BonusFundLockCommands>({
+    lockedFunds: vi.fn(async () => ({ locked: '40', free: '460' })),
+    readLockedFunds: vi.fn(),
+    onOutflow: vi.fn(),
+  });
+  const withBonus = (turnover: TurnoverService) =>
+    new WalletCommandsService(eligibility, makeAuditWriter(), {
+      platformConfig: definePlatformConfig({ wallet: { turnover: { multiplier: '1' } } }),
+      bonusFundLocks: bonusLocked,
+      turnover: () => turnover,
     });
 
-  it('runs opposite transfers side by side without a deadlock and keeps both balances whole', async () => {
-    const a = await player('100');
-    const b = await player('100');
+  it('names the turnover lock while the requirement is unmet, over a bonus lock', async () => {
+    const userId = await player();
+    await owe(on.turnover, userId, '100');
 
-    for (let run = 0; run < 20; run += 1) {
-      const results = await Promise.all([
-        gift(cash.commands, a, b),
-        gift(cash.commands, b, a),
-        gift(cash.commands, a, b),
-      ]);
-      for (const { sent, received } of results) {
-        expect(sent).toMatchObject({ ok: true, moved: true });
-        expect(received).toMatchObject({ ok: true, moved: true });
-      }
-    }
-
-    expectMoney(await balanceOf(a), '80', 'sender balance');
-    expectMoney(await balanceOf(b), '120', 'recipient balance');
+    expect(await movable(on.commands, userId)).toEqual({
+      real: '500.000000000000000000',
+      locked: '500.000000000000000000',
+      free: '0',
+      lockedBy: 'turnover',
+    });
+    expect(await movable(withBonus(on.turnover), userId)).toMatchObject({ lockedBy: 'turnover' });
   });
 
+  it('names the bonus lock when only a grant locks money, and nothing when nothing does', async () => {
+    const userId = await player();
+
+    expect(await movable(withBonus(on.turnover), userId)).toEqual({
+      real: '500.000000000000000000',
+      locked: '40',
+      free: '460',
+      lockedBy: 'bonus',
+    });
+    expect(await movable(on.commands, userId)).toEqual({
+      real: '500.000000000000000000',
+      locked: '0',
+      free: '500.000000000000000000',
+    });
+  });
+});
+
+describe('a cash transfer between players', () => {
   it('credits a recipient once per provider and reference', async () => {
     const userId = await player('0');
     const providerRefId = randomUUID();
@@ -307,34 +305,6 @@ describe('a staff clear', () => {
 });
 
 describe('a credit racing a staff clear', () => {
-  it('ends with the clear covering the credit or a live new requirement, never in between', async () => {
-    const adminId = randomUUID();
-    for (let run = 0; run < 10; run += 1) {
-      const userId = await player();
-      await owe(on.turnover, userId, '10');
-
-      await Promise.all([
-        owe(on.turnover, userId, '20'),
-        on.turnover.clear(adminId, { userId, reason: 'race' }),
-      ]);
-
-      const row = findOneOrThrow(
-        await db.drizzle.db.select().from(walletTurnover).where(eq(walletTurnover.userId, userId)),
-        new Error('turnover row missing'),
-      );
-      const entries = await db.drizzle.db
-        .select()
-        .from(walletTurnoverEntry)
-        .where(eq(walletTurnoverEntry.userId, userId));
-      expect(entries).toHaveLength(2);
-      const live = entries.filter((entry) => entry.status === 'counted');
-      const owed = live.reduce((sum, entry) => moneyAdd(sum, entry.required ?? '0'), '0');
-      expectMoney(row.required, owed, 'required matches the live entries');
-      expect(row.pendingCount).toBe(0);
-      expect(['0', '20']).toContain(String(Number(owed)));
-    }
-  });
-
   it('lets a clear that waits on an uncommitted credit clear that credit too', async () => {
     const adminId = randomUUID();
     const userId = await player();

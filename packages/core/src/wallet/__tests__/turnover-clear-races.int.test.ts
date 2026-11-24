@@ -257,7 +257,7 @@ describe('a rain shaped transfer', () => {
       }
       return sum;
     };
-    const rain = (sender: { userId: string }, picks: typeof recipients) =>
+    const rain = (sender: { userId: string }, picks: readonly { userId: string }[]) =>
       db.drizzle.db.transaction(async (tx) => {
         await commands.lockWallets?.(tx, {
           userIds: [sender.userId, ...picks.map((p) => p.userId)],
@@ -285,10 +285,10 @@ describe('a rain shaped transfer', () => {
       const before = await total();
       const results = await Promise.allSettled(
         Array.from({ length: 6 }, (_, i) => {
-          const picks = recipients
-            .filter((_r, j) => (j + i * 3 + run) % 3 !== 0)
-            .slice(i % 2 === 0 ? 0 : 4);
-          return rain(senders[i % 2] as { userId: string }, picks.length > 0 ? picks : recipients);
+          const sender = senders[i % 2] as { userId: string };
+          const other = senders[(i + 1) % 2] as { userId: string };
+          const picks = [other, ...recipients.filter((_r, j) => (j + i + run) % 3 !== 0)];
+          return rain(sender, i % 2 === 0 ? picks : [...picks].reverse());
         }),
       );
       expect(
