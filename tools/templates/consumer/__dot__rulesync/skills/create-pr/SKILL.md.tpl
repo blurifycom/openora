@@ -21,7 +21,7 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 
 ## Pull-request description
 
-A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. High level only: diagrams and plain words, no code, file paths, symbol, env or job names, no SQL - the diff tab has those. Generated over hand-written: diagrams from the diff, endpoints from the schema diff, traces from real spans; never invent numbers or traces.
+A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. High level only: diagrams and plain words, no code, file paths, symbol, env or job names, no SQL - the diff tab has those. Generated over hand-written: diagrams from the diff, endpoints from the schema diff, traces from real spans; never invent numbers or traces. Budget: what shows before anything is expanded fits one screen (about 1500 characters), and each section fits one screen (about 1500 characters plus its diagram); the detail goes into the diagram or table, not paragraphs.
 
 `Closes <KEY>-n` (or `Refs <KEY>-n` when the PR does not finish the ticket, see `docs/agents/issue-tracker.md`) on the first line, then **How it was checked**: the pipeline result for the head SHA, the tests that prove the change, each named by the behaviour it proves (never a bare list of test files), and review findings dropped as not holding, each with why. Then each section below only when its trigger fires - never an empty or "N/A" one - each collapsed in `<details><summary><b>N. Name</b>: its gist in one line</summary>`:
 
