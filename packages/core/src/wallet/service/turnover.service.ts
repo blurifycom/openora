@@ -67,7 +67,6 @@ type NewEntry = {
 export type TurnoverCredit = {
   userId: User['id'];
   kind: TurnoverCreditType;
-  /** The credit's ledger row id. */
   sourceRef: string;
   currency: string;
   amount: string;
@@ -104,7 +103,6 @@ export type TurnoverRound = {
 
 export type TurnoverReversal = Omit<TurnoverRound, 'externalRoundId'> & {
   externalRoundId: string | undefined;
-  /** The reversal's own ledger row. */
   ledgerRowId: LedgerRow['id'];
   amount: string;
   reversesTransactionId: LedgerRow['id'] | undefined;
@@ -709,7 +707,6 @@ export class TurnoverService {
     }
   }
 
-  /** Whether the player has a turnover row at all: one primary-key read. */
   async tracks(tx: unknown, userId: User['id']): Promise<boolean> {
     return (await this.readRow(tx as DrizzleDb, userId)) !== undefined;
   }
@@ -770,7 +767,6 @@ export class TurnoverService {
     await this.writeRow(db, row, { progress: moneyAdd(row.progress, contribution) });
   }
 
-  /** A ledger row created after the player's last staff clear, the only rows that still count. */
   private afterLastClear(userId: User['id']): SQL {
     return sql`${walletTransaction.createdAt} > coalesce((select ${walletTurnover.clearedAt} from ${walletTurnover} where ${walletTurnover.userId} = ${userId}), '-infinity')`;
   }
