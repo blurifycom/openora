@@ -1504,4 +1504,11 @@ describe('TagEvaluationService idempotency (real PG)', () => {
     await expect(service.onUserLogin({ userId, playerId: null })).resolves.toBeUndefined();
     expect(await activeTagKeys(userId)).toEqual([]);
   });
+  it('treats a tag the operator never created as nothing to remove', async () => {
+    const userId = randomUUID();
+    const { service } = makeServices();
+
+    await expect(service.onUserLogin({ userId, playerId: null })).resolves.toBeUndefined();
+    expect(await activeTagKeys(userId)).toEqual([]);
+  });
 });
