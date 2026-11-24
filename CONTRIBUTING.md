@@ -118,7 +118,7 @@ Conventional Commits, **enforced** by `commitlint` (local `commit-msg` hook + CI
   workspace - every `packages/*` and `packages/core/src/*` module dir, apps, plus meta scopes
   (`ci`, `deps`, `rules`, `repo`, `tooling`, ...). An unlisted scope fails the lint; omit the scope if
   none fits. Check a message with `pnpm commitlint --from HEAD~1`.
-- One MR = one concern; stage explicitly (`git add <paths>`), don't sweep foreign changes with `git add -A`.
+- One ticket = one PR, however big; stage explicitly (`git add <paths>`), don't sweep foreign changes with `git add -A`.
 - No sensitive/internal data in messages - reference a ticket by bare key (`ABC-45`), never a URL.
 - Sign off each commit (`git commit -s`) per the DCO (see License below).
 

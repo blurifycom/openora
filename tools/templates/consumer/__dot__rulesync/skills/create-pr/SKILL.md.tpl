@@ -21,17 +21,30 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 
 ## Pull-request description
 
-- State the user-facing change and its reason briefly.
-- Add short, reproducible local test steps for the changed behavior (for example, `pnpm dev` then the relevant URLs or user flow).
-- Close the ticket by key at the end: `Closes <KEY>-n` if this PR finishes it, else `Refs <KEY>-n` (see `docs/agents/issue-tracker.md`).
-- Do not include a generic verification-command list: CI already reports those checks.
-- **Attach the manual-verification evidence.** The videos are what a reviewer reads as proof of a user-visible change: one walkthrough video (`ui-verify` "Video evidence"): a clip per acceptance criterion, the before/after pair on a fix, then the four shots of every changed screen, joined into one `<ticket>-walkthrough.mp4`. Upload that one file to the forge and embed the markdown it returns in a "Video" section with its chapter list - `docs/agents/forge.md` says how (its "Attach evidence" section). A local path under `apps/e2e/test-results/` shows a reviewer nothing; never put one in a description. An API-only change attaches the request/response trace instead. Paste the `tester` pass's verdict table next to it. Skip this only when nothing user-visible changed.
-- **Diagram the flow.** A change that adds or changes a flow across components (a request path through gates and a vendor, a state machine, an async job or webhook, a new module or overlay) embeds a fenced `mermaid` block (`flowchart` or `sequenceDiagram`), right after the summary - GitHub and GitLab both render it. Name nodes as the code does, keep it under ~15 nodes, include the refusal and failure branches. No flow (copy, styling, deps, a one-file fix): no diagram.
-- A paired change links neither way: the shared branch name pairs the two requests. The OSS repo is public, so its PR never names this repo or the operator; this request may be read by people outside the team, so it never names or links the OSS repo.
+A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. High level only: diagrams and plain words, no code, file paths, symbol, env or job names, no SQL - the diff tab has those. Generated over hand-written: diagrams from the diff, endpoints from the schema diff, traces from real spans; never invent numbers or traces.
+
+`Closes <KEY>-n` (or `Refs <KEY>-n` when the PR does not finish the ticket, see `docs/agents/issue-tracker.md`) on the first line, then **How it was checked**: the pipeline result for the head SHA, the tests that prove the change, each named by the behaviour it proves (never a bare list of test files), and review findings dropped as not holding, each with why. Then each section below only when its trigger fires - never an empty or "N/A" one - each collapsed in `<details><summary><b>N. Name</b>: its gist in one line</summary>`:
+
+1. **Architecture diff** - a new module, service, package, external call or dependency between modules, or 3+ modules touched: mermaid of the changed nodes plus one unchanged neighbour each side, max ~10 nodes.
+2. **Request path through infra** - env vars, IaC, routing, queues, cron, or an external caller (webhook, provider callback) on a risky path: numbered edges, who guards each hop, then what the code doesn't show.
+3. **Business logic** - 3+ new branches or a changed error outcome: a decision flowchart, the exact status and reason per caller.
+4. **Endpoints and permissions** - a route, schema, request/response type or status code changes: `flowchart LR` caller -> endpoint, payload on the edge, response and new status codes in the node, and whether it is backward compatible.
+5. **Queries, indexes, trace** - new or changed queries on a request path, or data plus contract on a money path: one arrow per query with its index, the span waterfall when a local run exported a trace (local test data only), else "trace: none".
+6. **Data** - a migration or schema change: erDiagram of new or changed tables, then locks, backfill, safety under traffic, env var names added or removed (never values).
+7. **E2E steps** - a UI change, or an AC only an e2e proves: test -> web -> api -> DB, one block per step with request -> status and the DB delta.
+8. **AC -> evidence** - the ticket has ACs: the `tester` verdict rows mapped to one row per AC, `AC | behaviour | test | clip | trace | result @sha`, UNCHECKED rows included.
+9. **Decisions to accept** - a product or tradeoff call the ticket did not settle; always on money, KYC, responsible-gambling or authz (then right under `Closes`): numbered, each with an owner.
+10. **Test quality and rollout** - a large or risky change, any money, KYC, responsible-gambling or authz change, an env/config change, or a change outside the repo: mutation rows, hostile cases, what is not covered; which config changes where, migration order, monitoring, what a revert leaves behind, what a person supplies before deploy ("Needs before deploy", names only), and every "Outside the repo" change.
+11. **Video** - anything a player or operator sees: one walkthrough video (`ui-verify` "Video evidence"), a clip per acceptance criterion, the before/after pair on a fix, then the four shots of every changed screen, joined into one `<ticket>-walkthrough.mp4`, uploaded per `docs/agents/forge.md` ("Attach evidence") with its chapter list. Never a local path. An API-only change attaches the request/response trace instead.
+12. **Code review guide** - a large change: ordered stops (contract -> tables -> server -> writes -> UI), each named by what it does.
+
+Mermaid is horizontal by default, with no theme or fills: only a coloured border on what changed (added `#3fb950`, changed `#d29922`, removed `#f85149` dashed). No generic verification-command list: CI reports those checks.
+
+A paired change links neither way: the shared branch name pairs the two requests. The OSS repo is public, so its PR never names this repo or the operator; this request may be read by people outside the team, so it never names or links the OSS repo.
 
 ## Rules
 
 - NEVER push without an explicit per-action "yes push" from the user (or `/ship` on its ticket branch, see step 6). Invoking this skill does NOT authorize a push. Report the commit SHA, ask, then push only on yes.
 - `pnpm verify` must pass on the commit you push.
-- Keep the pull request scoped to one concern; split unrelated changes into separate ones.
+- One ticket, one pull request, however big; never split a ticket into several by size. Unrelated changes found on the way stay out of it.
 - No AI-attribution trailers anywhere - not in the commit, not in the pull-request title or description. No "Generated with", no "Co-Authored-By: Claude", no robot-emoji footer.
