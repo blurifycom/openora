@@ -16,7 +16,7 @@ Read this before a commit, PR, or branch operation.
   APPROVED, before every push, including a branch already in review and a push after a rebase or
   a pipeline fix. The `guard-review` hook blocks a push or a new PR/MR until a review approved
   that exact HEAD; a promotion from a shared branch, a branch delete, and a tag push pass.
-- On GitHub, a PR that builds on another feature branch goes up as a native stacked PR with
+- On GitHub, a PR that builds on another ticket's feature branch goes up as a native stacked PR with
   `gh stack` (`init`, `add`, `submit`, `sync`); the `guard-stack` hook blocks a plain PR based on
   a feature branch. Each layer is reviewed on its own.
 - A PR/MR opens as a draft and is marked ready for review once its pipeline on the last commit
