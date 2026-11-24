@@ -3,6 +3,8 @@
 **Date**: 2026-11-17
 **Status**: Accepted
 
+> **Update (2026-11-24)**: An opt-in deposit turnover requirement now sits beside this lock, in [ADR-0065](./0065-deposit-turnover-requirement.md). Its check runs after `onOutflow`, and balance reads show the stricter of the two locks, never their sum.
+
 ## Context
 
 ADR-0062 tracks the real money a bonus ties up as two counters over the wallet balance: B, the money
