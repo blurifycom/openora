@@ -40,6 +40,7 @@ import {
   isPlayRefused,
   type WagerContext,
   isWagerRtp,
+  resolveWalletTurnoverConfig,
   TurnoverDisabledError,
   UuidSchema,
   WalletReplayMismatchError,
@@ -204,6 +205,7 @@ const TRANSFER_CREDIT_NAMESPACE = 'transfer-credit';
 
 export class WalletCommandsService implements WalletCommands {
   private readonly significantAmountThresholds: ReadonlyMap<string, string>;
+  private readonly turnoverOn: boolean;
 
   constructor(
     private readonly playEligibility: PlayEligibilityPort,
@@ -215,6 +217,13 @@ export class WalletCommandsService implements WalletCommands {
         ([currency, threshold]) => [balanceKey(currency), threshold],
       ),
     );
+    this.turnoverOn =
+      moneyCompare(resolveWalletTurnoverConfig(ports.platformConfig?.wallet).multiplier, '0') > 0;
+  }
+
+  /** Undefined while the multiplier is 0, so no stake path resolves or reads anything. */
+  private activeTurnover(): TurnoverService | undefined {
+    return this.turnoverOn ? this.ports.turnover?.() : undefined;
   }
 
   private async auditSignificantAmount(
@@ -452,6 +461,15 @@ export class WalletCommandsService implements WalletCommands {
             })
           : { completed: [] };
       const newBalance = await this.convertAll(txn, debitRow, closed.completed, available);
+      if (providerRef?.externalRoundId) {
+        await this.activeTurnover()?.settleRound(txn, {
+          userId,
+          walletId: row.id,
+          currency: debitCurrency,
+          providerName: providerRef.providerName,
+          externalRoundId: providerRef.externalRoundId,
+        });
+      }
       return {
         ok: true,
         moved: false,
@@ -565,6 +583,16 @@ export class WalletCommandsService implements WalletCommands {
             providerRef.providerRefId,
             ledgerRow.id,
           );
+        }
+        // After `wager()` and its grant locks: the turnover row is always the last lock a bet takes.
+        if (type === 'bet') {
+          await this.activeTurnover()?.countStake(sp, {
+            userId,
+            ledgerRowId: ledgerRow.id,
+            product: context?.product,
+            currency: debitCurrency,
+            realPart,
+          });
         }
         return { wagered, ledgerRow, debitedBalance };
       })
@@ -877,13 +905,40 @@ export class WalletCommandsService implements WalletCommands {
           throw new WalletCreditFailedError(row.id, currency);
         }
         await stampBalanceAfter(sp, ledgerRow.id, credited.amount);
-        if (cashTransfer !== null && this.ports.turnover) {
-          await this.ports.turnover().addCredit(sp, {
+        const turnover = this.activeTurnover();
+        if (cashTransfer !== null) {
+          await turnover?.addCredit(sp, {
             userId,
             kind: cashTransfer,
             sourceRef: ledgerRow.id,
             currency: creditRow.currency,
             amount,
+          });
+        }
+        if (turnover && type === 'bet_reversal' && providerRef) {
+          await turnover.reverseStake(sp, {
+            userId,
+            walletId: row.id,
+            currency: creditRow.currency,
+            providerName: providerRef.providerName,
+            externalRoundId: providerRef.externalRoundId,
+            ledgerRowId: ledgerRow.id,
+            amount,
+            reversesTransactionId,
+          });
+        }
+        if (
+          turnover &&
+          closesRound &&
+          providerRef?.externalRoundId &&
+          (type === 'win' || type === 'bet_reversal')
+        ) {
+          await turnover.settleRound(sp, {
+            userId,
+            walletId: row.id,
+            currency: creditRow.currency,
+            providerName: providerRef.providerName,
+            externalRoundId: providerRef.externalRoundId,
           });
         }
         // A correction of this round can only take back what reached the real balance.
@@ -961,7 +1016,9 @@ export class WalletCommandsService implements WalletCommands {
     { userId, currency, providerRef }: WalletCloseRoundArgs,
   ): Promise<{ completed: BonusCompletion[]; newBalance: string | null }> {
     const txn = tx as DrizzleDb;
-    if (!this.ports.bonusWagering) {
+    const turnover = this.activeTurnover();
+    const bonusWagering = this.ports.bonusWagering;
+    if (!bonusWagering && !turnover) {
       return { completed: [], newBalance: null };
     }
     const row = await this.selectWallet(txn, userId, true);
@@ -969,21 +1026,28 @@ export class WalletCommandsService implements WalletCommands {
       return { completed: [], newBalance: null };
     }
     const key = balanceKey(currency);
-    // Same lock order as a settlement: wallet, then its balance, then the grant.
+    // Same lock order as a settlement: wallet, then its balance, then the grant, then turnover.
     const realBalance = await readWalletBalanceForUpdate(txn, row.id, key);
-    const { completed } = await this.ports.bonusWagering.closeRound(txn, {
+    const closed = bonusWagering
+      ? await bonusWagering.closeRound(txn, {
+          userId,
+          currency: key,
+          providerName: providerRef.providerName,
+          externalRoundId: providerRef.externalRoundId,
+          realBalance,
+        })
+      : undefined;
+    const completed = closed?.completed ?? [];
+    const newBalance = closed
+      ? await this.convertAll(txn, { ...row, currency: key }, completed, realBalance)
+      : null;
+    await turnover?.settleRound(txn, {
       userId,
+      walletId: row.id,
       currency: key,
       providerName: providerRef.providerName,
       externalRoundId: providerRef.externalRoundId,
-      realBalance,
     });
-    const newBalance = await this.convertAll(
-      txn,
-      { ...row, currency: key },
-      completed,
-      realBalance,
-    );
     return { completed, newBalance };
   }
 

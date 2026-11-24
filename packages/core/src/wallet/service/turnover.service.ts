@@ -1,6 +1,8 @@
 import {
+  isPositiveMoney,
   moneyAdd,
   moneyCompare,
+  moneyMultiplyDivide,
   moneyScaleBy,
   moneySubtract,
   type DrizzleDb,
@@ -25,9 +27,14 @@ import {
   type WagerProduct,
   type WalletTurnoverConfig,
 } from '@openora/core/contracts';
-import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, or, sql, type SQL } from 'drizzle-orm';
 import * as z from 'zod';
-import { walletTurnover, walletTurnoverConfig, walletTurnoverEntry } from '../schema/index.js';
+import {
+  walletTransaction,
+  walletTurnover,
+  walletTurnoverConfig,
+  walletTurnoverEntry,
+} from '../schema/index.js';
 import type {
   TurnoverConfigView,
   TurnoverEntriesQuery,
@@ -41,6 +48,7 @@ export const TURNOVER_PRICING_QUEUE = queue('wallet-turnover-pricing');
 export const TurnoverPricingJobSchema = z.object({});
 
 type EntryRow = typeof walletTurnoverEntry.$inferSelect;
+type TurnoverRow = typeof walletTurnover.$inferSelect;
 type ProductOverrides = Partial<Record<WagerProduct, number>>;
 
 type NewEntry = {
@@ -71,7 +79,39 @@ export type TurnoverServiceDeps = {
   rates?: ExchangeRateReader;
 };
 
+type LedgerRow = typeof walletTransaction.$inferSelect;
+
+export type TurnoverStake = {
+  userId: User['id'];
+  /** The bet's ledger row, stamped with what it counts. */
+  ledgerRowId: LedgerRow['id'];
+  product: WagerProduct | undefined;
+  currency: string;
+  /** The part of the stake the real balance paid. */
+  realPart: string;
+};
+
+/** A ledger round: one wallet's rows under one provider round id, in one currency. */
+export type TurnoverRound = {
+  userId: User['id'];
+  walletId: LedgerRow['walletId'];
+  currency: string;
+  providerName: string;
+  externalRoundId: string;
+};
+
+export type TurnoverReversal = Omit<TurnoverRound, 'externalRoundId'> & {
+  externalRoundId: string | undefined;
+  /** The reversal's own ledger row. */
+  ledgerRowId: LedgerRow['id'];
+  amount: string;
+  reversesTransactionId: LedgerRow['id'] | undefined;
+};
+
+type RoundSums = { counted: string; deferred: string; reversed: string; staked: string };
+
 const maxZero = (amount: string): string => (moneyCompare(amount, '0') > 0 ? amount : '0');
+const minMoney = (a: string, b: string): string => (moneyCompare(a, b) <= 0 ? a : b);
 
 function toEntry(row: EntryRow): TurnoverEntry {
   return {
@@ -118,7 +158,13 @@ export class TurnoverService {
     };
   }
 
-  private toSummary(row: typeof walletTurnover.$inferSelect): TurnoverSummary {
+  /** Nothing owed: what is left is at most dust and no entry waits for a rate. */
+  private isMet(row: TurnoverRow): boolean {
+    const remaining = maxZero(moneySubtract(row.required, row.progress));
+    return moneyCompare(remaining, this.deps.config.dustThreshold) <= 0 && row.pendingCount === 0;
+  }
+
+  private toSummary(row: TurnoverRow): TurnoverSummary {
     const remaining = maxZero(moneySubtract(row.required, row.progress));
     return {
       enabled: true,
@@ -360,9 +406,56 @@ export class TurnoverService {
     return existing ? { entryId: existing.id, status: existing.status, replayed: true } : null;
   }
 
+  private async lockRow(db: DrizzleDb, userId: User['id']): Promise<TurnoverRow | undefined> {
+    const [row] = await db
+      .select()
+      .from(walletTurnover)
+      .where(eq(walletTurnover.userId, userId))
+      .for('update');
+    return row;
+  }
+
+  private async readRow(db: DrizzleDb, userId: User['id']): Promise<TurnoverRow | undefined> {
+    const [row] = await db.select().from(walletTurnover).where(eq(walletTurnover.userId, userId));
+    return row;
+  }
+
+  /**
+   * Writes the locked row's new values and emits `wallet.turnover.met` when this write is the one
+   * that meets the requirement. The row lock makes that transition visible to one writer only.
+   */
+  private async writeRow(
+    db: DrizzleDb,
+    row: TurnoverRow,
+    values: Partial<Pick<TurnoverRow, 'required' | 'progress' | 'pendingCount'>>,
+  ): Promise<void> {
+    const [updated] = await db
+      .update(walletTurnover)
+      .set(values)
+      .where(eq(walletTurnover.userId, row.userId))
+      .returning();
+    if (updated && !this.isMet(row) && this.isMet(updated)) {
+      await this.deps.events.emitInTransaction(db, 'wallet.turnover.met', {
+        userId: updated.userId,
+        pivotCurrency: updated.pivotCurrency,
+        required: updated.required,
+        progress: updated.progress,
+      });
+    }
+  }
+
+  /** Moves the player's progress by `delta` under the row lock, never below zero. */
+  private async moveProgress(db: DrizzleDb, userId: User['id'], delta: string): Promise<void> {
+    const row = await this.lockRow(db, userId);
+    if (!row) {
+      return;
+    }
+    await this.writeRow(db, row, { progress: maxZero(moneyAdd(row.progress, delta)) });
+  }
+
   /**
    * Adds one entry's requirement on the caller's transaction, deduplicated on `(source, sourceRef)`.
-   * Locks the player's turnover row before the entry, as every turnover writer does.
+   * Prices before it takes the player's turnover row lock, then locks that row before the entry.
    */
   private async addEntry(tx: unknown, entry: NewEntry): Promise<AddTurnoverRequirementResult> {
     const db = tx as DrizzleDb;
@@ -370,20 +463,18 @@ export class TurnoverService {
     if (replay) {
       return replay;
     }
+    const pivotCurrency =
+      (await this.readRow(db, entry.userId))?.pivotCurrency ?? this.deps.pivotCurrency;
+    const pivotValue = await this.price(entry.amount, entry.currency, pivotCurrency, tx);
     await db
       .insert(walletTurnover)
       .values({ userId: entry.userId, pivotCurrency: this.deps.pivotCurrency })
       .onConflictDoNothing({ target: walletTurnover.userId });
-    const [row] = await db
-      .select()
-      .from(walletTurnover)
-      .where(eq(walletTurnover.userId, entry.userId))
-      .for('update');
+    const row = await this.lockRow(db, entry.userId);
     if (!row) {
       throw new Error('turnover row missing after its upsert');
     }
     const requiredInCurrency = moneyScaleBy(entry.amount, entry.multiplier);
-    const pivotValue = await this.price(entry.amount, entry.currency, row.pivotCurrency, tx);
     const required = pivotValue === null ? null : moneyScaleBy(pivotValue, entry.multiplier);
     const [inserted] = await db
       .insert(walletTurnoverEntry)
@@ -407,16 +498,15 @@ export class TurnoverService {
       }
       return existing;
     }
-    // Play past a met requirement is not banked: a new credit starts from progress = required.
-    const progress = moneyCompare(row.progress, row.required) > 0 ? row.required : row.progress;
-    await db
-      .update(walletTurnover)
-      .set(
-        required === null
-          ? { progress, pendingCount: row.pendingCount + 1 }
-          : { progress, required: moneyAdd(row.required, required) },
-      )
-      .where(eq(walletTurnover.userId, entry.userId));
+    // Play past a met requirement is not banked; while anything is owed, play already counted stays.
+    const progress = this.isMet(row) ? row.required : row.progress;
+    await this.writeRow(
+      db,
+      row,
+      required === null
+        ? { progress, pendingCount: row.pendingCount + 1 }
+        : { progress, required: moneyAdd(row.required, required) },
+    );
     return { entryId: inserted.id, status: inserted.status, replayed: false };
   }
 
@@ -453,18 +543,14 @@ export class TurnoverService {
   }
 
   /**
-   * Prices the player's pending entries that have a rate now, under their turnover row lock. Only
-   * an entry this call moves out of `pending` adds to `required`, so a repeat or a concurrent run
-   * adds nothing twice. Returns how many it priced.
+   * Prices the player's pending entries that have a rate now, then applies them under the turnover
+   * row lock. Only an entry this call moves out of `pending` adds to `required`, so a repeat or a
+   * concurrent run adds nothing twice. Returns how many it priced.
    */
   async pricePending(tx: unknown, userId: User['id']): Promise<number> {
     const db = tx as DrizzleDb;
-    const [row] = await db
-      .select()
-      .from(walletTurnover)
-      .where(eq(walletTurnover.userId, userId))
-      .for('update');
-    if (!row) {
+    const current = await this.readRow(db, userId);
+    if (!current) {
       return 0;
     }
     const pending = await db
@@ -472,18 +558,31 @@ export class TurnoverService {
       .from(walletTurnoverEntry)
       .where(and(eq(walletTurnoverEntry.userId, userId), eq(walletTurnoverEntry.status, 'pending')))
       .orderBy(walletTurnoverEntry.id);
+    const quotes: { id: string; pivotValue: string; required: string }[] = [];
+    for (const entry of pending) {
+      const pivotValue = await this.price(entry.amount, entry.currency, current.pivotCurrency, db);
+      if (pivotValue !== null) {
+        quotes.push({
+          id: entry.id,
+          pivotValue,
+          required: moneyScaleBy(pivotValue, entry.multiplier),
+        });
+      }
+    }
+    if (quotes.length === 0) {
+      return 0;
+    }
+    const row = await this.lockRow(db, userId);
+    if (!row) {
+      return 0;
+    }
     let added = '0';
     let priced = 0;
-    for (const entry of pending) {
-      const pivotValue = await this.price(entry.amount, entry.currency, row.pivotCurrency, db);
-      if (pivotValue === null) {
-        continue;
-      }
-      const required = moneyScaleBy(pivotValue, entry.multiplier);
+    for (const { id, pivotValue, required } of quotes) {
       const [updated] = await db
         .update(walletTurnoverEntry)
         .set({ status: 'counted', pivotValue, required, pricedAt: new Date() })
-        .where(and(eq(walletTurnoverEntry.id, entry.id), eq(walletTurnoverEntry.status, 'pending')))
+        .where(and(eq(walletTurnoverEntry.id, id), eq(walletTurnoverEntry.status, 'pending')))
         .returning({ id: walletTurnoverEntry.id });
       if (updated) {
         added = moneyAdd(added, required);
@@ -491,13 +590,10 @@ export class TurnoverService {
       }
     }
     if (priced > 0) {
-      await db
-        .update(walletTurnover)
-        .set({
-          required: moneyAdd(row.required, added),
-          pendingCount: Math.max(row.pendingCount - priced, 0),
-        })
-        .where(eq(walletTurnover.userId, userId));
+      await this.writeRow(db, row, {
+        required: moneyAdd(row.required, added),
+        pendingCount: Math.max(row.pendingCount - priced, 0),
+      });
     }
     return priced;
   }
@@ -529,6 +625,194 @@ export class TurnoverService {
         return;
       }
       after = last.userId;
+    }
+  }
+
+  private async productPercent(product: WagerProduct, db: DrizzleDb): Promise<number> {
+    return (await this.overrides(db))[product] ?? this.deps.config.productPercent[product];
+  }
+
+  private stamp(
+    db: DrizzleDb,
+    ledgerRowId: LedgerRow['id'],
+    contribution: string,
+    state: NonNullable<LedgerRow['turnoverState']>,
+  ) {
+    return db
+      .update(walletTransaction)
+      .set({ turnoverContribution: contribution, turnoverState: state })
+      .where(eq(walletTransaction.id, ledgerRowId));
+  }
+
+  /**
+   * Counts a bet's real part on the caller's transaction, after its ledger row is written. Nothing
+   * is priced or stamped while nothing is owed. A product in `countAtSettle` is priced and stamped
+   * `deferred` here, and counts when its round settles.
+   */
+  async countStake(
+    tx: unknown,
+    { userId, ledgerRowId, product, currency, realPart }: TurnoverStake,
+  ): Promise<void> {
+    if (!this.enabled || product === undefined || !isPositiveMoney(realPart)) {
+      return;
+    }
+    const db = tx as DrizzleDb;
+    const owed = await this.readRow(db, userId);
+    if (!owed || this.isMet(owed)) {
+      return;
+    }
+    const percent = await this.productPercent(product, db);
+    if (percent === 0) {
+      return;
+    }
+    const pivotValue = await this.price(realPart, currency, owed.pivotCurrency, db);
+    if (pivotValue === null) {
+      return;
+    }
+    const contribution = moneyMultiplyDivide(pivotValue, String(percent), '100');
+    if (!isPositiveMoney(contribution)) {
+      return;
+    }
+    if (this.deps.config.countAtSettle.includes(product)) {
+      await this.stamp(db, ledgerRowId, contribution, 'deferred');
+      return;
+    }
+    const row = await this.lockRow(db, userId);
+    if (!row || this.isMet(row)) {
+      return;
+    }
+    await this.stamp(db, ledgerRowId, contribution, 'counted');
+    await this.writeRow(db, row, { progress: moneyAdd(row.progress, contribution) });
+  }
+
+  private async roundSums(db: DrizzleDb, scope: SQL | undefined): Promise<RoundSums> {
+    const t = walletTransaction;
+    const isBet = sql`${t.type} = 'bet' and ${t.direction} = 'debit'`;
+    const [sums] = await db
+      .select({
+        counted: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${isBet} and ${t.turnoverState} = 'counted'), 0)`,
+        deferred: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${isBet} and ${t.turnoverState} = 'deferred'), 0)`,
+        reversed: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${t.turnoverState} = 'reversal'), 0)`,
+        staked: sql<string>`coalesce(sum(${t.amount}) filter (where ${isBet}), 0)`,
+      })
+      .from(t)
+      .where(and(scope, eq(t.status, 'completed')));
+    return sums ?? { counted: '0', deferred: '0', reversed: '0', staked: '0' };
+  }
+
+  private roundScope({ walletId, currency, providerName, externalRoundId }: TurnoverRound) {
+    const t = walletTransaction;
+    return and(
+      eq(t.walletId, walletId),
+      eq(t.providerName, providerName),
+      eq(t.externalRoundId, externalRoundId),
+      eq(t.currency, currency),
+    );
+  }
+
+  /**
+   * The round's final result reached the wallet: its `deferred` stakes count now, net of its
+   * reversals. The conditional flip is the guard, so a re-settle after a reopen counts nothing more.
+   */
+  async settleRound(tx: unknown, round: TurnoverRound): Promise<void> {
+    if (!this.enabled || this.deps.config.countAtSettle.length === 0) {
+      return;
+    }
+    const db = tx as DrizzleDb;
+    if (!(await this.readRow(db, round.userId))) {
+      return;
+    }
+    const t = walletTransaction;
+    const flipped = await db
+      .update(t)
+      .set({ turnoverState: 'counted' })
+      .where(
+        and(
+          this.roundScope(round),
+          eq(t.type, 'bet'),
+          eq(t.direction, 'debit'),
+          eq(t.turnoverState, 'deferred'),
+        ),
+      )
+      .returning({ contribution: t.turnoverContribution });
+    if (flipped.length === 0) {
+      return;
+    }
+    const settled = flipped.reduce((sum, row) => moneyAdd(sum, row.contribution ?? '0'), '0');
+    const { counted, reversed } = await this.roundSums(db, this.roundScope(round));
+    const delta = moneySubtract(
+      maxZero(moneySubtract(counted, reversed)),
+      maxZero(moneySubtract(moneySubtract(counted, settled), reversed)),
+    );
+    if (isPositiveMoney(delta)) {
+      await this.moveProgress(db, round.userId, delta);
+    }
+  }
+
+  /**
+   * Takes a stake reversal's share back: the named bet's contribution pro rata to what is
+   * reversed, else the round's, capped at what the round still holds. Stamped on the reversal row;
+   * progress drops only by the part that had already counted.
+   */
+  async reverseStake(tx: unknown, reversal: TurnoverReversal): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+    const db = tx as DrizzleDb;
+    if (!(await this.readRow(db, reversal.userId))) {
+      return;
+    }
+    const t = walletTransaction;
+    const { reversesTransactionId, externalRoundId, amount } = reversal;
+    const scope =
+      externalRoundId === undefined
+        ? reversesTransactionId === undefined
+          ? undefined
+          : and(
+              eq(t.walletId, reversal.walletId),
+              or(
+                eq(t.id, reversesTransactionId),
+                eq(t.reversedTransactionId, reversesTransactionId),
+              ),
+            )
+        : this.roundScope({ ...reversal, externalRoundId });
+    if (scope === undefined) {
+      return;
+    }
+    const sums = await this.roundSums(db, scope);
+    let share = '0';
+    if (reversesTransactionId === undefined) {
+      if (isPositiveMoney(sums.staked)) {
+        share = moneyMultiplyDivide(moneyAdd(sums.counted, sums.deferred), amount, sums.staked);
+      }
+    } else {
+      const [bet] = await db
+        .select({
+          amount: t.amount,
+          contribution: t.turnoverContribution,
+          state: t.turnoverState,
+        })
+        .from(t)
+        .where(and(eq(t.id, reversesTransactionId), eq(t.walletId, reversal.walletId)));
+      if (bet?.contribution && bet.state !== 'reversal' && isPositiveMoney(bet.amount)) {
+        share = moneyMultiplyDivide(bet.contribution, amount, bet.amount);
+      }
+    }
+    share = minMoney(
+      share,
+      maxZero(moneySubtract(moneyAdd(sums.counted, sums.deferred), sums.reversed)),
+    );
+    if (!isPositiveMoney(share)) {
+      return;
+    }
+    await this.stamp(db, reversal.ledgerRowId, share, 'reversal');
+    const countedNet = maxZero(moneySubtract(sums.counted, sums.reversed));
+    const delta = moneySubtract(
+      maxZero(moneySubtract(moneySubtract(sums.counted, sums.reversed), share)),
+      countedNet,
+    );
+    if (moneyCompare(delta, '0') < 0) {
+      await this.moveProgress(db, reversal.userId, delta);
     }
   }
 }
