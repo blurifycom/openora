@@ -11,6 +11,8 @@ import {
   WalletCorrectionRoundError,
   WalletCorrectionTypeError,
   WalletHoldWithoutWalletError,
+  type AddTurnoverRequirementArgs,
+  type AddTurnoverRequirementResult,
   type AuditWritePort,
   type BonusFundLockCommands,
   type MovableFunds,
@@ -38,6 +40,7 @@ import {
   isPlayRefused,
   type WagerContext,
   isWagerRtp,
+  TurnoverDisabledError,
   UuidSchema,
   WalletReplayMismatchError,
 } from '@openora/core/contracts';
@@ -60,6 +63,7 @@ import {
   type WalletTransaction,
 } from '../schema/index.js';
 import type { ManualAdjustmentDirection } from '../contract/index.js';
+import type { TurnoverService } from './turnover.service.js';
 import {
   creditWalletBalance,
   balanceKey,
@@ -182,6 +186,8 @@ export type WalletCommandsPorts = {
   bonusGrants?: BonusGrantCommands;
   bonusFundLocks?: BonusFundLockCommands;
   identityReader?: IdentityReader;
+  /** Resolved on first use, so a container without the event bus can still debit and credit. */
+  turnover?: () => TurnoverService;
 };
 
 const isLockExemptDebit = (type: WalletTransactionType): boolean =>
@@ -545,6 +551,16 @@ export class WalletCommandsService implements WalletCommands {
       bonusBalance: wagered.bonusBalanceAfter,
       wagerTrackingCredits: wagered.walletCredits,
     };
+  }
+
+  async addTurnoverRequirement(
+    tx: unknown,
+    args: AddTurnoverRequirementArgs,
+  ): Promise<AddTurnoverRequirementResult> {
+    if (!this.ports.turnover) {
+      throw new TurnoverDisabledError();
+    }
+    return this.ports.turnover().addRequirement(tx, args);
   }
 
   async movableFunds(tx: unknown, { userId, currency }: MovableFundsArgs): Promise<MovableFunds> {

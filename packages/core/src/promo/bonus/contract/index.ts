@@ -328,6 +328,8 @@ export const AdminPlayerFundsSchema = z.object({
       balance: MoneyAmountSchema,
       locked: MoneyAmountSchema,
       free: MoneyAmountSchema,
+      // The bonus lock alone, when an unmet turnover requirement makes `locked` stricter (ADR-0065).
+      bonusLocked: MoneyAmountSchema.optional(),
     }),
   ),
 });

@@ -41,6 +41,7 @@ import {
   MAIL_DISPATCH,
   EXCHANGE_RATE_READER,
   resolveExchangeRatePivot,
+  resolveWalletTurnoverConfig,
   SWAP_ADAPTER,
   SWAP_WEBHOOK_VERIFIER,
   ON_RAMP_ADAPTER,
@@ -95,6 +96,7 @@ import {
   projectionDriftCheck,
 } from './service/reconciliation.service.js';
 import { SwapService } from './service/swap.service.js';
+import { TurnoverService } from './service/turnover.service.js';
 import { OnRampService } from './service/on-ramp.service.js';
 
 const logger = createLogger('wallet');
@@ -340,6 +342,19 @@ export default {
         c.has(BONUS_FUND_LOCKS) ? c.get(BONUS_FUND_LOCKS) : undefined,
       );
 
+    let turnoverSvc: TurnoverService | null = null;
+    const turnoverService = (c: TypedContainer<CoreTokenCatalog>) => {
+      const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+      return (turnoverSvc ??= new TurnoverService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        audit: c.get(AUDIT_WRITER),
+        config: resolveWalletTurnoverConfig(platformConfig?.wallet),
+        pivotCurrency: resolveExchangeRatePivot(platformConfig?.exchangeRate),
+        rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+      }));
+    };
+
     // One instance backs the router and the agent tools; either factory may build it first.
     let walletSvc: WalletService | null = null;
     const walletService = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -540,6 +555,7 @@ export default {
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
           bonusFundLocks: bonusFundLocks(c),
           identityReader: c.get(IDENTITY_READER),
+          turnover: () => turnoverService(c),
         }),
     );
     // The versioned surface provider bridges and the sportsbook move money through. Gaming and
@@ -569,6 +585,7 @@ export default {
           pivotCurrency: resolveExchangeRatePivot(
             c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
           ),
+          turnover: () => turnoverService(c),
         }),
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
@@ -713,6 +730,7 @@ export default {
         jobQueue,
         reconciliationQueue: WALLET_RECONCILIATION_QUEUE,
         realtime: realtimeTransport,
+        turnover: turnoverService(c),
         limiter: c.get(RATE_LIMITER),
         swap,
         swapWebhook,

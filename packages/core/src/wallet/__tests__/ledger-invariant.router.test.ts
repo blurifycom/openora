@@ -18,6 +18,7 @@ import {
   LEDGER_INVARIANT_QUEUE,
   type ReconciliationService,
 } from '../service/reconciliation.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 const CTX = testContext();
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000bb';
@@ -58,6 +59,7 @@ function routerWith(adminGuard: AdminGuard, { ledgerFinding = true } = {}) {
   const resolveFinding = vi.fn(async () => DISMISSED);
   const isLedgerFinding = vi.fn(async () => ledgerFinding);
   const router = createWalletRouter({
+    turnover: mock<TurnoverService>({}),
     wallet: mock<WalletService>({}),
     adminGuard,
     audit,

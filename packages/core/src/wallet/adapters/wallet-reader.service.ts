@@ -12,6 +12,8 @@ import {
   type WalletTransactionStatus,
   type WalletWithdrawalRequests,
   type ExchangeRateReader,
+  type TurnoverSummary,
+  type User,
 } from '@openora/core/contracts';
 import {
   and,
@@ -40,6 +42,7 @@ import {
   resolveWalletBalance,
 } from '../service/wallet.service.js';
 import { pricedInPivot } from '../service/pivot-pricing.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 type CurrencyTotal = { currency: string; total: string | null };
 
@@ -85,6 +88,7 @@ export type WalletReaderServiceDeps = {
   // then answers null for any player holding a non-pivot-currency deposit).
   exchangeRateReader?: ExchangeRateReader;
   pivotCurrency: string;
+  turnover?: () => TurnoverService;
 };
 
 export class WalletReaderService implements WalletReader {
@@ -92,8 +96,10 @@ export class WalletReaderService implements WalletReader {
   private readonly defaultCurrency: string | undefined;
   private readonly exchangeRateReader: ExchangeRateReader | undefined;
   private readonly pivotCurrency: string;
+  private readonly turnover: (() => TurnoverService) | undefined;
 
   constructor(deps: WalletReaderServiceDeps) {
+    this.turnover = deps.turnover;
     this.drizzle = deps.drizzle;
     this.defaultCurrency = deps.defaultCurrency;
     this.exchangeRateReader = deps.exchangeRateReader;
@@ -102,6 +108,13 @@ export class WalletReaderService implements WalletReader {
 
   getBalances(userId: string, tx?: unknown): Promise<WalletBalancesReading> {
     return readWalletBalances(this.on(tx), userId, this.defaultCurrency);
+  }
+
+  async readTurnover(userId: User['id'], tx?: unknown): Promise<TurnoverSummary> {
+    if (!this.turnover) {
+      throw new Error('WalletReaderService.readTurnover: no TurnoverService bound');
+    }
+    return this.turnover().summary(userId, tx);
   }
 
   // A caller already inside a transaction passes it: taking a second pool connection while

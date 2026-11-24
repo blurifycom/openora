@@ -40,6 +40,7 @@ import {
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 const DEPOSIT_ADDRESS = 'bc1qxyz';
@@ -92,6 +93,7 @@ function routerWithProviders(
     rates: makeExchangeRateReader(),
   });
   return createWalletRouter({
+    turnover: mock<TurnoverService>({}),
     wallet: service,
     adminGuard: mock<AdminGuard>({ assert: vi.fn() }),
     audit: makeAuditWriter(),

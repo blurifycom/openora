@@ -8,6 +8,7 @@ import type { WagerContext } from './wager-context.js';
 import type { BonusGrantTerms } from './bonus-grants.js';
 import type { BonusCompletion } from './bonus-wagering.js';
 import type { WagerTrackingWalletCredit } from './wager-tracking.js';
+import type { AddTurnoverRequirementArgs, AddTurnoverRequirementResult } from './turnover.js';
 
 export type WalletProviderRef = {
   providerName: string;
@@ -381,6 +382,16 @@ export type WalletCommands = {
     tx: unknown,
     args: WalletCloseRoundArgs,
   ): Promise<{ completed: BonusCompletion[]; newBalance: string | null }>;
+  /**
+   * Adds a turnover requirement of `requiredInCurrency` (ADR-0065) in `tx`, once per `sourceRef`:
+   * a repeat answers the first entry with `replayed: true`. Priced into the pivot now, or `pending`
+   * until a rate exists. Optional so a custom binding written before it compiles.
+   * @throws TurnoverDisabledError while `wallet.turnover.multiplier` is '0'.
+   */
+  addTurnoverRequirement?(
+    tx: unknown,
+    args: AddTurnoverRequirementArgs,
+  ): Promise<AddTurnoverRequirementResult>;
 };
 
 export const WALLET_COMMANDS: Token<WalletCommands> = createToken('WALLET_COMMANDS');

@@ -24,6 +24,9 @@ import {
   WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
   ON_RAMP_STATUSES,
   WAGER_PRODUCTS,
+  TURNOVER_ENTRY_SOURCES,
+  TURNOVER_ENTRY_STATUSES,
+  TURNOVER_STAKE_STATES,
   LEDGER_V1_KEYED_OPERATIONS,
   PLAYER_STATUSES,
   GATED_LIMIT_TYPES,
@@ -36,6 +39,7 @@ import {
   type WalletReconciliationFindingKind,
   type WalletReconciliationFindingStatus,
   type TagKey,
+  type WagerProduct,
   MONEY_PRECISION,
   MONEY_SCALE,
 } from '@openora/core/contracts';
@@ -85,6 +89,18 @@ export const walletTransactionDirectionEnum = pgEnum(
 
 export const walletWagerProductEnum = pgEnum('wallet_wager_product', WAGER_PRODUCTS);
 export const ledgerApiOperationEnum = pgEnum('ledger_api_operation', LEDGER_V1_KEYED_OPERATIONS);
+export const walletTurnoverEntrySourceEnum = pgEnum(
+  'wallet_turnover_entry_source',
+  TURNOVER_ENTRY_SOURCES,
+);
+export const walletTurnoverEntryStatusEnum = pgEnum(
+  'wallet_turnover_entry_status',
+  TURNOVER_ENTRY_STATUSES,
+);
+export const walletTurnoverStakeStateEnum = pgEnum(
+  'wallet_turnover_stake_state',
+  TURNOVER_STAKE_STATES,
+);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -228,6 +244,10 @@ export const walletTransaction = pgTable(
     // A `bet_reversal` that named the bet it returns: that bet's row. Unique, so one bet is
     // reversed at most once. NULL on every other row and on a reversal that named no bet.
     reversedTransactionId: uuid(),
+    // Bet and reversal rows while a turnover requirement is owed: the pivot value this row adds
+    // to (or, as a reversal, takes from) the player's turnover progress. NULL when nothing counted.
+    turnoverContribution: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    turnoverState: walletTurnoverStakeStateEnum(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -431,6 +451,71 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   updatedBy: uuid(),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// One row per player owing turnover, all amounts in `pivotCurrency`. Remaining is
+// `greatest(required - progress, 0)`. `userId` is the identity user (cross-module, no FK).
+export const walletTurnover = pgTable('wallet_turnover', {
+  userId: uuid().primaryKey(),
+  pivotCurrency: text().notNull(),
+  required: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
+  progress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
+  pendingCount: integer().notNull().default(0),
+  clearedAt: timestamp({ withTimezone: true }),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// One row per credit that added a requirement. `(source, sourceRef)` is the idempotency guard:
+// `sourceRef` is the ledger transaction id, or the grant id for a conversion. `pivotValue` and
+// `required` stay NULL while the entry is `pending` (no rate yet).
+export const walletTurnoverEntry = pgTable(
+  'wallet_turnover_entry',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    source: walletTurnoverEntrySourceEnum().notNull(),
+    sourceRef: text().notNull(),
+    currency: text().notNull(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    multiplier: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    requiredInCurrency: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    pivotValue: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    required: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
+    status: walletTurnoverEntryStatusEnum().notNull(),
+    pricedAt: timestamp({ withTimezone: true }),
+    clearedAt: timestamp({ withTimezone: true }),
+    clearedBy: uuid(),
+    clearReason: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('wallet_turnover_entry_source_ref_idx').on(t.source, t.sourceRef),
+    index('wallet_turnover_entry_user_id_created_at_idx').on(
+      t.userId,
+      t.createdAt.desc(),
+      t.id.desc(),
+    ),
+    index('wallet_turnover_entry_pending_idx')
+      .on(t.userId)
+      .where(sql`${t.status} = 'pending'`),
+  ],
+);
+
+// Staff overrides of `wallet.turnover.productPercent`; a product absent here uses the config.
+export const walletTurnoverConfig = pgTable('wallet_turnover_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique().default('global'),
+  productPercent: jsonb().$type<Partial<Record<WagerProduct, number>>>().notNull().default({}),
+  updatedBy: uuid(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
     .$onUpdateFn(() => new Date()),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });

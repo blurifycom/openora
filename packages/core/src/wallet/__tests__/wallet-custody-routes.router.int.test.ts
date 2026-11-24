@@ -31,6 +31,7 @@ import {
   walletReconciliationFinding,
   walletDepositAddress,
 } from '../schema/index.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 const CTX = testContext();
 const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000dd';
@@ -76,6 +77,7 @@ function routerWith(guard: AdminGuard, jobQueue = makeJobQueue()) {
     platformConfig,
   });
   const router = createWalletRouter({
+    turnover: mock<TurnoverService>({}),
     wallet: service,
     adminGuard: guard,
     audit,

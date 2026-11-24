@@ -10,6 +10,8 @@ import { AgentsConfigSchema } from './agents.js';
 import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-allowlist.js';
 import { createToken } from '../adapters/token.js';
 import { MIN_PLAYER_AGE_YEARS } from './player.js';
+import { TurnoverCreditTypeSchema } from '../adapters/turnover.js';
+import { WagerProductSchema } from '../adapters/wager-context.js';
 import { GRANT_CONCURRENCY_MODES, RANK_PERIODIC_BASES, RANK_PROGRESS_BASES } from './promo.js';
 
 /**
@@ -74,8 +76,60 @@ export const AutoWithdrawalConfigSchema = z
 
 export type AutoWithdrawalConfig = z.infer<typeof AutoWithdrawalConfigSchema>;
 
+/**
+ * Structural check on a cron expression: 5 fields, or 6 with a leading seconds field.
+ * Not a full parse - the driver owns that - but it turns the typo class that would
+ * otherwise surface as one `logger.error` at boot and a job that never ticks into a
+ * config-validation failure.
+ */
+export const CronExpressionSchema = z
+  .string()
+  .regex(
+    /^[0-9A-Za-z*?,\-/]+( [0-9A-Za-z*?,\-/]+){4,5}$/,
+    'must be a 5- or 6-field cron expression',
+  );
+
+const TurnoverPercentSchema = z.number().int().min(0).max(100);
+
+const TURNOVER_DEFAULT_LOCKED_MESSAGE = 'Wager your deposits before withdrawing or sending funds.';
+
+/** Deposit turnover requirement (ADR-0065). `multiplier` '0' turns it off entirely. */
+export const WalletTurnoverConfigSchema = z
+  .object({
+    multiplier: MoneyAmountSchema.default('0'),
+    creditTypes: z.array(TurnoverCreditTypeSchema).default(['deposit']),
+    /** Percent of a real stake's pivot value that counts, per product. */
+    productPercent: z
+      .object({
+        casino: TurnoverPercentSchema.default(100),
+        'live-casino': TurnoverPercentSchema.default(100),
+        sportsbook: TurnoverPercentSchema.default(100),
+        pvp: TurnoverPercentSchema.default(0),
+      })
+      .strict()
+      .prefault({}),
+    /** Products whose stake counts when its round settles rather than when it is placed. */
+    countAtSettle: z.array(WagerProductSchema).default(['sportsbook']),
+    /** Remaining requirement, in the pivot currency, at or below which nothing is locked. */
+    dustThreshold: MoneyAmountSchema.default('0.01'),
+    pricingCron: CronExpressionSchema.default('*/5 * * * *'),
+    /** The refusal's player-facing message (errors.md). */
+    lockedMessage: z.string().min(1).default(TURNOVER_DEFAULT_LOCKED_MESSAGE),
+  })
+  .strict();
+
+export type WalletTurnoverConfig = z.infer<typeof WalletTurnoverConfigSchema>;
+
+export const WALLET_TRANSFER_CREDIT_MODES = ['bonus_grant', 'cash'] as const;
+
 export const WalletConfigSchema = z
   .object({
+    turnover: WalletTurnoverConfigSchema.optional(),
+    /**
+     * How a gift, rain or donation credit lands: as a bonus grant (today's behaviour) or as real
+     * cash carrying a turnover requirement. Absent = `bonus_grant`.
+     */
+    transferCredits: z.enum(WALLET_TRANSFER_CREDIT_MODES).optional(),
     /**
      * Currency codes routed to the crypto rail by `railFor` (case-insensitive).
      * Absent = the built-in default (BTC, ETH, USDT, USDC). Lets an operator add or
@@ -217,6 +271,13 @@ export function resolveWalletReferenceCurrency(config: WalletConfig | undefined)
   return (config?.defaultReferenceCurrency ?? DEFAULT_REFERENCE_CURRENCY).toUpperCase();
 }
 
+/** Turnover settings with their defaults, also when no wallet config is bound. */
+export function resolveWalletTurnoverConfig(
+  config: WalletConfig | undefined,
+): WalletTurnoverConfig {
+  return WalletTurnoverConfigSchema.parse(config?.turnover ?? {});
+}
+
 const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
 
 export const ExchangeRateConfigSchema = z
@@ -279,19 +340,6 @@ export const RegistrationConfigSchema = z
     minPlayerAge: z.number().int().min(MIN_PLAYER_AGE_YEARS).default(MIN_PLAYER_AGE_YEARS),
   })
   .strict();
-
-/**
- * Structural check on a cron expression: 5 fields, or 6 with a leading seconds field.
- * Not a full parse - the driver owns that - but it turns the typo class that would
- * otherwise surface as one `logger.error` at boot and a job that never ticks into a
- * config-validation failure.
- */
-export const CronExpressionSchema = z
-  .string()
-  .regex(
-    /^[0-9A-Za-z*?,\-/]+( [0-9A-Za-z*?,\-/]+){4,5}$/,
-    'must be a 5- or 6-field cron expression',
-  );
 
 /**
  * Offset off the :00/:15/:30/:45 tick the wallet custody sweep owns, so the in-process

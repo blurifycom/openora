@@ -31,6 +31,7 @@ import {
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
 import type { ReconciliationService } from '../service/reconciliation.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
@@ -96,6 +97,7 @@ function routerWith(
     identityReader: makeIdentityReader(),
   });
   const router = createWalletRouter({
+    turnover: mock<TurnoverService>({}),
     wallet: service,
     adminGuard: guard,
     audit,

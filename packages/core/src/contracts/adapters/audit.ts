@@ -50,6 +50,7 @@ export type DirectAuditAction =
   | 'wallet.auto_withdrawal_rule.set'
   | 'wallet.auto_withdrawal_rule.deleted'
   | 'wallet.auto_withdrawal_config.set'
+  | 'wallet.turnover_config.updated'
   | 'wallet.manual_adjustment.created'
   | 'wallet.withdrawal_address.created'
   | 'wallet.withdrawal_address.deleted'

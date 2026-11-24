@@ -878,6 +878,22 @@ export const domainEventSchemas = {
     toAmount: MoneyAmountSchema,
   }),
 
+  // Turnover requirement (ADR-0065), both written to the outbox in the transaction that changed
+  // it. `required`/`progress` are the values before a clear, and the met values on `met`.
+  'wallet.turnover.cleared': z.object({
+    userId: UuidSchema,
+    clearedBy: UuidSchema,
+    pivotCurrency: CurrencyTickerSchema,
+    required: MoneyAmountSchema,
+    progress: MoneyAmountSchema,
+  }),
+  'wallet.turnover.met': z.object({
+    userId: UuidSchema,
+    pivotCurrency: CurrencyTickerSchema,
+    required: MoneyAmountSchema,
+    progress: MoneyAmountSchema,
+  }),
+
   // Promo. These are notification/analytics fan-out only: money and counters move through the
   // BONUS_GRANTS, BONUS_WAGERING and WAGER_TRACKING command ports, never through an event.
   // Payout announcements (`promo.bonus.granted`, `promo.race.won`, `promo.rank-challenge.won`)

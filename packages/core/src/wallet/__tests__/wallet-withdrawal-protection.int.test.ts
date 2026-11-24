@@ -48,6 +48,7 @@ import {
   WithdrawalPinLockedError,
   WithdrawalPinRequiredError,
 } from '../service/wallet.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const ADDRESS = 'bc1qprotected';
@@ -268,6 +269,7 @@ describe('WalletService.withdraw - Withdrawal PIN (real PG)', () => {
     const security = pinVerdict({ status: 'incorrect', attemptsLeft: 2 });
     const { svc } = makeService(security);
     const router = createWalletRouter({
+      turnover: mock<TurnoverService>({}),
       wallet: svc,
       adminGuard: makeAdminGuard({ caller: { userId: randomUUID(), role: 'admin' } }),
       audit: makeAuditWriter(),
@@ -486,6 +488,7 @@ describe('WalletService.approveWithdrawal PIN lockout re-check (real PG)', () =>
     const security = makeWithdrawalSecurity();
     const { svc } = makeService(security);
     const router = createWalletRouter({
+      turnover: mock<TurnoverService>({}),
       wallet: svc,
       adminGuard: makeAdminGuard({ caller: { userId: randomUUID(), role: 'admin' } }),
       audit: makeAuditWriter(),

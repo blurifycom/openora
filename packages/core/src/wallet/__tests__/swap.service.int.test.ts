@@ -32,6 +32,7 @@ import {
   SwapPairUnsupportedError,
   SwapService,
 } from '../service/swap.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 let db: TestDb;
 
@@ -70,6 +71,7 @@ function makeService(
 // once a request reaches the ledger and the response comes back off the committed rows.
 function routerWith(swap: SwapService) {
   return createWalletRouter({
+    turnover: mock<TurnoverService>({}),
     wallet: new WalletService({
       ...makeWithdrawalPorts(),
       drizzle: db.drizzle,

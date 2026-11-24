@@ -67,6 +67,35 @@ export {
   WalletReplayMismatchError,
 } from './wallet-commands.js';
 
+export type {
+  AddTurnoverRequirementArgs,
+  AddTurnoverRequirementResult,
+  AdminTurnoverEntry,
+  TurnoverCreditType,
+  TurnoverEntry,
+  TurnoverEntrySource,
+  TurnoverEntryStatus,
+  TurnoverLockedData,
+  TurnoverOutflow,
+  TurnoverStakeState,
+  TurnoverSummary,
+} from './turnover.js';
+export {
+  AdminTurnoverEntrySchema,
+  TURNOVER_CREDIT_TYPES,
+  TURNOVER_ENTRY_SOURCES,
+  TURNOVER_ENTRY_STATUSES,
+  TURNOVER_OUTFLOWS,
+  TURNOVER_STAKE_STATES,
+  TurnoverCreditTypeSchema,
+  TurnoverDisabledError,
+  TurnoverEntrySchema,
+  TurnoverEntrySourceSchema,
+  TurnoverEntryStatusSchema,
+  TurnoverLockedError,
+  TurnoverSummarySchema,
+} from './turnover.js';
+
 export type { WagerContext, WagerProduct } from './wager-context.js';
 export {
   WAGER_PRODUCTS,

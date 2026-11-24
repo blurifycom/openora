@@ -45,6 +45,8 @@ export const adminStatement = {
   'wallet-custody': ['view', 'run'] as const,
   'wallet-reconciliation': ['view', 'resolve', 'run'] as const,
   'swap-config': ['view', 'update'] as const,
+  turnover: ['view', 'clear'] as const,
+  'turnover-config': ['view', 'update'] as const,
   'kyc-override-request': ['request'] as const,
   'kyc-override-approval': ['view', 'approve'] as const,
   'bonus-grant-request': ['request'] as const,

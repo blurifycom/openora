@@ -62,6 +62,7 @@ import {
   OnRampRestrictedError,
   OnRampService,
 } from '../service/on-ramp.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 let db: TestDb;
 let redis: TestRedis;
@@ -181,6 +182,7 @@ function routerWith(
   onRampWebhook?: OnRampWebhookPort,
 ) {
   return createWalletRouter({
+    turnover: mock<TurnoverService>({}),
     wallet,
     onRamp: service,
     onRampWebhook,

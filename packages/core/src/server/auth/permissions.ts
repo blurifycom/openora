@@ -32,6 +32,8 @@ export const adminRole = ac.newRole({
   'wallet-custody': ['view', 'run'],
   'wallet-reconciliation': ['view', 'resolve', 'run'],
   'swap-config': ['view', 'update'],
+  turnover: ['view', 'clear'],
+  'turnover-config': ['view', 'update'],
   'kyc-override-request': ['request'],
   'kyc-override-approval': ['view', 'approve'],
   'bonus-grant-request': ['request'],
