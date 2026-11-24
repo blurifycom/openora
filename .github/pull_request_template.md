@@ -1,11 +1,12 @@
 <!--
 A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. Plain words and diagrams, no code, paths or symbol names; generated from the diff, the schema diff and real spans, never invented. This repo is public: bare ticket keys only, no internal URLs, hosts, operator names or personal data.
 Keep a section only when its trigger fires; delete the rest. Every section but "How it was checked" stays collapsed, its summary line carrying the gist. Mermaid: horizontal, no fills, a coloured border on what changed (added #3fb950, changed #d29922, removed #f85149 dashed).
+First line: the bare ticket key, or `Closes #<issue>`. Sections 2 (infra path), 7 (e2e steps) and 11 (video) are left out: this repo has no deploy infra or player UI.
 -->
 
 ## How it was checked
 
-<!-- Checks result for the head SHA, then the tests that cover the change. -->
+<!-- Checks result for the head SHA, then each test that proves the change, named by the behaviour it proves. Review findings dropped as not holding, each with why. -->
 
 <details><summary><b>1. Architecture diff</b>: </summary>
 
@@ -27,7 +28,7 @@ Keep a section only when its trigger fires; delete the rest. Every section but "
 
 <details><summary><b>5. Queries, indexes, trace</b>: </summary>
 
-<!-- Trigger: new or changed queries on a request path, or a money path. One arrow per query with its index; the gantt from packages/testing/scripts/trace-report.ts when the integration suite exported spans, else "trace: none". -->
+<!-- Trigger: new or changed queries on a request path, or a money path. One arrow per query with its index; the gantt from packages/testing/scripts/trace-report.ts when the integration suite exported spans, else "trace: none". Spans from a local run on test data only, no ids, emails or amounts from real data. -->
 
 </details>
 
@@ -54,7 +55,7 @@ Keep a section only when its trigger fires; delete the rest. Every section but "
 
 <details><summary><b>10. Test quality and rollout</b>: </summary>
 
-<!-- Trigger: a large or risky change, or a config change. Mutation and hostile cases, what is not covered, migration order, consumer impact, what a revert leaves behind, docs and ADRs to update. -->
+<!-- Trigger: a large or risky change, any money, KYC, responsible-gambling or authz change, or a config change. Mutation and hostile cases, what is not covered, migration order, consumer impact, what a revert leaves behind, docs and ADRs to update. -->
 
 </details>
 
