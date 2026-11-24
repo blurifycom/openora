@@ -40,7 +40,7 @@ export const TransferGrantConversionWalletUnavailableError = makeConflictError(
 );
 
 /** The wallet refused a conversion's cash credit; `reason` is the wallet's own. */
-export class TransferGrantCreditRefusedError extends Error {
+class TransferGrantCreditRefusedError extends Error {
   readonly reason: string;
 
   constructor(reason: string) {
