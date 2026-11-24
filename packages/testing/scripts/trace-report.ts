@@ -323,10 +323,47 @@ function typicalRequest(
 const ganttLabel = (text: string): string =>
   text.replace(/[:#;]/g, ' ').replace(/\s+/g, ' ').trim();
 
+// Same-name sibling statements shorter than this fold into one gantt row (`pg SELECT user ×3`).
+const FOLD_MS = 0.5;
+// Axis room after the last bar so its label is not cut at the chart edge.
+const AXIS_PAD = 0.15;
+
+/** Gantt rows: the root row dropped (the title says it), a run of short same-name siblings folded. */
+function ganttRows(all: Row[]): Row[] {
+  const inner = all.filter((row) => row.depth > 0).map((row) => ({ ...row, depth: row.depth - 1 }));
+  const folds = (row: Row | undefined, like: Row): row is Row =>
+    row !== undefined &&
+    row.depth === like.depth &&
+    row.label === like.label &&
+    row.durationMs < FOLD_MS &&
+    !row.isNew;
+  const out: Row[] = [];
+  for (let index = 0; index < inner.length;) {
+    const row = inner[index] as Row;
+    let end = index;
+    while (folds(inner[end], row)) {
+      end += 1;
+    }
+    const run = end - index >= 2 ? inner.slice(index, end) : [row];
+    const last = run.at(-1) as Row;
+    out.push(
+      run.length === 1
+        ? row
+        : {
+            ...row,
+            label: `${row.label} ×${run.length}`,
+            durationMs: last.startMs + last.durationMs - row.startMs,
+          },
+    );
+    index += run.length;
+  }
+  return out;
+}
+
 /** One request as a mermaid gantt: times in ms from the request start, new statements `crit`. */
 function gantt(request: Request, baselineSignatures: Set<string> | undefined): string {
   const { root } = request;
-  const tasks = rows(request, baselineSignatures).map((row) => {
+  const tasks = ganttRows(rows(request, baselineSignatures)).map((row) => {
     const start = Math.max(0, Math.floor(row.startMs - root.startMs));
     const end = Math.max(Math.ceil(row.startMs + row.durationMs - root.startMs), start + 1);
     const name = `${'· '.repeat(row.depth)}${ganttLabel(row.label)} ${ms(row.durationMs)}`;
@@ -343,6 +380,7 @@ function gantt(request: Request, baselineSignatures: Set<string> | undefined): s
     `  axisFormat ${root.durationMs < 1000 ? '%L ms' : '%S.%L s'}`,
     `  section ${ganttLabel(root.name.replace(ID_SEGMENT, '/:id'))}`,
     ...tasks,
+    `  end :milestone, ${Math.ceil(root.durationMs * (1 + AXIS_PAD))}, 0ms`,
     '```',
   ].join('\n');
 }

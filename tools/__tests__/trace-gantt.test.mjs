@@ -57,9 +57,37 @@ test('prints one gantt per status with the trace id, the transaction as a parent
   assert.equal(out.match(/^gantt$/gm)?.length, 2);
   assert.match(out, /^ {2}title wallet\.deposit 200 · 12 ms$/m);
   assert.match(out, /^ {2}dateFormat x$/m);
-  assert.match(out, /^ {2}· pg transaction 3\.3 ms :3, 7$/m);
-  assert.match(out, /^ {2}· · pg INSERT ledger_entry 2\.0 ms :3, 6$/m);
+  assert.match(out, /^ {2}pg transaction 3\.3 ms :3, 7$/m);
+  assert.match(out, /^ {2}· pg INSERT ledger_entry 2\.0 ms :3, 6$/m);
+  // The title carries the procedure; no root bar repeats it. A milestone leaves room on the right.
+  assert.doesNotMatch(out, /^ {2}wallet\.deposit/m);
+  assert.match(out, /^ {2}end :milestone, 14, 0ms$/m);
   assert.doesNotMatch(out, /crit/);
+});
+
+test('folds a run of short same-name statements into one row', () => {
+  const trace = 'c'.repeat(32);
+  const reads = [0, 1, 2].map((n) =>
+    span(trace, `r${n}`, '2', 'pg.query', 101 + n * 0.4, 0.3, {
+      sql: 'select * from "user" where id = $1',
+      pgClient: 3,
+    }),
+  );
+  const out = ganttReport(
+    dir([
+      span(trace, '1', null, 'POST /rpc/wallet/deposit', 100, 4, { httpStatus: 200 }),
+      span(trace, '2', '1', 'orpc.wallet.deposit', 100.2, 3.6),
+      ...reads,
+      span(trace, 'w', '2', 'pg.query', 102.5, 1, {
+        sql: 'select * from "wallet" where id = $1',
+        pgClient: 3,
+      }),
+    ]),
+    undefined,
+    'wallet.deposit',
+  );
+  assert.match(out, /^ {2}pg SELECT user ×3 1\.1 ms :1, 3$/m);
+  assert.match(out, /^ {2}pg SELECT wallet 1\.0 ms :2, 4$/m);
 });
 
 test('marks a statement the baseline never ran, and names a missing procedure', () => {
