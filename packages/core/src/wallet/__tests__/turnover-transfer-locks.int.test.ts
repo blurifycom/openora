@@ -173,20 +173,32 @@ describe('locking the wallets of a transfer', () => {
     expectMoney(await balanceOf(b), '100', 'b');
   });
 
-  it('takes no lock for an empty list and tolerates repeated and unknown ids', async () => {
+  it('locks every listed wallet, tolerating repeated and unknown ids, and no other', async () => {
     const a = await player();
-    const stranger = randomUUID();
+    const b = await player();
+    const unlisted = await player();
+    const grab = (userId: string) =>
+      db.drizzle.db.transaction((tx) =>
+        tx
+          .select({ id: wallet.id })
+          .from(wallet)
+          .where(eq(wallet.userId, userId))
+          .for('update', { noWait: true }),
+      );
 
     await db.drizzle.db.transaction(async (tx) => {
       await commands.lockWallets(tx, { userIds: [] });
-      await commands.lockWallets(tx, { userIds: [a, a, a] });
-      await commands.lockWallets(tx, { userIds: [stranger, stranger, a] });
-    });
+      await commands.lockWallets(tx, { userIds: [b, randomUUID(), a, b] });
 
-    expect(await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, stranger))).toEqual(
-      [],
-    );
-    expectMoney(await balanceOf(a), '100', 'balance');
+      for (const held of [a, b]) {
+        const error: unknown = await grab(held).then(
+          () => undefined,
+          (e: unknown) => e,
+        );
+        expect((error as { cause?: { code?: string } }).cause?.code).toBe('55P03');
+      }
+      expect(await grab(unlisted)).toHaveLength(1);
+    });
   });
 
   it('keeps a self transfer whole', async () => {

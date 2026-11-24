@@ -122,6 +122,11 @@ export function appendOnlyTableSql(
       throw new Error(`Invalid SQL identifier: ${name}`);
     }
   }
+  for (const { column } of transitions) {
+    if (!mutableColumns.includes(column)) {
+      throw new Error(`${table}: transition column ${column} must be one of its mutableColumns`);
+    }
+  }
   const exempt = `ARRAY[${columns.map((column) => `'${column}'`).join(', ')}]::text[]`;
   const setOnceChecks = setOnceColumns
     .map(
@@ -168,8 +173,8 @@ export function appendOnlyTableSql(
       const permitted = allowed
         .map(([from, to]) =>
           from === null
-            ? `(OLD.${column} IS NULL AND NEW.${column}::text = '${to}')`
-            : `(OLD.${column}::text = '${from}' AND NEW.${column}::text = '${to}')`,
+            ? `(OLD.${column} IS NULL AND NEW.${column}::text IS NOT DISTINCT FROM '${to}')`
+            : `(OLD.${column}::text IS NOT DISTINCT FROM '${from}' AND NEW.${column}::text IS NOT DISTINCT FROM '${to}')`,
         )
         .join(' OR ');
       return `IF NEW.${column} IS DISTINCT FROM OLD.${column} AND NOT (${permitted || 'false'}) THEN

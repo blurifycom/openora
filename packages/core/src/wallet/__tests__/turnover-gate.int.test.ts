@@ -247,19 +247,6 @@ describe('a cash transfer between players', () => {
     expectMoney(await balanceOf(b), '120', 'recipient balance');
   });
 
-  it('skips a player with no wallet and creates none', async () => {
-    const a = await player('100');
-    const stranger = randomUUID();
-
-    await db.drizzle.db.transaction((tx) =>
-      cash.commands.lockWallets(tx, { userIds: [stranger, a] }),
-    );
-
-    expect(await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, stranger))).toEqual(
-      [],
-    );
-  });
-
   it('credits a recipient once per provider and reference', async () => {
     const userId = await player('0');
     const providerRefId = randomUUID();
@@ -277,6 +264,25 @@ describe('a cash transfer between players', () => {
     expect(await credit('rain-a')).toMatchObject({ ok: true, moved: true });
     expect(await credit('rain-b')).toMatchObject({ ok: true, moved: true });
     expect(await credit('rain-a')).toMatchObject({ ok: true, moved: false });
+    expectMoney(await balanceOf(userId), '10', 'balance');
+  });
+
+  it('keeps a provider name and a reference apart when either holds a colon', async () => {
+    const userId = await player('0');
+    const credit = (providerName: string, providerRefId: string) =>
+      db.drizzle.db.transaction((tx) =>
+        cash.commands.credit(tx, {
+          userId,
+          amount: '5',
+          currency: 'USD',
+          type: 'gift',
+          providerRef: { providerName, providerRefId },
+        }),
+      );
+    const tag = randomUUID();
+
+    expect(await credit(`a:${tag}`, 'c')).toMatchObject({ ok: true, moved: true });
+    expect(await credit('a', `${tag}:c`)).toMatchObject({ ok: true, moved: true });
     expectMoney(await balanceOf(userId), '10', 'balance');
   });
 });

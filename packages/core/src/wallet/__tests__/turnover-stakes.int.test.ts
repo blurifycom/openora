@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
-import { findOneOrThrow, moneyCompare, moneyScaleBy } from '@openora/core/server';
+import { and, eq, sql } from 'drizzle-orm';
+import { findOneOrThrow, moneyAdd, moneyCompare, moneyScaleBy } from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import {
   WalletTurnoverConfigSchema,
@@ -124,6 +124,40 @@ async function bet(
   return { id: outcome.transactionId, round };
 }
 
+const reverse = (
+  commands: WalletCommandsService,
+  userId: string,
+  placed: { id: string; round: string },
+  amount: string,
+) =>
+  db.drizzle.db.transaction((tx) =>
+    commands.credit(tx, {
+      userId,
+      amount,
+      currency: 'USD',
+      type: 'bet_reversal',
+      providerRef: {
+        providerName: 'agg',
+        providerRefId: randomUUID(),
+        externalRoundId: placed.round,
+      },
+      reversesTransactionId: placed.id,
+    }),
+  );
+
+const stakesOf = (userId: string, walletId: string) =>
+  db.drizzle.db
+    .select({
+      id: walletTransaction.id,
+      round: walletTransaction.externalRoundId,
+      amount: walletTransaction.amount,
+      state: walletTransaction.turnoverState,
+      contribution: walletTransaction.turnoverContribution,
+      afterClear: sql<boolean>`${walletTransaction.createdAt} > coalesce((select ${walletTurnover.clearedAt} from ${walletTurnover} where ${walletTurnover.userId} = ${userId}), '-infinity')`,
+    })
+    .from(walletTransaction)
+    .where(and(eq(walletTransaction.walletId, walletId), eq(walletTransaction.type, 'bet')));
+
 beforeAll(async () => {
   db = await createTestDb([migrateOutbox, migrate]);
   on = services('1');
@@ -221,9 +255,98 @@ describe('turnover stakes without the bonus module', () => {
     expectMoney(await progressOf(userId), '0', 'progress');
   });
 
+  it('takes back nothing from a later requirement when a stake from before a staff clear is reversed', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    const early = await bet(commands, userId, '40');
+    const sports = await bet(commands, userId, '20', { product: 'sportsbook' });
+    expectMoney(await progressOf(userId), '40', 'before the clear');
+    await turnover.clear(randomUUID(), { userId, reason: 'goodwill' });
+    await owe(turnover, userId, '100');
+    await bet(commands, userId, '30');
+    await db.drizzle.db.transaction((tx) =>
+      commands.closeRound(tx, {
+        userId,
+        currency: 'USD',
+        providerRef: { providerName: 'agg', externalRoundId: sports.round },
+      }),
+    );
+
+    expect(await reverse(commands, userId, early, '40')).toMatchObject({ ok: true, moved: true });
+    expect(await reverse(commands, userId, sports, '20')).toMatchObject({ ok: true, moved: true });
+
+    expectMoney(await progressOf(userId), '30', 'progress');
+  });
+
+  it('takes back a stake placed after a staff clear', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    await bet(commands, userId, '40');
+    await turnover.clear(randomUUID(), { userId, reason: 'goodwill' });
+    await owe(turnover, userId, '100');
+    const late = await bet(commands, userId, '30');
+    const later = await bet(commands, userId, '15');
+
+    await reverse(commands, userId, late, '10');
+    expectMoney(await progressOf(userId), '35', 'after a partial reversal');
+    await reverse(commands, userId, later, '15');
+    expectMoney(await progressOf(userId), '20', 'after a whole reversal');
+  });
+
+  it('stamps a bet racing a staff clear so that the stamp matches what it added', async () => {
+    const { commands, turnover } = on;
+    for (let run = 0; run < 25; run += 1) {
+      const { userId, walletId } = await player();
+      await owe(turnover, userId, '100');
+
+      await Promise.all([
+        bet(commands, userId, '5'),
+        bet(commands, userId, '7', { product: 'sportsbook' }),
+        turnover.clear(randomUUID(), { userId, reason: 'goodwill' }),
+        owe(turnover, userId, '100'),
+        bet(commands, userId, '3'),
+        bet(commands, userId, '11'),
+      ]);
+      for (const { round, state } of await stakesOf(userId, walletId)) {
+        if (state === 'deferred' && round) {
+          await db.drizzle.db.transaction((tx) =>
+            commands.closeRound(tx, {
+              userId,
+              currency: 'USD',
+              providerRef: { providerName: 'agg', externalRoundId: round },
+            }),
+          );
+        }
+      }
+
+      const stakes = await stakesOf(userId, walletId);
+      const countedAfterClear = stakes
+        .filter(({ state, afterClear }) => state === 'counted' && afterClear)
+        .reduce((sum, { contribution }) => moneyAdd(sum, contribution ?? '0'), '0');
+      expectMoney(await progressOf(userId), countedAfterClear, `run ${run} progress`);
+
+      for (const stake of stakes.filter(({ afterClear }) => !afterClear)) {
+        await reverse(commands, userId, { id: stake.id, round: stake.round ?? '' }, stake.amount);
+      }
+      expectMoney(
+        await progressOf(userId),
+        countedAfterClear,
+        `run ${run} after reversing the stakes before the clear`,
+      );
+
+      for (const stake of stakes.filter(({ afterClear }) => afterClear)) {
+        await reverse(commands, userId, { id: stake.id, round: stake.round ?? '' }, stake.amount);
+      }
+      expectMoney(await progressOf(userId), '0', `run ${run} after reversing every stake`);
+    }
+  });
+
   it('touches nothing with multiplier 0', async () => {
     const { userId } = await player();
     vi.mocked(reader.convert).mockClear();
+    vi.mocked(reader.getRate).mockClear();
 
     const placed = await bet(off.commands, userId, '20', { currency: 'USD' });
     const sports = await bet(off.commands, userId, '20', { product: 'sportsbook' });
@@ -238,6 +361,7 @@ describe('turnover stakes without the bonus module', () => {
     expect(await rowOf(placed.id)).toMatchObject({ turnoverContribution: null });
     expect(await rowOf(sports.id)).toMatchObject({ turnoverContribution: null });
     expect(reader.convert).not.toHaveBeenCalled();
+    expect(reader.getRate).not.toHaveBeenCalled();
     expect(
       await db.drizzle.db.select().from(walletTurnover).where(eq(walletTurnover.userId, userId)),
     ).toEqual([]);

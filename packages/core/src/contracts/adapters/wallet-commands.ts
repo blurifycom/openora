@@ -406,7 +406,9 @@ export type WalletCommands = {
    * Takes the wallet row lock a debit takes for every listed player in `tx`, in ascending `userId`
    * order, creating nothing; a player with no wallet is skipped. A caller moving money between
    * players calls it first with the sender and every recipient, so two transfers in opposite
-   * directions queue instead of deadlocking. Optional so a custom binding written before it compiles.
+   * directions queue instead of deadlocking. The core wallet binding always provides it. It is
+   * optional only so a custom binding written before it compiles; on a binding without it, a
+   * caller moving money between players in cash mode has no deadlock-free ordering.
    */
   lockWallets?(tx: unknown, args: { userIds: readonly string[] }): Promise<void>;
 };

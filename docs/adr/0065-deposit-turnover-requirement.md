@@ -50,6 +50,7 @@ locks the recipient's wallet row, so a caller moving money between players first
 
 **Staff clear.** Staff with `turnover:clear` (compliance roles by default) zero a player's
 requirement with a reason, audited and emitted as `wallet.turnover.cleared` in one transaction.
+A stake placed before the clear neither counts toward nor is taken back from a later requirement.
 Staff with `turnover-config:update` may override per-product percents for new stakes.
 
 **Grant conversion.** The bonus module ships an idempotent helper that turns live gift, rain and

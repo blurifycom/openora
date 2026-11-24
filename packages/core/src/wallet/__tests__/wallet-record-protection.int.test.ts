@@ -146,6 +146,32 @@ describe('wallet_transaction record protection (real PG)', () => {
     await rejectedWith(update(unset.id, { turnoverState: 'counted' }), /append-only/);
   });
 
+  it('never clears a deferred stake or moves a counted one back', async () => {
+    const stake = (turnoverState: 'deferred' | 'counted') =>
+      seedLedgerRow({
+        type: 'bet',
+        status: 'completed',
+        turnoverContribution: '10',
+        turnoverState,
+      });
+    const deferred = await stake('deferred');
+    const counted = await stake('counted');
+
+    await rejectedWith(update(deferred.id, { turnoverState: null }), /append-only/);
+    await rejectedWith(update(counted.id, { turnoverState: 'deferred' }), /append-only/);
+    await rejectedWith(update(counted.id, { turnoverState: null }), /append-only/);
+    await expect(update(deferred.id, { turnoverState: 'counted' })).resolves.toBeDefined();
+    expect(
+      findOneOrThrow(
+        await db.drizzle.db
+          .select({ state: walletTransaction.turnoverState })
+          .from(walletTransaction)
+          .where(eq(walletTransaction.id, deferred.id)),
+        new Error('stake missing'),
+      ).state,
+    ).toBe('counted');
+  });
+
   it('passes an update that matches no row', async () => {
     await seedLedgerRow();
 

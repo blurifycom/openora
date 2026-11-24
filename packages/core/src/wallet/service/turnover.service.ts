@@ -243,7 +243,15 @@ export class TurnoverService {
       if (!row) {
         return { cleared: false, summary: await this.summary(userId, tx) };
       }
-      const now = sql<Date>`now()`;
+      // Taken under the row lock, so every bet that locked the row earlier was created before it.
+      const [stamp] = await tx
+        .select({ at: sql<string>`clock_timestamp()::text` })
+        .from(walletTurnover)
+        .where(eq(walletTurnover.userId, userId));
+      if (!stamp) {
+        throw new Error('turnover row missing under its lock');
+      }
+      const now = sql<Date>`${stamp.at}::timestamptz`;
       const cleared = await tx
         .update(walletTurnoverEntry)
         .set({ status: 'cleared', clearedAt: now, clearedBy: adminId, clearReason: reason })
@@ -379,10 +387,8 @@ export class TurnoverService {
     pivotCurrency: string,
     tx: unknown,
   ): Promise<string | null> {
-    if (currency.toUpperCase() === pivotCurrency) {
-      return amount;
-    }
-    return (await this.deps.rates?.convert(amount, currency, pivotCurrency, tx)) ?? null;
+    const rate = await this.rate(currency, pivotCurrency, tx);
+    return rate === null ? null : moneyScaleBy(amount, rate);
   }
 
   private async rate(currency: string, pivotCurrency: string, tx: unknown): Promise<string | null> {
@@ -413,6 +419,25 @@ export class TurnoverService {
       .where(eq(walletTurnover.userId, userId))
       .for('update');
     return row;
+  }
+
+  /**
+   * The row under its lock, and whether a staff clear committed after this transaction began: a
+   * row this transaction writes is then dated before that clear, so it must count nothing.
+   */
+  private async lockSinceClear(
+    db: DrizzleDb,
+    userId: User['id'],
+  ): Promise<{ row: TurnoverRow; clearedSinceStart: boolean } | undefined> {
+    const [locked] = await db
+      .select({
+        row: walletTurnover,
+        clearedSinceStart: sql<boolean>`coalesce(${walletTurnover.clearedAt} >= now(), false)`,
+      })
+      .from(walletTurnover)
+      .where(eq(walletTurnover.userId, userId))
+      .for('update');
+    return locked;
   }
 
   private async readRow(db: DrizzleDb, userId: User['id']): Promise<TurnoverRow | undefined> {
@@ -690,9 +715,9 @@ export class TurnoverService {
   }
 
   /**
-   * What a bet's real part counts, read before its ledger row is written so the row carries it.
-   * Null while nothing is owed. A product in `countAtSettle` is `deferred`: it counts when its
-   * round settles.
+   * What a bet's real part counts, decided under the turnover row lock before its ledger row is
+   * written so the row carries it. Null while nothing is owed. A product in `countAtSettle` is
+   * `deferred`: it counts when its round settles.
    */
   async stakeStamp(
     tx: unknown,
@@ -722,6 +747,10 @@ export class TurnoverService {
     if (!isPositiveMoney(contribution)) {
       return null;
     }
+    const locked = await this.lockSinceClear(db, userId);
+    if (!locked || locked.clearedSinceStart || this.isMet(locked.row)) {
+      return null;
+    }
     return {
       contribution,
       state: this.deps.config.countAtSettle.includes(product) ? 'deferred' : 'counted',
@@ -741,7 +770,16 @@ export class TurnoverService {
     await this.writeRow(db, row, { progress: moneyAdd(row.progress, contribution) });
   }
 
-  private async roundSums(db: DrizzleDb, scope: SQL | undefined): Promise<RoundSums> {
+  /** A ledger row created after the player's last staff clear, the only rows that still count. */
+  private afterLastClear(userId: User['id']): SQL {
+    return sql`${walletTransaction.createdAt} > coalesce((select ${walletTurnover.clearedAt} from ${walletTurnover} where ${walletTurnover.userId} = ${userId}), '-infinity')`;
+  }
+
+  private async roundSums(
+    db: DrizzleDb,
+    userId: User['id'],
+    scope: SQL | undefined,
+  ): Promise<RoundSums> {
     const t = walletTransaction;
     const isBet = sql`${t.type} = 'bet' and ${t.direction} = 'debit'`;
     const [sums] = await db
@@ -752,7 +790,7 @@ export class TurnoverService {
         staked: sql<string>`coalesce(sum(${t.amount}) filter (where ${isBet}), 0)`,
       })
       .from(t)
-      .where(and(scope, eq(t.status, 'completed')));
+      .where(and(scope, eq(t.status, 'completed'), this.afterLastClear(userId)));
     return sums ?? { counted: '0', deferred: '0', reversed: '0', staked: '0' };
   }
 
@@ -777,7 +815,7 @@ export class TurnoverService {
       return;
     }
     const db = tx as DrizzleDb;
-    if (!(await this.readRow(db, round.userId))) {
+    if (!(await this.lockRow(db, round.userId))) {
       return;
     }
     const t = walletTransaction;
@@ -794,7 +832,7 @@ export class TurnoverService {
       )
       .returning({
         contribution: t.turnoverContribution,
-        afterClear: sql<boolean>`${t.createdAt} > coalesce((select ${walletTurnover.clearedAt} from ${walletTurnover} where ${walletTurnover.userId} = ${round.userId}), '-infinity')`,
+        afterClear: sql<boolean>`${this.afterLastClear(round.userId)}`,
       });
     const settled = flipped
       .filter(({ afterClear }) => afterClear)
@@ -802,7 +840,7 @@ export class TurnoverService {
     if (!isPositiveMoney(settled)) {
       return;
     }
-    const { counted, reversed } = await this.roundSums(db, this.roundScope(round));
+    const { counted, reversed } = await this.roundSums(db, round.userId, this.roundScope(round));
     const delta = moneySubtract(
       maxZero(moneySubtract(counted, reversed)),
       maxZero(moneySubtract(moneySubtract(counted, settled), reversed)),
@@ -814,15 +852,17 @@ export class TurnoverService {
 
   /**
    * Takes a stake reversal's share back: the named bet's contribution pro rata to what is
-   * reversed, else the round's, capped at what the round still holds. Stamped on the reversal row;
-   * progress drops only by the part that had already counted.
+   * reversed, else the round's, capped at what the round still holds. Only stakes placed after the
+   * player's last staff clear count. Stamped on the reversal row; progress drops only by the part
+   * that had already counted.
    */
   async reverseStake(tx: unknown, reversal: TurnoverReversal): Promise<void> {
     if (!this.enabled) {
       return;
     }
     const db = tx as DrizzleDb;
-    if (!(await this.readRow(db, reversal.userId))) {
+    const locked = await this.lockSinceClear(db, reversal.userId);
+    if (!locked || locked.clearedSinceStart) {
       return;
     }
     const t = walletTransaction;
@@ -842,7 +882,7 @@ export class TurnoverService {
     if (scope === undefined) {
       return;
     }
-    const sums = await this.roundSums(db, scope);
+    const sums = await this.roundSums(db, reversal.userId, scope);
     let share = '0';
     if (reversesTransactionId === undefined) {
       if (isPositiveMoney(sums.staked)) {
@@ -856,7 +896,13 @@ export class TurnoverService {
           state: t.turnoverState,
         })
         .from(t)
-        .where(and(eq(t.id, reversesTransactionId), eq(t.walletId, reversal.walletId)));
+        .where(
+          and(
+            eq(t.id, reversesTransactionId),
+            eq(t.walletId, reversal.walletId),
+            this.afterLastClear(reversal.userId),
+          ),
+        );
       if (bet?.contribution && bet.state !== 'reversal' && isPositiveMoney(bet.amount)) {
         share = moneyMultiplyDivide(bet.contribution, amount, bet.amount);
       }

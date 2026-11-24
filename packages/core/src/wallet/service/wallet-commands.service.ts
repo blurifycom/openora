@@ -57,7 +57,7 @@ import {
   moneySubtract,
   type DrizzleDb,
 } from '@openora/core/server';
-import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import {
   wallet,
   walletTransaction,
@@ -362,8 +362,8 @@ export class WalletCommandsService implements WalletCommands {
     providerRef: WalletProviderRef,
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const idempotencyKey = namespacedIdempotencyKey(
-      `${TRANSFER_CREDIT_NAMESPACE}:${type}:${providerRef.providerName}`,
-      providerRef.providerRefId,
+      TRANSFER_CREDIT_NAMESPACE,
+      JSON.stringify([type, providerRef.providerName, providerRef.providerRefId]),
     );
     const [inserted] = await txn
       .insert(walletTransaction)
@@ -679,14 +679,12 @@ export class WalletCommandsService implements WalletCommands {
     if (userIds.length === 0) {
       return;
     }
-    const ids = [...new Set(userIds)].sort();
-    for (const userId of ids) {
-      await (tx as DrizzleDb)
-        .select({ id: wallet.id })
-        .from(wallet)
-        .where(eq(wallet.userId, userId))
-        .for('update');
-    }
+    await (tx as DrizzleDb)
+      .select({ id: wallet.id })
+      .from(wallet)
+      .where(inArray(wallet.userId, [...new Set(userIds)]))
+      .orderBy(asc(wallet.userId))
+      .for('update');
   }
 
   async movableFunds(tx: unknown, { userId, currency }: MovableFundsArgs): Promise<MovableFunds> {

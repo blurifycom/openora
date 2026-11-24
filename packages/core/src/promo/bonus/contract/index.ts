@@ -366,7 +366,11 @@ export const ConvertTransferGrantsInputSchema = z.object({
   limit: z.number().int().min(1).max(500).default(100),
   /** Reports what would convert and writes nothing. */
   dryRun: z.boolean().optional(),
-  /** Starts after this grant id: a previous call's `nextCursor`. */
+  /**
+   * Starts after this grant id: a previous call's `nextCursor`. A grant skipped for an open round
+   * is not revisited by the same paged pass, so a pass ends with a call without `after` while
+   * `remaining > 0`.
+   */
   after: UuidSchema.optional(),
 });
 export type ConvertTransferGrantsInput = z.infer<typeof ConvertTransferGrantsInputSchema>;
@@ -390,7 +394,10 @@ export const ConvertTransferGrantsResultSchema = z.object({
   skippedOpenRound: z.number().int().nonnegative(),
   /** Live grants of the requested sources still left after this call. */
   remaining: z.number().int().nonnegative(),
-  /** The last grant this call looked at; pass it as `after` to go on. Null once none is left. */
+  /**
+   * The last grant this call looked at; pass it as `after` to go on. Null once none is left after
+   * it, which `remaining > 0` can follow: a grant skipped for an open round sits behind the cursor.
+   */
   nextCursor: UuidSchema.nullable(),
 });
 export type ConvertTransferGrantsResult = z.infer<typeof ConvertTransferGrantsResultSchema>;
