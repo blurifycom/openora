@@ -1763,18 +1763,30 @@ export class WalletService {
     txn: DrizzleDb,
     userId: User['id'],
     balances: T[],
-  ): Promise<(T & Partial<LockedFunds>)[]> {
-    if (!this.bonusFundLocks || balances.length === 0) {
+  ): Promise<(T & Partial<LockedFunds> & { bonusLocked?: string })[]> {
+    const turnover = this.turnover?.enabled ? this.turnover : undefined;
+    if ((!this.bonusFundLocks && !turnover) || balances.length === 0) {
       return balances;
     }
-    const locks = await this.bonusFundLocks.readLockedFunds(txn, {
-      userId,
-      balances: balances.map(({ currency, balance }) => ({
-        currency: balanceKey(currency),
-        realBalance: balance,
-      })),
+    const locks = this.bonusFundLocks
+      ? await this.bonusFundLocks.readLockedFunds(txn, {
+          userId,
+          balances: balances.map(({ currency, balance }) => ({
+            currency: balanceKey(currency),
+            realBalance: balance,
+          })),
+        })
+      : [];
+    if (!turnover) {
+      return balances.map((balance, i) => ({ ...balance, ...locks[i] }));
+    }
+    const turnoverLocked = (await turnover.summary(userId, txn)).locked;
+    return balances.map((row, i) => {
+      const bonus = locks[i] ?? { locked: '0', free: row.balance };
+      return turnoverLocked
+        ? { ...row, locked: row.balance, free: '0', bonusLocked: bonus.locked }
+        : { ...row, ...bonus, bonusLocked: bonus.locked };
     });
-    return balances.map((balance, i) => ({ ...balance, ...locks[i] }));
   }
 
   /** A player without a wallet reads as empty rather than as an error. */
@@ -2459,6 +2471,8 @@ export class WalletService {
             reason: 'withdrawal_while_active',
             ...forfeitContext,
           }));
+      // Last lock taken; a refusal rolls back the debit and any forfeit above with it.
+      await this.turnover?.assertOutflow(txn, { userId, outflow: 'withdrawal' });
 
       // Screening runs in the tag module off this event, never in this transaction; only its
       // verdict lets the withdrawal be auto-approved (autoApproveScreenedWithdrawal, ADR-0059).

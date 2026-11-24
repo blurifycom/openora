@@ -20,6 +20,7 @@ import {
   PromoOfferStatusSchema,
   SignedMoneyAmountSchema,
   TimestampSchema,
+  TurnoverSummarySchema,
   UuidSchema,
   WagerProductSchema,
   type WagerProduct,
@@ -332,6 +333,8 @@ export const AdminPlayerFundsSchema = z.object({
       bonusLocked: MoneyAmountSchema.optional(),
     }),
   ),
+  // Present while a turnover requirement is on.
+  turnover: TurnoverSummarySchema.optional(),
 });
 
 export type AdminPlayerFunds = z.infer<typeof AdminPlayerFundsSchema>;

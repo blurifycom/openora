@@ -11,6 +11,7 @@ import {
 } from '@openora/core/server';
 import {
   TurnoverDisabledError,
+  TurnoverLockedError,
   WAGER_PRODUCTS,
   queue,
   type AddTurnoverRequirementArgs,
@@ -22,6 +23,7 @@ import {
   type TurnoverCreditType,
   type TurnoverEntry,
   type TurnoverEntrySource,
+  type TurnoverOutflow,
   type TurnoverSummary,
   type User,
   type WagerProduct,
@@ -596,6 +598,47 @@ export class TurnoverService {
       });
     }
     return priced;
+  }
+
+  /** Whether an outflow would be refused now, under the turnover row lock on the caller's transaction. */
+  async isLocked(tx: unknown, userId: User['id']): Promise<boolean> {
+    if (!this.enabled) {
+      return false;
+    }
+    const row = await this.lockRow(tx as DrizzleDb, userId);
+    return row !== undefined && !this.isMet(row);
+  }
+
+  /**
+   * Refuses an outflow while the requirement is unmet, under the turnover row lock on the
+   * caller's transaction, after the wallet, balance and grant locks it already holds. A withdrawal
+   * first prices the player's pending entries, so it decides on the newest known requirement.
+   * @throws TurnoverLockedError while more than dust remains or an entry is still unpriced.
+   */
+  async assertOutflow(
+    tx: unknown,
+    { userId, outflow }: { userId: User['id']; outflow: TurnoverOutflow },
+  ): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+    const db = tx as DrizzleDb;
+    if (outflow === 'withdrawal' && ((await this.readRow(db, userId))?.pendingCount ?? 0) > 0) {
+      await this.pricePending(db, userId);
+    }
+    const row = await this.lockRow(db, userId);
+    if (!row || this.isMet(row)) {
+      return;
+    }
+    const { pivotCurrency, required, progress, remaining } = this.toSummary(row);
+    throw new TurnoverLockedError(this.deps.config.lockedMessage, {
+      outflow,
+      pivotCurrency,
+      required,
+      progress,
+      remaining,
+      pending: row.pendingCount > 0,
+    });
   }
 
   /** The pricing job: one transaction per player with a pending entry, so no lock outlives its player. */

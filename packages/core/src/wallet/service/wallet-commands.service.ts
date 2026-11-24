@@ -560,6 +560,13 @@ export class WalletCommandsService implements WalletCommands {
                 }
               : { ...outflow, outflow: type === 'swap_out' ? 'swap' : 'transfer' },
           );
+          // A swap keeps the money with the player, so only the bonus lock applies to it.
+          if (type !== 'swap_out') {
+            await this.activeTurnover()?.assertOutflow(sp, {
+              userId,
+              outflow: type === 'withdrawal' ? 'withdrawal' : 'transfer',
+            });
+          }
         }
 
         // The ledger row carries the whole stake: a bet is a bet whichever balance paid for it.
@@ -653,15 +660,18 @@ export class WalletCommandsService implements WalletCommands {
       return { real: '0', locked: '0', free: '0' };
     }
     const real = await readWalletBalanceForUpdate(txn, row.id, key);
-    if (!this.ports.bonusFundLocks) {
-      return { real, locked: '0', free: real };
+    const bonus = this.ports.bonusFundLocks
+      ? await this.ports.bonusFundLocks.lockedFunds(txn, {
+          userId,
+          currency: key,
+          realBalance: real,
+        })
+      : { locked: '0', free: real };
+    const turnover = this.activeTurnover();
+    if (turnover && (await turnover.isLocked(txn, userId))) {
+      return { real, locked: real, free: '0' };
     }
-    const { locked, free } = await this.ports.bonusFundLocks.lockedFunds(txn, {
-      userId,
-      currency: key,
-      realBalance: real,
-    });
-    return { real, locked, free };
+    return { real, ...bonus };
   }
 
   /**

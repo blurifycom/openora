@@ -350,12 +350,15 @@ export type WalletCommands = {
    * A replay that names no currency answers in the currency the first call moved.
    * @throws WalletReplayMismatchError when `providerRef` is already on a different request's move.
    * @throws BonusFundsLockedError when a type outside `WALLET_LOCK_EXEMPT_DEBIT_TYPES` dips into bonus-locked money.
+   * @throws TurnoverLockedError when a type outside `WALLET_LOCK_EXEMPT_DEBIT_TYPES`, other than `swap_out`, moves money while the player's turnover requirement is unmet (ADR-0065); a `withdrawal` debit reports `outflow: 'withdrawal'`, any other `transfer`.
    */
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;
   /**
    * The player's real balance in `currency` and how much of it a live bonus locks. Takes the
    * wallet row and balance row locks a debit takes, so a debit later in `tx` sees the same figure;
    * a transfer check, not a display read. Optional so a custom binding written before it compiles.
+   * While the turnover requirement is unmet, `locked` is the whole balance and `free` is '0',
+   * because a transfer debit would throw `TurnoverLockedError`.
    */
   movableFunds?(tx: unknown, args: MovableFundsArgs): Promise<MovableFunds>;
   /** @throws WalletReplayMismatchError when `providerRef` is already on a different request's move. */
