@@ -20,9 +20,11 @@ import {
   PromoOfferStatusSchema,
   SignedMoneyAmountSchema,
   TimestampSchema,
+  TurnoverEntryStatusSchema,
   TurnoverSummarySchema,
   UuidSchema,
   WagerProductSchema,
+  type BonusGrantSource,
   type WagerProduct,
 } from '@openora/core/contracts';
 
@@ -350,6 +352,45 @@ export const ForfeitGrantInputSchema = z.object({
   note: z.string().trim().min(10).max(500),
 });
 
+/** Grant sources a player-to-player transfer creates, which a conversion may turn into cash. */
+export const TRANSFER_GRANT_SOURCES = [
+  'gift',
+  'rain',
+  'donation',
+] as const satisfies readonly BonusGrantSource[];
+export const TransferGrantSourceSchema = z.enum(TRANSFER_GRANT_SOURCES);
+export type TransferGrantSource = z.infer<typeof TransferGrantSourceSchema>;
+
+export const ConvertTransferGrantsInputSchema = z.object({
+  sources: z.array(TransferGrantSourceSchema).min(1),
+  limit: z.number().int().min(1).max(500).default(100),
+  /** Reports what would convert and writes nothing. */
+  dryRun: z.boolean().optional(),
+});
+export type ConvertTransferGrantsInput = z.infer<typeof ConvertTransferGrantsInputSchema>;
+
+export const ConvertedTransferGrantSchema = z.object({
+  grantId: UuidSchema,
+  userId: UuidSchema,
+  currency: CurrencyTickerSchema,
+  /** Bonus balance credited to the real balance. */
+  cash: MoneyAmountSchema,
+  /** Turnover added in the grant's currency: the wagering it still had left. */
+  requiredInCurrency: MoneyAmountSchema,
+  /** Null when no turnover entry was written: a dry run, or nothing left to wager. */
+  entryStatus: TurnoverEntryStatusSchema.nullable(),
+});
+export type ConvertedTransferGrant = z.infer<typeof ConvertedTransferGrantSchema>;
+
+export const ConvertTransferGrantsResultSchema = z.object({
+  converted: z.array(ConvertedTransferGrantSchema),
+  /** Grants left live because a bet on them is still open; a later run converts them. */
+  skippedOpenRound: z.number().int().nonnegative(),
+  /** Live grants of the requested sources still left after this call. */
+  remaining: z.number().int().nonnegative(),
+});
+export type ConvertTransferGrantsResult = z.infer<typeof ConvertTransferGrantsResultSchema>;
+
 /**
  * A player's bonus position in one currency. There is no balance table: the figures are the sum
  * over their active grants, which is the only place the funds exist.
@@ -462,6 +503,12 @@ export const bonusContract = {
         .route({ method: 'POST', path: '/backoffice/promo/grants/{id}/forfeit' })
         .input(ForfeitGrantInputSchema)
         .output(AdminGrantSchema),
+
+      /** Super-admin only: live transfer grants into real cash carrying a turnover requirement (ADR-0065). */
+      convertTransferGrants: oc
+        .route({ method: 'POST', path: '/backoffice/promo/grants/convert-transfer-grants' })
+        .input(ConvertTransferGrantsInputSchema)
+        .output(ConvertTransferGrantsResultSchema),
     },
 
     offers: {

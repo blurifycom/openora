@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { implement } from '@orpc/server';
 import {
   assertRateLimit,
@@ -23,6 +24,10 @@ export function bonusBalanceChannel(userId: Uuid): string {
   return `promo:balance:${userId}`;
 }
 import { BonusSlotTakenError } from '../shared/grant-slot.js';
+import {
+  GrantConversionService,
+  TransferGrantConversionUnavailableError,
+} from '../service/grant-conversion.service.js';
 import {
   GrantLifecycleService,
   GrantActivationRestrictedError,
@@ -69,6 +74,7 @@ export function createBonusRouter({
   offers,
   weights,
   lifecycle,
+  conversion,
   realtime,
   adminGuard,
   limiter,
@@ -79,6 +85,7 @@ export function createBonusRouter({
   offers: OfferService;
   weights: WeightService;
   lifecycle: GrantLifecycleService;
+  conversion: GrantConversionService;
   realtime: RealtimeTransport;
   adminGuard: AdminGuard;
   limiter: RateLimiterAdapter<RateLimitKey>;
@@ -161,6 +168,32 @@ export function createBonusRouter({
             },
           );
         }),
+
+        convertTransferGrants: os.admin.grants.convertTransferGrants.handler(
+          async ({ input, context }) => {
+            const { userId } = await adminGuard.assertSuperAdmin(context, {
+              resource: 'bonus',
+              action: 'convert-transfer-grants',
+            });
+            const result = await mapErrors(
+              { CONFLICT: TransferGrantConversionUnavailableError },
+              () => conversion.convert(input, { id: userId, meta: context.clientMeta }),
+            );
+            if (!input.dryRun) {
+              // A refetch signal only: a dropped one leaves the next balance read correct.
+              for (const grant of result.converted) {
+                await Promise.resolve(
+                  realtime.publish(bonusBalanceChannel(grant.userId), {
+                    eventId: randomUUID(),
+                    currency: grant.currency,
+                    reason: 'completed',
+                  } satisfies BonusBalanceUpdate),
+                ).catch(() => undefined);
+              }
+            }
+            return result;
+          },
+        ),
       },
 
       offers: {

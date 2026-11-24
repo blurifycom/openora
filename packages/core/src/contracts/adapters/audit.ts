@@ -78,6 +78,7 @@ export type DirectAuditAction =
   | 'wallet.wallet_asset.updated'
   | 'wallet.wallet_asset.deleted'
   | 'promo.bonus.converted'
+  | 'promo.bonus.converted_to_cash'
   | 'promo.bonus.forfeited'
   | 'promo.bonus.forfeit_refused'
   | 'promo.bonus.expired'

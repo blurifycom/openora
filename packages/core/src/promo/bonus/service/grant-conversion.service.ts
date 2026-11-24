@@ -1,0 +1,272 @@
+import { and, asc, count, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type {
+  AuditWritePort,
+  ClientMeta,
+  TurnoverEntryStatus,
+  Uuid,
+  WalletCommands,
+} from '@openora/core/contracts';
+import { player } from '@openora/core/pam/schema/profile';
+import {
+  makeConflictError,
+  moneyCompare,
+  moneySubtract,
+  type DrizzleService,
+  type DrizzleTx,
+  type EventBus,
+} from '@openora/core/server';
+import type {
+  ConvertTransferGrantsInput,
+  ConvertTransferGrantsResult,
+  ConvertedTransferGrant,
+  TransferGrantSource,
+} from '../contract/index.js';
+import { promoGrant, promoGrantRound, type PromoGrant } from '../schema/index.js';
+import { capConversion, completeGrant } from '../shared/complete-grant.js';
+
+export const TransferGrantConversionUnavailableError = makeConflictError(
+  'TransferGrantConversionUnavailableError',
+  'Transfer grants convert into turnover-locked cash only while the turnover requirement is on',
+  { reason: 'turnover_disabled' },
+);
+
+/** The ledger reference of a conversion's cash credit: one per grant, so a retry replays it. */
+const CONVERSION_PROVIDER = 'promo:grant-conversion';
+
+const ZERO = '0';
+
+type Logger = { error: (obj: object, msg: string) => void };
+
+type WalletPorts = Required<
+  Pick<WalletCommands, 'credit' | 'movableFunds' | 'addTurnoverRequirement'>
+>;
+
+type Outcome = ConvertedTransferGrant | 'open_round' | null;
+
+const isLiveTransferGrant = (sources: readonly TransferGrantSource[]) =>
+  and(
+    eq(promoGrant.status, 'active'),
+    sql`${promoGrant.expiresAt} > now()`,
+    inArray(promoGrant.source, [...sources]),
+  );
+
+const remainingWagering = (grant: Pick<PromoGrant, 'wageringRequired' | 'wageringProgress'>) => {
+  const left = moneySubtract(grant.wageringRequired, grant.wageringProgress);
+  return moneyCompare(left, ZERO) > 0 ? left : ZERO;
+};
+
+/**
+ * Turns live gift, rain and donation grants into real cash that carries a turnover requirement
+ * equal to the wagering each grant still had left (ADR-0065), for an operator moving transfer
+ * credits from bonus grants to cash. Each grant converts in a transaction of its own.
+ */
+export class GrantConversionService {
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly audit: AuditWritePort,
+    private readonly events: EventBus,
+    private readonly wallet: () => WalletCommands | undefined,
+    private readonly turnoverOn: boolean,
+    private readonly logger: Logger,
+  ) {}
+
+  async convert(
+    { sources, limit, dryRun }: ConvertTransferGrantsInput,
+    actor: { id: Uuid; meta?: ClientMeta | undefined },
+  ): Promise<ConvertTransferGrantsResult> {
+    const wallet = this.walletPorts();
+    const candidates = await this.drizzle.db
+      .select({ id: promoGrant.id })
+      .from(promoGrant)
+      .where(isLiveTransferGrant(sources))
+      .orderBy(asc(promoGrant.id))
+      .limit(limit);
+
+    const converted: ConvertedTransferGrant[] = [];
+    let skippedOpenRound = 0;
+    for (const { id } of candidates) {
+      const outcome = dryRun
+        ? await this.preview(id, sources)
+        : await this.convertOne(wallet, id, sources, actor).catch((err: unknown) => {
+            this.logger.error(
+              { grantId: id, error: err instanceof Error ? err.name : 'unknown' },
+              'transfer grant conversion failed; the grant stays live',
+            );
+            return null;
+          });
+      if (outcome === 'open_round') {
+        skippedOpenRound += 1;
+      } else if (outcome !== null) {
+        converted.push(outcome);
+      }
+    }
+
+    const [left] = await this.drizzle.db
+      .select({ n: count() })
+      .from(promoGrant)
+      .where(isLiveTransferGrant(sources));
+    return { converted, skippedOpenRound, remaining: left?.n ?? 0 };
+  }
+
+  private walletPorts(): WalletPorts {
+    const wallet = this.wallet();
+    if (!this.turnoverOn || !wallet?.addTurnoverRequirement || !wallet.movableFunds) {
+      throw new TransferGrantConversionUnavailableError();
+    }
+    return {
+      credit: wallet.credit.bind(wallet),
+      movableFunds: wallet.movableFunds.bind(wallet),
+      addTurnoverRequirement: wallet.addTurnoverRequirement.bind(wallet),
+    };
+  }
+
+  private async preview(grantId: PromoGrant['id'], sources: readonly TransferGrantSource[]) {
+    const db = this.drizzle.db;
+    const [grant] = await db
+      .select()
+      .from(promoGrant)
+      .where(and(eq(promoGrant.id, grantId), isLiveTransferGrant(sources)));
+    if (!grant) {
+      return null;
+    }
+    if (await this.hasOpenRound(db, grantId)) {
+      return 'open_round';
+    }
+    return {
+      grantId,
+      userId: grant.userId,
+      currency: grant.currency,
+      cash: capConversion(grant.bonusBalance, grant.grantedAmount, grant.terms.maxWinMultiplier),
+      requiredInCurrency: remainingWagering(grant),
+      entryStatus: null,
+    };
+  }
+
+  private convertOne(
+    wallet: WalletPorts,
+    grantId: PromoGrant['id'],
+    sources: readonly TransferGrantSource[],
+    actor: { id: Uuid; meta?: ClientMeta | undefined },
+  ): Promise<Outcome> {
+    return this.drizzle.db.transaction(async (tx) => {
+      const [owner] = await tx
+        .select({ userId: promoGrant.userId, currency: promoGrant.currency })
+        .from(promoGrant)
+        .where(eq(promoGrant.id, grantId));
+      if (!owner) {
+        return null;
+      }
+      // The wallet and balance row locks a bet takes before it locks a grant, so a conversion
+      // and a bet on the same grant queue rather than deadlock.
+      await wallet.movableFunds(tx, owner);
+      const [grant] = await tx
+        .select()
+        .from(promoGrant)
+        .where(and(eq(promoGrant.id, grantId), isLiveTransferGrant(sources)))
+        .for('update');
+      if (!grant) {
+        return null;
+      }
+      if (await this.hasOpenRound(tx, grantId)) {
+        return 'open_round';
+      }
+      const completion = await completeGrant(tx, grant);
+      if (!completion) {
+        return null;
+      }
+      const cash = completion.convertedAmount;
+      if (moneyCompare(cash, ZERO) > 0) {
+        await this.creditCash(tx, wallet, grant, cash);
+      }
+      const requiredInCurrency = remainingWagering(grant);
+      const entry =
+        moneyCompare(requiredInCurrency, ZERO) > 0
+          ? await wallet.addTurnoverRequirement(tx, {
+              userId: grant.userId,
+              currency: grant.currency,
+              requiredInCurrency,
+              source: 'grant_conversion',
+              sourceRef: grantId,
+            })
+          : null;
+      await this.audit.recordInTransaction(tx, {
+        actorType: 'admin',
+        actorId: actor.id,
+        action: 'promo.bonus.converted_to_cash',
+        resourceType: 'promo_grant',
+        resourceId: grantId,
+        before: {
+          status: grant.status,
+          source: grant.source,
+          bonusBalance: grant.bonusBalance,
+          linkedCash: grant.linkedCash,
+          unlinkedCash: grant.unlinkedCash,
+          wageringRequired: grant.wageringRequired,
+          wageringProgress: grant.wageringProgress,
+        },
+        after: {
+          userId: grant.userId,
+          status: 'completed',
+          currency: grant.currency,
+          cash,
+          requiredInCurrency,
+          ...(entry === null ? {} : { turnoverEntryId: entry.entryId }),
+        },
+        ...actor.meta,
+      });
+      const entryStatus: TurnoverEntryStatus | null = entry?.status ?? null;
+      return {
+        grantId,
+        userId: grant.userId,
+        currency: grant.currency,
+        cash,
+        requiredInCurrency,
+        entryStatus,
+      };
+    });
+  }
+
+  private async creditCash(
+    tx: DrizzleTx,
+    wallet: Pick<WalletCommands, 'credit'>,
+    grant: PromoGrant,
+    cash: string,
+  ): Promise<void> {
+    const credited = await wallet.credit(tx, {
+      userId: grant.userId,
+      amount: cash,
+      currency: grant.currency,
+      type: 'bonus',
+      allowNewCurrency: true,
+      providerRef: { providerName: CONVERSION_PROVIDER, providerRefId: grant.id },
+    });
+    if (!credited.ok) {
+      throw new Error(`grant conversion credit refused: ${credited.reason}`);
+    }
+    if (!credited.moved) {
+      return;
+    }
+    const [account] = await tx
+      .select({ id: player.id })
+      .from(player)
+      .where(eq(player.userId, grant.userId));
+    await this.events.emitInTransaction(tx, 'wallet.balance.changed', {
+      userId: grant.userId,
+      playerId: account?.id ?? null,
+      amount: cash,
+      currency: grant.currency,
+      transactionId: credited.transactionId,
+      type: 'bonus',
+      direction: 'credit',
+    });
+  }
+
+  private async hasOpenRound(db: Pick<DrizzleTx, 'select'>, grantId: PromoGrant['id']) {
+    const [open] = await db
+      .select({ id: promoGrantRound.id })
+      .from(promoGrantRound)
+      .where(and(eq(promoGrantRound.grantId, grantId), isNull(promoGrantRound.settledAt)))
+      .limit(1);
+    return open !== undefined;
+  }
+}
