@@ -18,7 +18,7 @@ Read this before a commit, PR, or branch operation.
   that exact HEAD; a promotion from a shared branch, a branch delete, and a tag push pass.
 - On GitHub, a PR that builds on another ticket's feature branch goes up as a native stacked PR with
   `gh stack` (`init`, `add`, `submit`, `sync`); the `guard-stack` hook blocks a plain PR based on
-  a feature branch. Each layer is reviewed on its own. A PR that needs another ticket released, not just merged into `dev`, waits until `git tag --contains <sha>` shows that ticket's merge commit in a release.
+  a feature branch. Each layer is reviewed on its own. A PR that needs another ticket released, not just merged, waits until the deploy marker in `docs/agents/forge.md` shows that ticket's merge commit.
 - A PR/MR opens as a draft and is marked ready for review once its pipeline on the last commit
   is green; a red one stays a draft. For a stack that means `gh stack submit --auto` (new layers
   open as drafts; never `--open`), then `gh pr ready <n>` per layer as its pipeline goes green.

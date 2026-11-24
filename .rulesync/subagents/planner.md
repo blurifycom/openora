@@ -27,7 +27,7 @@ Per AC, before planning: empty and error states, authz negatives, concurrency an
 
 The ticket you are given is delivered as one PR, however big: never split it by size, line count or number of test cases. A story shipped by its own key is one PR for its whole scope, sub-tasks included; a sub-task shipped by its own key is one PR for that sub-task. Splitting a ticket is a person's call, made by creating sub-tasks. Inside the one PR:
 
-- a schema, event or contract change stays compatible with the version still running during a rolling deploy: add the new shape and move the readers, drop the old shape in a later ticket. A ticket that asks for both the move and the drop gets `Asked:` to move the drop into its own sub-task; never plan both in one PR;
+- a schema, event or contract change stays compatible with the version still running during a rolling deploy: add the new shape and move the readers, drop the old shape in a later ticket. A ticket that asks for both the move and the drop gets `Asked:` to move the drop into a work order of its own; never plan both in one PR;
 - a new path that is not ready to go live stays off behind config.
 
 ## Reply

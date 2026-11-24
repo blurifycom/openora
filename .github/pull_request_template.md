@@ -6,7 +6,7 @@ First line: the bare ticket key, or `Closes #<issue>`. Sections 2 (infra path), 
 
 ## How it was checked
 
-<!-- Checks result for the head SHA, then each test that proves the change, named by the behaviour it proves. Review findings dropped as not holding, each with why. -->
+<!-- Checks result for the head SHA, then each test that proves the change, named by the behaviour it proves. Review findings dropped as not holding, each with why; a dropped security finding as a count only. -->
 
 <details><summary><b>1. Architecture diff</b>: </summary>
 
