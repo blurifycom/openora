@@ -1,5 +1,5 @@
 // `trace-report.ts --gantt` prints the PR "Trace" section: one mermaid gantt per status of a
-// procedure, statements new since the baseline marked `crit`.
+// procedure, locks `crit`, writes `active`, statements new since the baseline prefixed `+`.
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,11 +58,11 @@ test('prints one gantt per status with the trace id, the transaction as a parent
   assert.match(out, /^ {2}title wallet\.deposit 200 · 12 ms$/m);
   assert.match(out, /^ {2}dateFormat x$/m);
   assert.match(out, /^ {2}pg transaction 3\.3 ms :3, 7$/m);
-  assert.match(out, /^ {2}· pg INSERT ledger_entry 2\.0 ms :3, 6$/m);
+  assert.match(out, /^ {2}· pg INSERT ledger_entry 2\.0 ms :active, 3, 6$/m);
   // The title carries the procedure; no root bar repeats it. A milestone leaves room on the right.
   assert.doesNotMatch(out, /^ {2}wallet\.deposit/m);
   assert.match(out, /^ {2}end :milestone, 14, 0ms$/m);
-  assert.doesNotMatch(out, /crit/);
+  assert.doesNotMatch(out, /\+ pg/);
 });
 
 test('folds a run of short same-name statements into one row', () => {
@@ -93,7 +93,8 @@ test('folds a run of short same-name statements into one row', () => {
 test('marks a statement the baseline never ran, and names a missing procedure', () => {
   const baseline = dir(spans.filter((row) => !row.sql?.startsWith('insert')));
   const out = ganttReport(dir(spans), baseline, 'wallet.deposit');
-  assert.match(out, /pg INSERT ledger_entry 2\.0 ms :crit, 3, 6$/m);
+  assert.match(out, /\+ pg INSERT ledger_entry 2\.0 ms :active, 3, 6$/m);
+  assert.match(out, /`\+`: new since the baseline\./);
   assert.match(out, /pg SELECT wallet 1\.0 ms :1, 2$/m);
   assert.match(ganttReport(dir(spans), undefined, 'nope'), /No recorded request matches "nope"/);
 });
@@ -108,7 +109,7 @@ test('a statement the baseline ran under another status is not new; a bare name 
     }),
   ]);
   const out = ganttReport(dir(spans), baseline, 'wallet.deposit');
-  assert.doesNotMatch(out, /crit/);
+  assert.doesNotMatch(out, /\+ pg/);
   const other = span('c'.repeat(32), '20', null, 'POST /rpc/wallet/depositLimits', 300, 2, {
     httpStatus: 200,
   });

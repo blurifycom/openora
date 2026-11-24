@@ -7,7 +7,7 @@
 //
 // Without a baseline it lists the procedures with the most queries per request. `--gantt` prints
 // the PR "Trace" section instead: a mermaid gantt of one request per status of each matching
-// procedure (the happy path and its refusals), statements new since the baseline in red.
+// procedure (the happy path and its refusals), locks red, writes filled, statements new since the baseline prefixed `+`.
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -219,7 +219,24 @@ function queryLabel(sql: string): string {
   return `pg ${verb} ${subject}`.trim();
 }
 
-type Row = { label: string; startMs: number; durationMs: number; depth: number; isNew: boolean };
+type Row = {
+  label: string;
+  startMs: number;
+  durationMs: number;
+  depth: number;
+  isNew: boolean;
+  kind?: 'lock' | 'write';
+};
+
+const LOCK =
+  /\bfor\s+(?:no\s+key\s+update|update|key\s+share|share)\b|\bpg_(?:try_)?advisory_(?:xact_)?lock/i;
+// A write leads the statement or a CTE (`with x as (insert ...)`), once leading comments are gone.
+const WRITE = /^\(?\s*(?:insert|update|delete)\b|\bas\s*\(\s*(?:insert|update|delete)\b/i;
+const COMMENTS = /^(?:\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/))*\s*/;
+/** A row or advisory lock is drawn red (`crit`), a write filled (`active`). */
+const kindOf = (sql: string): Row['kind'] =>
+  LOCK.test(sql) ? 'lock' : WRITE.test(sql.replace(COMMENTS, '')) ? 'write' : undefined;
+const TAG = { lock: 'crit, ', write: 'active, ' } as const;
 
 /** Root, named middleware and queries; a BEGIN..COMMIT on one connection becomes a parent row. */
 function rows(request: Request, baselineSignatures: Set<string> | undefined): Row[] {
@@ -278,6 +295,7 @@ function rows(request: Request, baselineSignatures: Set<string> | undefined): Ro
       durationMs: span.durationMs,
       depth: inTx ? 2 : 1,
       isNew,
+      ...(kindOf(sql) ? { kind: kindOf(sql) } : {}),
     });
   }
   return out.toSorted((a, b) => (a.depth === 0 ? -1 : b.depth === 0 ? 1 : a.startMs - b.startMs));
@@ -360,17 +378,17 @@ function ganttRows(all: Row[]): Row[] {
   return out;
 }
 
-/** One request as a mermaid gantt: times in ms from the request start, new statements `crit`. */
+/** One request as a mermaid gantt: times in ms from the request start, locks `crit`, writes `active`, new statements `+`. */
 function gantt(request: Request, baselineSignatures: Set<string> | undefined): string {
   const { root } = request;
   const tasks = ganttRows(rows(request, baselineSignatures)).map((row) => {
     const start = Math.max(0, Math.floor(row.startMs - root.startMs));
     const end = Math.max(Math.ceil(row.startMs + row.durationMs - root.startMs), start + 1);
-    const name = `${'· '.repeat(row.depth)}${ganttLabel(row.label)} ${ms(row.durationMs)}`;
-    return `  ${name} :${row.isNew ? 'crit, ' : ''}${start}, ${end}`;
+    const name = `${'· '.repeat(row.depth)}${row.isNew ? '+ ' : ''}${ganttLabel(row.label)} ${ms(row.durationMs)}`;
+    return `  ${name} :${row.kind ? TAG[row.kind] : ''}${start}, ${end}`;
   });
   return [
-    `Trace \`${root.traceId}\` (${request.test}): ${request.queries.length} queries.`,
+    `Trace \`${root.traceId}\` (${request.test}): ${request.queries.length} queries. Red bar: lock, filled bar: write${baselineSignatures ? ', `+`: new since the baseline' : ''}.`,
     '',
     '```mermaid',
     'gantt',
