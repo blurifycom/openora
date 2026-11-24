@@ -96,7 +96,11 @@ import {
   projectionDriftCheck,
 } from './service/reconciliation.service.js';
 import { SwapService } from './service/swap.service.js';
-import { TurnoverService } from './service/turnover.service.js';
+import {
+  TURNOVER_PRICING_QUEUE,
+  TurnoverPricingJobSchema,
+  TurnoverService,
+} from './service/turnover.service.js';
 import { OnRampService } from './service/on-ramp.service.js';
 
 const logger = createLogger('wallet');
@@ -383,6 +387,7 @@ export default {
         bonusFundLocks: bonusFundLocks(c),
         bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
         depositBonus: c.has(BONUS_DEPOSITS) ? c.get(BONUS_DEPOSITS) : undefined,
+        turnover: turnoverService(c),
       }));
 
     ctx.mcp.tool(walletActivityTool, (c) => {
@@ -511,6 +516,17 @@ export default {
         await reconciliationRef.runLedgerInvariant(payload.runId, {
           backfillBaselines: payload.backfillBaselines,
         });
+      },
+    });
+
+    ctx.jobs.worker({
+      queue: TURNOVER_PRICING_QUEUE,
+      schema: TurnoverPricingJobSchema,
+      handler: async () => {
+        if (!turnoverSvc) {
+          throw new Error('wallet turnover pricing: service not constructed yet');
+        }
+        await turnoverSvc.priceAllPending();
       },
     });
 
@@ -664,6 +680,17 @@ export default {
         )
         .catch((err) => logger.error({ err }, 'wallet-ledger-invariant schedule failed'));
 
+      if (turnoverService(c).enabled) {
+        void jobQueue
+          .schedule(
+            TURNOVER_PRICING_QUEUE,
+            'wallet-turnover-pricing.cron',
+            {},
+            { cron: resolveWalletTurnoverConfig(platformConfig?.wallet).pricingCron },
+          )
+          .catch((err) => logger.error({ err }, 'wallet-turnover-pricing schedule failed'));
+      }
+
       // No SWAP_ADAPTER bound is the resting state (core binds none) - the swap routes
       // then refuse rather than the module failing to load.
       const swapAdapter = c.has(SWAP_ADAPTER) ? c.get(SWAP_ADAPTER) : undefined;
@@ -677,6 +704,7 @@ export default {
             platformConfig,
             limiter: c.get(RATE_LIMITER),
             bonusFundLocks: bonusFundLocks(c),
+            turnover: turnoverService(c),
           })
         : undefined;
       // A webhook needs BOTH: an adapter that parses the vendor's format and that same

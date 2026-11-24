@@ -60,7 +60,12 @@ export const withoutNetwork = <T extends { network?: string }>({ network: _netwo
 const uniqueCurrency = () =>
   Array.from(randomBytes(8), (byte) => String.fromCharCode(65 + (byte % 26))).join('');
 
-export function bootDepositLifecycle() {
+type FixturePlugin = { id: string; path: string };
+
+export function bootDepositLifecycle({
+  config = { id: 'test-wallet-reconciliation-config', path: reconciliationConfigPluginPath },
+  plugins = [],
+}: { config?: FixturePlugin; plugins?: readonly FixturePlugin[] } = {}) {
   let db: TestDb;
   let testApp: TestApp;
   let admin: TestClient;
@@ -71,7 +76,8 @@ export function bootDepositLifecycle() {
       plugins: [
         ...(await loadExtensions()),
         { id: 'testing-payment-webhook', path: paymentPluginPath },
-        { id: 'test-wallet-reconciliation-config', path: reconciliationConfigPluginPath },
+        config,
+        ...plugins,
       ],
       databaseUrl: db.url,
     });

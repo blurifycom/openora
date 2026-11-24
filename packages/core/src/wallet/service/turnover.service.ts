@@ -10,12 +10,14 @@ import {
 import {
   TurnoverDisabledError,
   WAGER_PRODUCTS,
+  queue,
   type AddTurnoverRequirementArgs,
   type AddTurnoverRequirementResult,
   type AdminTurnoverEntry,
   type AuditWritePort,
   type ClientMeta,
   type ExchangeRateReader,
+  type TurnoverCreditType,
   type TurnoverEntry,
   type TurnoverEntrySource,
   type TurnoverSummary,
@@ -23,7 +25,8 @@ import {
   type WagerProduct,
   type WalletTurnoverConfig,
 } from '@openora/core/contracts';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import * as z from 'zod';
 import { walletTurnover, walletTurnoverConfig, walletTurnoverEntry } from '../schema/index.js';
 import type {
   TurnoverConfigView,
@@ -32,6 +35,10 @@ import type {
 } from '../contract/index.js';
 
 const CONFIG_KEY = 'global';
+const PRICING_PAGE = 500;
+
+export const TURNOVER_PRICING_QUEUE = queue('wallet-turnover-pricing');
+export const TurnoverPricingJobSchema = z.object({});
 
 type EntryRow = typeof walletTurnoverEntry.$inferSelect;
 type ProductOverrides = Partial<Record<WagerProduct, number>>;
@@ -43,6 +50,15 @@ type NewEntry = {
   currency: string;
   amount: string;
   multiplier: string;
+};
+
+export type TurnoverCredit = {
+  userId: User['id'];
+  kind: TurnoverCreditType;
+  /** The credit's ledger row id. */
+  sourceRef: string;
+  currency: string;
+  amount: string;
 };
 
 export type TurnoverServiceDeps = {
@@ -330,12 +346,30 @@ export class TurnoverService {
     return (await this.deps.rates?.convert(amount, currency, pivotCurrency, tx)) ?? null;
   }
 
+  private async findEntry(
+    db: DrizzleDb,
+    source: TurnoverEntrySource,
+    sourceRef: string,
+  ): Promise<AddTurnoverRequirementResult | null> {
+    const [existing] = await db
+      .select({ id: walletTurnoverEntry.id, status: walletTurnoverEntry.status })
+      .from(walletTurnoverEntry)
+      .where(
+        and(eq(walletTurnoverEntry.source, source), eq(walletTurnoverEntry.sourceRef, sourceRef)),
+      );
+    return existing ? { entryId: existing.id, status: existing.status, replayed: true } : null;
+  }
+
   /**
    * Adds one entry's requirement on the caller's transaction, deduplicated on `(source, sourceRef)`.
    * Locks the player's turnover row before the entry, as every turnover writer does.
    */
   private async addEntry(tx: unknown, entry: NewEntry): Promise<AddTurnoverRequirementResult> {
     const db = tx as DrizzleDb;
+    const replay = await this.findEntry(db, entry.source, entry.sourceRef);
+    if (replay) {
+      return replay;
+    }
     await db
       .insert(walletTurnover)
       .values({ userId: entry.userId, pivotCurrency: this.deps.pivotCurrency })
@@ -367,19 +401,11 @@ export class TurnoverService {
       })
       .returning({ id: walletTurnoverEntry.id, status: walletTurnoverEntry.status });
     if (!inserted) {
-      const [existing] = await db
-        .select({ id: walletTurnoverEntry.id, status: walletTurnoverEntry.status })
-        .from(walletTurnoverEntry)
-        .where(
-          and(
-            eq(walletTurnoverEntry.source, entry.source),
-            eq(walletTurnoverEntry.sourceRef, entry.sourceRef),
-          ),
-        );
+      const existing = await this.findEntry(db, entry.source, entry.sourceRef);
       if (!existing) {
         throw new Error('turnover entry missing after its conflict');
       }
-      return { entryId: existing.id, status: existing.status, replayed: true };
+      return existing;
     }
     // Play past a met requirement is not banked: a new credit starts from progress = required.
     const progress = moneyCompare(row.progress, row.required) > 0 ? row.required : row.progress;
@@ -409,5 +435,100 @@ export class TurnoverService {
       amount: requiredInCurrency,
       multiplier: '1',
     });
+  }
+
+  /**
+   * The requirement a credit owes, added on the caller's transaction once per `sourceRef` (its
+   * ledger row id). Touches nothing while turnover is off or `kind` is not in `creditTypes`. The
+   * caller already holds the wallet, balance and grant locks it takes, never takes them after.
+   */
+  async addCredit(
+    tx: unknown,
+    { kind, ...credit }: TurnoverCredit,
+  ): Promise<AddTurnoverRequirementResult | null> {
+    if (!this.enabled || !this.deps.config.creditTypes.includes(kind)) {
+      return null;
+    }
+    return this.addEntry(tx, { ...credit, source: kind, multiplier: this.deps.config.multiplier });
+  }
+
+  /**
+   * Prices the player's pending entries that have a rate now, under their turnover row lock. Only
+   * an entry this call moves out of `pending` adds to `required`, so a repeat or a concurrent run
+   * adds nothing twice. Returns how many it priced.
+   */
+  async pricePending(tx: unknown, userId: User['id']): Promise<number> {
+    const db = tx as DrizzleDb;
+    const [row] = await db
+      .select()
+      .from(walletTurnover)
+      .where(eq(walletTurnover.userId, userId))
+      .for('update');
+    if (!row) {
+      return 0;
+    }
+    const pending = await db
+      .select()
+      .from(walletTurnoverEntry)
+      .where(and(eq(walletTurnoverEntry.userId, userId), eq(walletTurnoverEntry.status, 'pending')))
+      .orderBy(walletTurnoverEntry.id);
+    let added = '0';
+    let priced = 0;
+    for (const entry of pending) {
+      const pivotValue = await this.price(entry.amount, entry.currency, row.pivotCurrency, db);
+      if (pivotValue === null) {
+        continue;
+      }
+      const required = moneyScaleBy(pivotValue, entry.multiplier);
+      const [updated] = await db
+        .update(walletTurnoverEntry)
+        .set({ status: 'counted', pivotValue, required, pricedAt: new Date() })
+        .where(and(eq(walletTurnoverEntry.id, entry.id), eq(walletTurnoverEntry.status, 'pending')))
+        .returning({ id: walletTurnoverEntry.id });
+      if (updated) {
+        added = moneyAdd(added, required);
+        priced += 1;
+      }
+    }
+    if (priced > 0) {
+      await db
+        .update(walletTurnover)
+        .set({
+          required: moneyAdd(row.required, added),
+          pendingCount: Math.max(row.pendingCount - priced, 0),
+        })
+        .where(eq(walletTurnover.userId, userId));
+    }
+    return priced;
+  }
+
+  /** The pricing job: one transaction per player with a pending entry, so no lock outlives its player. */
+  async priceAllPending(): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+    const db = this.deps.drizzle.db;
+    let after: User['id'] | undefined;
+    for (;;) {
+      const users = await db
+        .selectDistinct({ userId: walletTurnoverEntry.userId })
+        .from(walletTurnoverEntry)
+        .where(
+          and(
+            eq(walletTurnoverEntry.status, 'pending'),
+            after === undefined ? undefined : gt(walletTurnoverEntry.userId, after),
+          ),
+        )
+        .orderBy(walletTurnoverEntry.userId)
+        .limit(PRICING_PAGE);
+      for (const { userId } of users) {
+        await db.transaction((tx) => this.pricePending(tx, userId));
+      }
+      const last = users.at(-1);
+      if (users.length < PRICING_PAGE || last === undefined) {
+        return;
+      }
+      after = last.userId;
+    }
   }
 }

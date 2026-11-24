@@ -70,6 +70,7 @@ import {
   collectWalletBalance,
   debitWalletBalance,
   providerRefCondition,
+  namespacedIdempotencyKey,
   railFor,
   readWalletBalance,
   readWalletBalanceForUpdate,
@@ -193,6 +194,14 @@ export type WalletCommandsPorts = {
 const isLockExemptDebit = (type: WalletTransactionType): boolean =>
   (WALLET_LOCK_EXEMPT_DEBIT_TYPES as readonly WalletTransactionType[]).includes(type);
 
+const TRANSFER_CREDIT_TYPES = ['gift', 'rain', 'donation'] as const;
+type TransferCreditType = (typeof TRANSFER_CREDIT_TYPES)[number];
+const isTransferCredit = (type: WalletTransactionType): type is TransferCreditType =>
+  (TRANSFER_CREDIT_TYPES as readonly WalletTransactionType[]).includes(type);
+
+// The sender's debit leg holds the shared providerRef, so the credit dedupes per wallet and type.
+const TRANSFER_CREDIT_NAMESPACE = 'transfer-credit';
+
 export class WalletCommandsService implements WalletCommands {
   private readonly significantAmountThresholds: ReadonlyMap<string, string>;
 
@@ -315,6 +324,51 @@ export class WalletCommandsService implements WalletCommands {
       .from(walletTransaction)
       .where(providerRefCondition(providerRef.providerName, providerRef.providerRefId));
     return row;
+  }
+
+  private async writeTransferCreditRow(
+    txn: DrizzleDb,
+    row: { id: string; currency: string },
+    type: TransferCreditType,
+    amount: string,
+    providerRef: WalletProviderRef,
+  ): Promise<{ row: WalletTransaction; replayed: boolean }> {
+    const idempotencyKey = namespacedIdempotencyKey(
+      `${TRANSFER_CREDIT_NAMESPACE}:${type}`,
+      providerRef.providerRefId,
+    );
+    const [inserted] = await txn
+      .insert(walletTransaction)
+      .values({
+        walletId: row.id,
+        type,
+        amount,
+        currency: row.currency,
+        status: 'completed',
+        direction: 'credit',
+        rail: railFor(row.currency, this.ports.platformConfig?.wallet?.cryptoCurrencies),
+        providerName: providerRef.providerName,
+        idempotencyKey,
+        metadata: JSON.stringify({ providerRefId: providerRef.providerRefId }),
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted) {
+      return { row: inserted, replayed: false };
+    }
+    const [existing] = await txn
+      .select()
+      .from(walletTransaction)
+      .where(
+        and(
+          eq(walletTransaction.walletId, row.id),
+          eq(walletTransaction.idempotencyKey, idempotencyKey),
+        ),
+      );
+    if (!existing) {
+      throw new Error(`wallet ledger row: ${type} credit conflict but no row found`);
+    }
+    return { row: existing, replayed: true };
   }
 
   async debit(
@@ -673,12 +727,20 @@ export class WalletCommandsService implements WalletCommands {
       throw new WalletReferralRewardRefRequiredError();
     }
 
-    // A gift, rain or donation only writes a bonus grant, so it leaves the wallet row unlocked: a
-    // rain debits its sender and credits many recipients in one transaction.
-    const bonusSource = type === 'gift' || type === 'rain' || type === 'donation';
+    // In grant mode a gift, rain or donation only writes a bonus grant, so it leaves the wallet row
+    // unlocked: a rain debits its sender and credits many recipients in one transaction.
+    const transfer = isTransferCredit(type) ? type : null;
+    const cashTransfer =
+      transfer !== null && this.ports.platformConfig?.wallet?.transferCredits === 'cash'
+        ? transfer
+        : null;
+    const bonusSource = cashTransfer === null ? transfer : null;
+    if (cashTransfer !== null && !providerRef?.providerRefId) {
+      throw new WalletBonusSourceRefRequiredError(type);
+    }
     const row = allowNewWallet
-      ? await this.resolveOrOpenWallet(txn, userId, currency, !bonusSource)
-      : await this.selectWallet(txn, userId, !bonusSource);
+      ? await this.resolveOrOpenWallet(txn, userId, currency, bonusSource === null)
+      : await this.selectWallet(txn, userId, bonusSource === null);
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
     }
@@ -714,7 +776,7 @@ export class WalletCommandsService implements WalletCommands {
     // row - that ledger is the real-money ledger, and a gift never moves real money. The grant's
     // own `(user_id, source, source_ref)` unique index is the idempotency guard, so it needs a
     // reference the caller can reproduce on a retry, never one this method invents for itself.
-    if (bonusSource) {
+    if (bonusSource !== null) {
       if (!this.ports.bonusGrants) {
         throw new WalletBonusEngineUnavailableError(type);
       }
@@ -725,7 +787,7 @@ export class WalletCommandsService implements WalletCommands {
         userId,
         currency: balanceKey(currency),
         amount,
-        source: type,
+        source: bonusSource,
         sourceRef: providerRef.providerRefId,
         actor: { type: 'system' },
         terms,
@@ -761,16 +823,19 @@ export class WalletCommandsService implements WalletCommands {
         }
         // The wallet row lock above orders a credit before a correction or hold in the same
         // transaction, and its NO KEY UPDATE strength still lets another transaction insert a ledger row.
-        const { row: ledgerRow, replayed } = await this.writeLedgerRow(
-          sp,
-          creditRow,
-          type,
-          amount,
-          'credit',
-          providerRef,
-          undefined,
-          type === 'bet_reversal' ? { reversedTransactionId: reversesTransactionId } : {},
-        );
+        const { row: ledgerRow, replayed } =
+          cashTransfer !== null && providerRef
+            ? await this.writeTransferCreditRow(sp, creditRow, cashTransfer, amount, providerRef)
+            : await this.writeLedgerRow(
+                sp,
+                creditRow,
+                type,
+                amount,
+                'credit',
+                providerRef,
+                undefined,
+                type === 'bet_reversal' ? { reversedTransactionId: reversesTransactionId } : {},
+              );
         if (replayed && providerRef) {
           assertReplayMatches(ledgerRow, request, providerRef);
           return { replayedId: ledgerRow.id };
@@ -812,6 +877,15 @@ export class WalletCommandsService implements WalletCommands {
           throw new WalletCreditFailedError(row.id, currency);
         }
         await stampBalanceAfter(sp, ledgerRow.id, credited.amount);
+        if (cashTransfer !== null && this.ports.turnover) {
+          await this.ports.turnover().addCredit(sp, {
+            userId,
+            kind: cashTransfer,
+            sourceRef: ledgerRow.id,
+            currency: creditRow.currency,
+            amount,
+          });
+        }
         // A correction of this round can only take back what reached the real balance.
         if (moneyCompare(settlement.realShare, amount) !== 0) {
           await sp

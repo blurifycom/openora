@@ -95,6 +95,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
+import type { TurnoverService } from './turnover.service.js';
 import {
   wallet,
   walletBalance,
@@ -962,7 +963,7 @@ const TX_SORT_COLUMNS = {
   reviewedAt: 'reviewed_at',
 } as const satisfies Record<WalletTransactionSortBy, keyof TransactionHistoryRow>;
 
-function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
+export function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
   return [
     hex.slice(0, 8),
@@ -1182,6 +1183,7 @@ export type WalletServiceDeps = {
   // Optional: forfeits on a withdrawal only when no module binds `bonusFundLocks` (a custom bonus engine).
   bonusLifecycle?: BonusLifecycleCommands;
   depositBonus?: BonusDepositCommands;
+  turnover?: TurnoverService;
 };
 
 /**
@@ -1216,6 +1218,7 @@ export class WalletService {
   private readonly bonusFundLocks?: BonusFundLockCommands;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
   private readonly depositBonus?: BonusDepositCommands;
+  private readonly turnover?: TurnoverService;
 
   constructor({
     drizzle,
@@ -1240,6 +1243,7 @@ export class WalletService {
     bonusFundLocks,
     bonusLifecycle,
     depositBonus,
+    turnover,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -1263,9 +1267,13 @@ export class WalletService {
     this.bonusFundLocks = bonusFundLocks;
     this.bonusLifecycle = bonusLifecycle;
     this.depositBonus = depositBonus;
+    this.turnover = turnover;
   }
 
-  /** Every completed deposit ends here, so its bonus commits with the credit or not at all. */
+  /**
+   * Every completed deposit ends here, so its bonus and turnover requirement commit with the
+   * credit or not at all.
+   */
   private async depositCompleted(
     txn: DrizzleTx,
     deposit: DomainEventPayload<'wallet.deposit.completed'>,
@@ -1275,6 +1283,13 @@ export class WalletService {
       amount: deposit.amount,
       currency: deposit.currency,
       transactionId: deposit.transactionId,
+    });
+    await this.turnover?.addCredit(txn, {
+      userId: deposit.userId,
+      kind: 'deposit',
+      sourceRef: deposit.transactionId,
+      currency: deposit.currency,
+      amount: deposit.amount,
     });
     await this.events.emitInTransaction(txn, 'wallet.deposit.completed', deposit);
   }
