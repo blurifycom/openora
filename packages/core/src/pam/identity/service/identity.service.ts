@@ -378,6 +378,17 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   });
 }
 
+// better-auth answers FAILED_TO_CREATE_USER when its user insert throws, e.g. on the email unique index.
+async function isUserInsertFailure(res: globalThis.Response) {
+  const body = BetterAuthErrorBodySchema.safeParse(
+    await res
+      .clone()
+      .json()
+      .catch(() => null),
+  );
+  return body.success && body.data.code === 'FAILED_TO_CREATE_USER';
+}
+
 const MINUTE_MS = 60 * 1000;
 export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
@@ -833,6 +844,17 @@ export class IdentityService {
       asResponse: true,
     });
     if (!authResponse.ok) {
+      const existingUserId = (await isUserInsertFailure(authResponse))
+        ? await this.findUserIdByEmail(input.email)
+        : null;
+      if (existingUserId) {
+        identityLogger.warn(
+          { existingUserId, status: authResponse.status },
+          'sign-up lost a concurrent same-email race - answered as a known address',
+        );
+        this.emitRegistrationFailed('email_already_registered', input, meta);
+        return { status: 'check-email' as const };
+      }
       // The `lower(username)` unique index is the only arbiter - a pre-flight check
       // could not close the race anyway, so the taken handle is read off the failure.
       if (await this.findUserIdByUsername(input.username)) {

@@ -223,6 +223,37 @@ describe('registration email verification', () => {
     expect(capturedEmailsFor(email).filter((e) => /verify/i.test(e.subject))).toHaveLength(1);
   });
 
+  it.each([
+    { handles: 'their own usernames', username: undefined },
+    { handles: 'one username', username: uniqueUsername('racer') },
+  ])(
+    'answers concurrent sign-ups for one address with $handles alike and creates one account',
+    async ({ username }) => {
+      const email = `reg-race-${randomUUID()}@e2e.test`;
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          submitRegistration(app, { email, ...(username ? { username } : {}) }),
+        ),
+      );
+      const answers = await Promise.all(
+        responses.map(async (r) => ({ status: r.status, body: await r.json() })),
+      );
+      expect(answers).toEqual(
+        Array.from({ length: 4 }, () => ({ status: 200, body: { status: 'check-email' } })),
+      );
+
+      const accounts = await app.container
+        .get(DRIZZLE)
+        .db.select({ id: user.id })
+        .from(user)
+        .where(eq(user.email, email));
+      expect(accounts).toHaveLength(1);
+      const isVerification = (e: { subject: string }) => /verify/i.test(e.subject);
+      await waitForEmail(email, isVerification);
+      expect(capturedEmailsFor(email).filter(isVerification)).toHaveLength(1);
+    },
+  );
+
   it('records the email the account registered with and never rewrites it', async () => {
     const email = `Reg-Registered-${randomUUID()}@E2E.test`;
     const userId = await registerPlayer(app, { email });
