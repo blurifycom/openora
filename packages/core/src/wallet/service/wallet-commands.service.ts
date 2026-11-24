@@ -198,10 +198,9 @@ export type WalletCommandsPorts = {
 const isLockExemptDebit = (type: WalletTransactionType): boolean =>
   (WALLET_LOCK_EXEMPT_DEBIT_TYPES as readonly WalletTransactionType[]).includes(type);
 
-const TRANSFER_CREDIT_TYPES = WALLET_TRANSFER_CREDIT_KINDS;
-type TransferCreditType = (typeof TRANSFER_CREDIT_TYPES)[number];
+type TransferCreditType = (typeof WALLET_TRANSFER_CREDIT_KINDS)[number];
 const isTransferCredit = (type: WalletTransactionType): type is TransferCreditType =>
-  (TRANSFER_CREDIT_TYPES as readonly WalletTransactionType[]).includes(type);
+  (WALLET_TRANSFER_CREDIT_KINDS as readonly WalletTransactionType[]).includes(type);
 
 // The sender's debit leg holds the shared providerRef, so the credit dedupes per wallet, type and provider.
 const TRANSFER_CREDIT_NAMESPACE = 'transfer-credit';
@@ -215,9 +214,9 @@ export function cashTransferKindsWithoutTurnover(
   }
   const turnover = resolveWalletTurnoverConfig(config);
   if (!isTurnoverEnabled(turnover)) {
-    return [...TRANSFER_CREDIT_TYPES];
+    return [...WALLET_TRANSFER_CREDIT_KINDS];
   }
-  return TRANSFER_CREDIT_TYPES.filter((kind) => !turnover.creditTypes.includes(kind));
+  return WALLET_TRANSFER_CREDIT_KINDS.filter((kind) => !turnover.creditTypes.includes(kind));
 }
 
 export class WalletCommandsService implements WalletCommands {

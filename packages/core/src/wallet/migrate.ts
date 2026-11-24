@@ -37,8 +37,15 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
 
 // An entry is the record of a requirement: it is priced once and only ever cleared.
 const TURNOVER_ENTRY_SQL = appendOnlyTableSql('wallet_turnover_entry', {
-  mutableColumns: ['status', 'cleared_at', 'cleared_by', 'clear_reason'],
-  setOnceColumns: ['pivot_value', 'required', 'priced_at'],
+  mutableColumns: ['status'],
+  setOnceColumns: [
+    'pivot_value',
+    'required',
+    'priced_at',
+    'cleared_at',
+    'cleared_by',
+    'clear_reason',
+  ],
   transitions: [
     {
       column: 'status',

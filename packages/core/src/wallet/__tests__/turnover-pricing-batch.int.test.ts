@@ -129,5 +129,13 @@ describe('wallet_turnover_entry protection', () => {
     expect(await db.drizzle.db.select().from(walletTurnoverEntry).where(byId)).toEqual([
       expect.objectContaining({ amount: '10.000000000000000000', status: 'counted' }),
     ]);
+
+    await svc.clear(randomUUID(), { userId, reason: 'goodwill' });
+    await expect(
+      db.drizzle.db.update(walletTurnoverEntry).set({ clearReason: 'rewritten' }).where(byId),
+    ).rejects.toThrow();
+    expect(await db.drizzle.db.select().from(walletTurnoverEntry).where(byId)).toEqual([
+      expect.objectContaining({ status: 'cleared', clearReason: 'goodwill' }),
+    ]);
   });
 });

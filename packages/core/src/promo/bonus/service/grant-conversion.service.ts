@@ -124,7 +124,7 @@ export class GrantConversionService {
       .limit(limit);
 
     const converted: ConvertedTransferGrant[] = [];
-    const failed: { grantId: PromoGrant['id']; reason: TransferGrantConversionFailure }[] = [];
+    const failed: NonNullable<ConvertTransferGrantsResult['failed']> = [];
     for (const { id } of candidates) {
       const outcome = dryRun
         ? await this.preview(id, sources)

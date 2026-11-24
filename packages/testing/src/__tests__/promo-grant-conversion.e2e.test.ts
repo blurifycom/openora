@@ -287,21 +287,26 @@ describe('who may convert', () => {
 });
 
 describe('a conversion racing a bet on the same grant', () => {
-  const lockWaiters = async () => {
+  const waitersOn = async (holderPid: number) => {
     const rows = await drizzle().execute<{ n: number }>(
-      sql`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`,
+      sql`with recursive blocked(pid) as (
+            select pid from pg_stat_activity where ${holderPid}::int = any(pg_blocking_pids(pid))
+            union
+            select a.pid from pg_stat_activity a join blocked b on b.pid = any(pg_blocking_pids(a.pid))
+          )
+          select count(*)::int as n from blocked`,
     );
     return Number(rows.rows[0]?.n ?? 0);
   };
 
-  const untilWaiters = async (n: number) => {
+  const untilWaiters = async (holderPid: number, n: number) => {
     for (let poll = 0; poll < 200; poll += 1) {
-      if ((await lockWaiters()) >= n) {
+      if ((await waitersOn(holderPid)) >= n) {
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    throw new Error(`expected ${n} lock waiters`);
+    throw new Error(`expected ${n} sessions blocked by backend ${holderPid}`);
   };
 
   const holdOpen = async (work: (tx: DrizzleTx) => Promise<unknown>) => {
@@ -309,18 +314,19 @@ describe('a conversion racing a bet on the same grant', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let ready = () => {};
-    const started = new Promise<void>((resolve) => {
+    let ready: (pid: number) => void = () => {};
+    const started = new Promise<number>((resolve) => {
       ready = resolve;
     });
     const done = drizzle().transaction(async (tx) => {
+      const pidRows = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
       const value = await work(tx);
-      ready();
+      ready(Number(pidRows.rows[0]?.pid));
       await gate;
       return value;
     });
-    await Promise.race([started, done]);
-    return { release, done };
+    const pid = await Promise.race([started, done.then(() => Number.NaN)]);
+    return { release, done, pid };
   };
 
   const giftGrant = async () => {
@@ -353,7 +359,7 @@ describe('a conversion racing a bet on the same grant', () => {
     );
 
     const conversion = admin().post(CONVERT, { sources: ['gift'] });
-    await untilWaiters(1);
+    await untilWaiters(placed.pid, 1);
     placed.release();
 
     expect(await placed.done).toMatchObject({ ok: true, moved: true });
@@ -378,9 +384,9 @@ describe('a conversion racing a bet on the same grant', () => {
     );
 
     const conversion = admin().post(CONVERT, { sources: ['gift'] });
-    await untilWaiters(1);
+    await untilWaiters(holder.pid, 1);
     const staked = bet(userId, '10', round);
-    await untilWaiters(2);
+    await untilWaiters(holder.pid, 2);
     holder.release();
     await holder.done;
 

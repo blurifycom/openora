@@ -378,17 +378,21 @@ first.
   as cash. Each real stake adds its pivot value times the
   product's percent; only the part of the stake not paid from bonus funds counts. A stake with no
   pivot rate counts nothing. A stake counted at bet time is stamped with at most what was left of the
-  requirement, unless an entry is pending; a reversal takes back that stamp. A stake that counts at
-  settle keeps its full share as its stamp and adds at most what is left when its round settles, so
-  voiding it later takes back the whole share. Play past a met requirement is not banked.
+  requirement, unless an entry is pending; a reversal takes back that stamp. A stake of a product in
+  `countAtSettle` keeps its full share as its stamp and adds all of it when its round settles, so
+  progress can pass the requirement; the next credit drops that surplus. A reversal after such a
+  credit, or of a stake counted while an entry was pending, can then take back more than the stake
+  still counts for. Play past a met requirement is not banked. The requirement applies to a
+  restricted or self-excluded player too, until staff clear it.
 - **Pending entries.** A credit with no pivot rate is still credited. Its entry waits as pending and
   is priced at the first rate available, by the pricing schedule and at each withdrawal request, each
   in its own transaction, so a price found at a refused withdrawal stays. The scheduled run looks
   each pending currency's rate up once, visits only players holding an entry it can price, and
   prices each player's entries in one statement. One player's failure is logged with the player id
   and the error name and does not stop the others. While any entry is pending the requirement
-  counts as unmet. An entry is append-only: a database trigger refuses any change but its pricing,
-  set once, and its move from pending to counted or cleared, and refuses a delete.
+  counts as unmet. An entry is append-only: a database trigger refuses any change but its pricing
+  and its clear details, each set once, and its move from pending to counted or cleared, and
+  refuses a delete.
 - **What it refuses.** A withdrawal request and a gift, rain or donation debit are refused whole
   while more than the dust remains or an entry is pending. The refusal carries the figures, so a
   client can show what is left. It is checked after the bonus lock, so bonus-locked money answers
@@ -413,7 +417,8 @@ first.
   deadlocking. A custom binding without it has no safe order for that caller.
 - **Grant conversion.** The bonus module's super-admin route turns live gift, rain and donation
   grants into real cash, with a requirement equal to the wagering each still owed. Queued (pending)
-  grants convert too, and can no longer be activated once converted. It answers a conflict,
+  grants convert too, including for a player who could not have activated one, and can no longer be
+  activated once converted. It answers a conflict,
   `turnover_disabled` while the requirement is off and `wallet_unavailable` when the process has
   no wallet commands bound. A grant whose conversion fails stays live, is logged with its id, and
   is listed in `failed` with a reason (`credit_refused`, `replay_mismatch`, `invalid_amount` or

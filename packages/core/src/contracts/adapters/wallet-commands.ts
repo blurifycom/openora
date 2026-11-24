@@ -344,12 +344,14 @@ export type WalletWithdrawalHoldArgs = {
 /** Debits `debit` never checks against bonus-locked funds: play, and the operator's own debits. Any other debit over the movable funds is refused with `BonusFundsLockedError`. */
 export const WALLET_LOCK_EXEMPT_DEBIT_TYPES = ['bet', 'loss', 'manual_debit'] as const;
 
+export const WALLET_FUNDS_LOCKS = ['turnover', 'bonus'] as const;
+
 export type MovableFundsArgs = { userId: string; currency: string };
 export type MovableFunds = {
   real: string;
   locked: string;
   free: string;
-  lockedBy?: 'turnover' | 'bonus';
+  lockedBy?: (typeof WALLET_FUNDS_LOCKS)[number];
 };
 
 export type WalletCommands = {

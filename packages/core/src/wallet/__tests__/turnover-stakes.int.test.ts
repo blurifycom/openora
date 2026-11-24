@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
-import { findOneOrThrow, moneyAdd, moneyCompare, moneyScaleBy } from '@openora/core/server';
+import {
+  eventOutbox,
+  findOneOrThrow,
+  moneyAdd,
+  moneyCompare,
+  moneyScaleBy,
+} from '@openora/core/server';
 import { migrate as migrateOutbox } from '@openora/core/server/migrate';
 import {
   WalletCommandAmountError,
@@ -422,7 +428,7 @@ describe('turnover stakes without the bonus module', () => {
     expectMoney(await progressOf(userId), '150', 'progress');
   });
 
-  it('stamps a deferred stake in full and adds at most the remainder when it settles', async () => {
+  it('stamps a deferred stake in full and adds the whole stamp when it settles', async () => {
     const { commands, turnover } = on;
     const { userId } = await player();
     await owe(turnover, userId, '100');
@@ -437,7 +443,42 @@ describe('turnover stakes without the bonus module', () => {
       }),
     );
 
-    expectMoney(await progressOf(userId), '100', 'progress');
+    expectMoney(await progressOf(userId), '150', 'progress');
+  });
+
+  it('takes back exactly what a settled deferred stake added when it is voided', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    await bet(commands, userId, '70');
+    const sports = await bet(commands, userId, '100', { product: 'sportsbook' });
+    const metEvents = () =>
+      db.drizzle.db
+        .select({ id: eventOutbox.eventId })
+        .from(eventOutbox)
+        .where(
+          and(
+            eq(eventOutbox.topic, 'wallet.turnover.met'),
+            sql`${eventOutbox.payload}->>'userId' = ${userId}`,
+          ),
+        );
+
+    await db.drizzle.db.transaction((tx) =>
+      commands.closeRound(tx, {
+        userId,
+        currency: 'USD',
+        providerRef: { providerName: 'agg', externalRoundId: sports.round },
+      }),
+    );
+    expectMoney(await progressOf(userId), '170', 'after settle');
+    expect(await turnover.summary(userId)).toMatchObject({ locked: false });
+    expect(await metEvents()).toHaveLength(1);
+
+    await reverse(commands, userId, sports, '100');
+
+    expectMoney(await progressOf(userId), '70', 'after void');
+    expect(await turnover.summary(userId)).toMatchObject({ locked: true });
+    expect(await metEvents()).toHaveLength(1);
   });
 
   it('touches nothing with multiplier 0', async () => {

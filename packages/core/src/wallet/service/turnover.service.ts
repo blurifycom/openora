@@ -529,17 +529,13 @@ export class TurnoverService {
       : minMoney(contribution, maxZero(moneySubtract(row.required, row.progress)));
   }
 
-  /**
-   * Moves the player's progress by `delta` under the row lock, never below zero; a gain adds at
-   * most what still counts.
-   */
+  /** Moves the player's progress by `delta` under the row lock, never below zero. */
   private async moveProgress(db: DrizzleDb, userId: User['id'], delta: string): Promise<void> {
     const row = await this.lockRow(db, userId);
     if (!row) {
       return;
     }
-    const step = moneyCompare(delta, '0') > 0 ? this.countable(row, delta) : delta;
-    await this.writeRow(db, row, { progress: maxZero(moneyAdd(row.progress, step)) });
+    await this.writeRow(db, row, { progress: maxZero(moneyAdd(row.progress, delta)) });
   }
 
   /**
@@ -758,7 +754,7 @@ export class TurnoverService {
    * player holding a priceable entry, so no lock outlives its player and one failure skips only it.
    */
   async priceAllPending(): Promise<void> {
-    if (!this.enabled) {
+    if (!this.enabled || !this.deps.rates) {
       return;
     }
     const db = this.deps.drizzle.db;

@@ -1,17 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { WalletCommands } from '@openora/core/contracts';
-import type { DrizzleService } from '@openora/core/server';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter, makeEventBus, mock } from '../../../testing/mock.js';
+import { migrate } from '../migrate.js';
 import {
   GrantConversionService,
   TransferGrantConversionUnavailableError,
   TransferGrantConversionWalletUnavailableError,
 } from '../service/grant-conversion.service.js';
 
+let db: TestDb;
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
 const service = (wallet: WalletCommands | undefined, turnoverOn = true) =>
   new GrantConversionService(
-    mock<DrizzleService>({}),
+    db.drizzle,
     makeAuditWriter(),
     makeEventBus(),
     () => wallet,
