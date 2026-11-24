@@ -126,3 +126,22 @@ test('refuses an empty baseline instead of marking every statement new', () => {
     /No spans in the baseline/,
   );
 });
+
+test('never folds a locking read into a run of plain reads of the same table', () => {
+  const trace = 'd'.repeat(32);
+  const read = (id, startMs, sql) =>
+    span(trace, id, '2', 'pg.query', startMs, 0.2, { sql, pgClient: 3 });
+  const out = ganttReport(
+    dir([
+      span(trace, '1', null, 'POST /rpc/wallet/deposit', 100, 4, { httpStatus: 200 }),
+      span(trace, '2', '1', 'orpc.wallet.deposit', 100.2, 3.6),
+      read('a', 100.5, 'select * from "wallet" where id = $1'),
+      read('b', 100.8, 'select * from "wallet" where id = $1'),
+      read('c', 101.1, 'select * from "wallet" where id = $1 for update'),
+    ]),
+    undefined,
+    'wallet.deposit',
+  );
+  assert.match(out, /^ {2}pg SELECT wallet ×2 /m);
+  assert.match(out, /^ {2}pg SELECT wallet 0\.2 ms :crit, /m);
+});

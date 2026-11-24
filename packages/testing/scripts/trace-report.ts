@@ -7,7 +7,7 @@
 //
 // Without a baseline it lists the procedures with the most queries per request. `--gantt` prints
 // the PR "Trace" section instead: a mermaid gantt of one request per status of each matching
-// procedure (the happy path and its refusals), locks red, writes filled, statements new since the baseline prefixed `+`.
+// procedure (the happy path and its refusals), locks red, writes light, statements new since the baseline prefixed `+`.
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -233,7 +233,7 @@ const LOCK =
 // A write leads the statement or a CTE (`with x as (insert ...)`), once leading comments are gone.
 const WRITE = /^\(?\s*(?:insert|update|delete)\b|\bas\s*\(\s*(?:insert|update|delete)\b/i;
 const COMMENTS = /^(?:\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/))*\s*/;
-/** A row or advisory lock is drawn red (`crit`), a write filled (`active`). */
+/** A row or advisory lock is drawn red (`crit`), a write light (`active`). */
 const kindOf = (sql: string): Row['kind'] =>
   LOCK.test(sql) ? 'lock' : WRITE.test(sql.replace(COMMENTS, '')) ? 'write' : undefined;
 const TAG = { lock: 'crit, ', write: 'active, ' } as const;
@@ -289,13 +289,14 @@ function rows(request: Request, baselineSignatures: Set<string> | undefined): Ro
       continue;
     }
     const isNew = baselineSignatures !== undefined && !baselineSignatures.has(signature(sql));
+    const kind = kindOf(sql);
     out.push({
       label: queryLabel(sql),
       startMs: span.startMs,
       durationMs: span.durationMs,
       depth: inTx ? 2 : 1,
       isNew,
-      ...(kindOf(sql) ? { kind: kindOf(sql) } : {}),
+      ...(kind ? { kind } : {}),
     });
   }
   return out.toSorted((a, b) => (a.depth === 0 ? -1 : b.depth === 0 ? 1 : a.startMs - b.startMs));
@@ -354,6 +355,8 @@ function ganttRows(all: Row[]): Row[] {
     row.depth === like.depth &&
     row.label === like.label &&
     row.durationMs < FOLD_MS &&
+    // A locking read keeps its red bar: never folded with a plain read of the same table.
+    row.kind === like.kind &&
     !row.isNew;
   const out: Row[] = [];
   for (let index = 0; index < inner.length;) {
@@ -388,7 +391,7 @@ function gantt(request: Request, baselineSignatures: Set<string> | undefined): s
     return `  ${name} :${row.kind ? TAG[row.kind] : ''}${start}, ${end}`;
   });
   return [
-    `Trace \`${root.traceId}\` (${request.test}): ${request.queries.length} queries. Red bar: lock, filled bar: write${baselineSignatures ? ', `+`: new since the baseline' : ''}.`,
+    `Trace \`${root.traceId}\` (${request.test}): ${request.queries.length} queries. Red bar: lock, light bar: write${baselineSignatures ? ', `+`: new since the baseline' : ''}.`,
     '',
     '```mermaid',
     'gantt',
