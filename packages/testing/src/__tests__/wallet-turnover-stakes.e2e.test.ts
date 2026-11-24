@@ -105,7 +105,7 @@ const reverse = (
   userId: string,
   amount: string,
   round: string,
-  reversesTransactionId: string,
+  reversesTransactionId?: string,
   refId = randomUUID(),
 ) =>
   drizzle().transaction((tx) =>
@@ -114,7 +114,7 @@ const reverse = (
       amount,
       currency: 'USD',
       type: 'bet_reversal',
-      reversesTransactionId,
+      ...(reversesTransactionId === undefined ? {} : { reversesTransactionId }),
       providerRef: { providerName: 'aggregator', providerRefId: refId, externalRoundId: round },
     }),
   );
@@ -194,7 +194,7 @@ describe('casino stakes', () => {
     expect(await metEvents(player.userId)).toHaveLength(1);
   });
 
-  it('takes back a reversed bet once, and pro rata for a partial reversal', async () => {
+  it('takes back a reversed bet once, pro rata for a partial reversal, and by the round share when unnamed', async () => {
     const player = await fundedPlayer(app, '300');
 
     const full = await bet(player.userId, '100');
@@ -231,6 +231,15 @@ describe('casino stakes', () => {
     const partial = await bet(player.userId, '80');
     await reverse(player.userId, '20', partial.round, partial.id);
     expectMoney(await progressOf(player.client), '60', 'after a partial reversal');
+
+    const round = randomUUID();
+    await bet(player.userId, '50', { round });
+    await bet(player.userId, '50', { round, product: 'pvp' });
+    expectMoney(await progressOf(player.client), '110', 'pvp adds nothing');
+    await reverse(player.userId, '50', round);
+    expectMoney(await progressOf(player.client), '85', 'half the round share');
+    await reverse(player.userId, '50', round);
+    expectMoney(await progressOf(player.client), '60', 'the round returned in full');
   });
 });
 

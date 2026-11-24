@@ -75,10 +75,14 @@ describe('a withdrawal over an unpriced requirement', () => {
     expectMoney(summary.required, '20', 'required');
   });
 
-  it('refuses on the priced remainder when the priced requirement is not met', async () => {
+  it('refuses on the priced remainder and keeps the price after the refusal', async () => {
     const { client, currency } = await owingUnpriced('10');
     await quote(currency, '2');
 
     await expectRefused(await withdraw(client, '1'), '20', false);
+
+    const summary = await readJson(await client.get('/wallet/turnover'));
+    expect(summary).toMatchObject({ pendingCount: 0, locked: true });
+    expectMoney(summary.required, '20', 'required');
   });
 });

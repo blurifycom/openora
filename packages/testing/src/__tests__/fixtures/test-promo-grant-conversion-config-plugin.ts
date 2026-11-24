@@ -3,7 +3,6 @@ import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 import { TEST_TURNOVER_LOCKED_MESSAGE, TEST_TURNOVER_NEVER } from './turnover-gate-config.js';
 import { TEST_LOCKED_FUNDS_MESSAGE } from './test-bonus-withdrawal-block-config-plugin.js';
 
-// Deposits add no requirement here, so the only turnover a player owes is a conversion's.
 export default {
   id: 'testing-promo-grant-conversion-config',
   register(ctx) {

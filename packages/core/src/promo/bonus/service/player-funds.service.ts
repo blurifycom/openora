@@ -1,4 +1,9 @@
-import type { BonusFundLockCommands, Uuid, WalletReader } from '@openora/core/contracts';
+import {
+  withTurnoverLock,
+  type BonusFundLockCommands,
+  type Uuid,
+  type WalletReader,
+} from '@openora/core/contracts';
 import type { DrizzleService } from '@openora/core/server';
 import type { AdminPlayerFunds } from '../contract/index.js';
 
@@ -31,12 +36,9 @@ export class PlayerFundsService {
         if (!lock) {
           throw new Error(`no lock reading for ${row.currency}`);
         }
-        if (!turnover?.enabled) {
-          return { ...row, ...lock };
-        }
-        return turnover.locked
-          ? { ...row, locked: row.balance, free: '0', bonusLocked: lock.locked }
-          : { ...row, ...lock, bonusLocked: lock.locked };
+        return turnover?.enabled
+          ? withTurnoverLock(row, lock, turnover.locked)
+          : { ...row, ...lock };
       });
       return turnover?.enabled
         ? { activeCurrency, balances: merged, turnover }

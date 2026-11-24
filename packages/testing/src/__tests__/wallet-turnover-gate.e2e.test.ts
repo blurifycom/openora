@@ -176,7 +176,6 @@ describe('a withdrawal while turnover is unmet', () => {
           expect([200, 409]).toContain(outcome.value.status);
         }
       }
-      // The 40 stake leaves 100; a withdrawal accepted before it would leave at least 120.
       const accepted = await drizzle()
         .select({ balanceAfter: walletTransaction.balanceAfter })
         .from(walletTransaction)

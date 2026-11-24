@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { TURNOVER_STAKE_STATES } from '@openora/core/contracts';
 import { appendOnlyTableSql, runMigrations } from '@openora/core/server/migrate';
 
 // Provider references stay updatable: a vendor that reports a different id on completion must
@@ -23,6 +24,15 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
     column: 'status',
     values: ['completed', 'failed', 'rejected', 'cancelled', 'refunded'],
   },
+  transitions: [
+    {
+      column: 'turnover_state',
+      allowed: [
+        ...TURNOVER_STAKE_STATES.map((state) => [null, state] as const),
+        ['deferred', 'counted'],
+      ],
+    },
+  ],
 });
 
 // A baseline moved after the fact would hide any breach before it.

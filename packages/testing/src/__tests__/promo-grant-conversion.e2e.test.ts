@@ -141,7 +141,7 @@ describe('converting a live gift grant', () => {
     expect(convertedIds(first)).toEqual([grantId]);
 
     const rerun = await convert({ sources: ['gift'] });
-    expect(rerun).toEqual({ converted: [], skippedOpenRound: 0, remaining: 0 });
+    expect(rerun).toEqual({ converted: [], skippedOpenRound: 0, remaining: 0, nextCursor: null });
     expectMoney(await realBalance(userId), '15', 'real balance after rerun');
     expect(await conversionCredits(userId)).toHaveLength(1);
     expect(await conversionEntries(userId)).toHaveLength(1);
@@ -161,7 +161,12 @@ describe('converting a live gift grant', () => {
     expect(await openRounds(grantId)).toHaveLength(1);
 
     const skipped = await convert({ sources: ['gift'] });
-    expect(skipped).toEqual({ converted: [], skippedOpenRound: 1, remaining: 1 });
+    expect(skipped).toEqual({
+      converted: [],
+      skippedOpenRound: 1,
+      remaining: 1,
+      nextCursor: null,
+    });
     expect((await grantRow(grantId)).status).toBe('active');
 
     expect(await lose(userId, round)).toMatchObject({ ok: true });
@@ -199,6 +204,30 @@ describe('converting a live gift grant', () => {
     expect((await grantRow(depositGrant)).status).toBe('active');
   });
 
+  it('completes a grant with nothing left to pay and adds no requirement', async () => {
+    const { userId } = await player('1');
+    const grantId = await grant(userId, { source: 'gift', amount: '10', linked: '0' });
+    const { terms } = await grantRow(grantId);
+    await drizzle()
+      .update(promoGrant)
+      .set({ terms: { ...terms, maxWinMultiplier: '0' } })
+      .where(eq(promoGrant.id, grantId));
+
+    const preview = await convert({ sources: ['gift'], dryRun: true });
+    expect(preview.converted).toHaveLength(1);
+    expectMoney(preview.converted[0].requiredInCurrency, '0', 'previewed requirement');
+
+    const result = await convert({ sources: ['gift'] });
+
+    expect(result.converted).toHaveLength(1);
+    expect(result.converted[0]).toMatchObject({ grantId, entryStatus: null });
+    expectMoney(result.converted[0].cash, '0', 'cash');
+    expectMoney(result.converted[0].requiredInCurrency, '0', 'requirement');
+    expect((await grantRow(grantId)).status).toBe('completed');
+    expect(await conversionCredits(userId)).toEqual([]);
+    expect(await conversionEntries(userId)).toEqual([]);
+  });
+
   it('does not convert an expired grant', async () => {
     const { userId } = await player('1');
     const grantId = await grant(userId, { source: 'donation', amount: '10', linked: '0' });
@@ -209,7 +238,7 @@ describe('converting a live gift grant', () => {
 
     const result = await convert({ sources: ['donation'] });
 
-    expect(result).toEqual({ converted: [], skippedOpenRound: 0, remaining: 0 });
+    expect(result).toEqual({ converted: [], skippedOpenRound: 0, remaining: 0, nextCursor: null });
     expect((await grantRow(grantId)).status).toBe('active');
     expect(await conversionCredits(userId)).toEqual([]);
   });
@@ -292,6 +321,51 @@ describe('a conversion racing a bet on the same grant', () => {
         await lose(userId, round);
         await convert({ sources: ['gift'] });
       }
+    }
+  });
+});
+
+describe('a batch behind grants with open rounds', () => {
+  it('converts the grant past them in the first call and pages with a cursor', async () => {
+    const limit = 2;
+    const holder = await player('1');
+    const convertible = await grant(holder.userId, {
+      source: 'donation',
+      amount: '10',
+      linked: '0',
+    });
+    const open: { userId: string; round: string; grantId: string }[] = [];
+    while (open.filter(({ grantId }) => grantId < convertible).length < limit) {
+      const { userId } = await player('1');
+      const grantId = await grant(userId, {
+        source: 'donation',
+        amount: '10',
+        linked: '0',
+        order: 'last',
+      });
+      const round = randomUUID();
+      expect(await bet(userId, '2', round)).toMatchObject({ ok: true });
+      open.push({ userId, round, grantId });
+    }
+
+    const page = await convert({ sources: ['donation'], limit: 1, dryRun: true });
+    expect(convertedIds(page)).toEqual([convertible]);
+    expect(page.nextCursor).toBe(convertible);
+    const next = await convert({
+      sources: ['donation'],
+      limit: 1,
+      dryRun: true,
+      after: page.nextCursor,
+    });
+    expect(next).toMatchObject({ converted: [], nextCursor: null });
+
+    const result = await convert({ sources: ['donation'], limit });
+
+    expect(convertedIds(result)).toEqual([convertible]);
+    expect(result.skippedOpenRound).toBe(open.length);
+    expect(result.nextCursor).toBeNull();
+    for (const { userId, round } of open) {
+      await lose(userId, round);
     }
   });
 });

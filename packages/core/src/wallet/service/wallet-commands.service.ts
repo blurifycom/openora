@@ -40,8 +40,10 @@ import {
   isPlayRefused,
   type WagerContext,
   isWagerRtp,
+  isTurnoverEnabled,
   resolveWalletTurnoverConfig,
   TurnoverDisabledError,
+  type WalletConfig,
   UuidSchema,
   WalletReplayMismatchError,
 } from '@openora/core/contracts';
@@ -200,8 +202,22 @@ type TransferCreditType = (typeof TRANSFER_CREDIT_TYPES)[number];
 const isTransferCredit = (type: WalletTransactionType): type is TransferCreditType =>
   (TRANSFER_CREDIT_TYPES as readonly WalletTransactionType[]).includes(type);
 
-// The sender's debit leg holds the shared providerRef, so the credit dedupes per wallet and type.
+// The sender's debit leg holds the shared providerRef, so the credit dedupes per wallet, type and provider.
 const TRANSFER_CREDIT_NAMESPACE = 'transfer-credit';
+
+/** Transfer kinds that land as cash carrying no turnover requirement under this config. */
+export function cashTransferKindsWithoutTurnover(
+  config: WalletConfig | undefined,
+): TransferCreditType[] {
+  if (config?.transferCredits !== 'cash') {
+    return [];
+  }
+  const turnover = resolveWalletTurnoverConfig(config);
+  if (!isTurnoverEnabled(turnover)) {
+    return [...TRANSFER_CREDIT_TYPES];
+  }
+  return TRANSFER_CREDIT_TYPES.filter((kind) => !turnover.creditTypes.includes(kind));
+}
 
 export class WalletCommandsService implements WalletCommands {
   private readonly significantAmountThresholds: ReadonlyMap<string, string>;
@@ -217,8 +233,7 @@ export class WalletCommandsService implements WalletCommands {
         ([currency, threshold]) => [balanceKey(currency), threshold],
       ),
     );
-    this.turnoverOn =
-      moneyCompare(resolveWalletTurnoverConfig(ports.platformConfig?.wallet).multiplier, '0') > 0;
+    this.turnoverOn = isTurnoverEnabled(resolveWalletTurnoverConfig(ports.platformConfig?.wallet));
   }
 
   /** Undefined while the multiplier is 0, so no stake path resolves or reads anything. */
@@ -272,11 +287,13 @@ export class WalletCommandsService implements WalletCommands {
       wager,
       realShare,
       reversedTransactionId,
+      turnover,
     }: {
       correctionRequestedAmount?: string;
       wager?: WagerContext;
       realShare?: string;
       reversedTransactionId?: string;
+      turnover?: { contribution: string; state: 'counted' | 'deferred' } | null;
     } = {},
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const insertQuery = txn.insert(walletTransaction).values({
@@ -294,6 +311,8 @@ export class WalletCommandsService implements WalletCommands {
       correctionRequestedAmount,
       realShare,
       reversedTransactionId,
+      turnoverContribution: turnover?.contribution,
+      turnoverState: turnover?.state,
       wagerProduct: wager?.product,
       wagerRtp: wager?.rtp !== undefined && isWagerRtp(wager.rtp) ? wager.rtp : undefined,
       metadata:
@@ -343,7 +362,7 @@ export class WalletCommandsService implements WalletCommands {
     providerRef: WalletProviderRef,
   ): Promise<{ row: WalletTransaction; replayed: boolean }> {
     const idempotencyKey = namespacedIdempotencyKey(
-      `${TRANSFER_CREDIT_NAMESPACE}:${type}`,
+      `${TRANSFER_CREDIT_NAMESPACE}:${type}:${providerRef.providerName}`,
       providerRef.providerRefId,
     );
     const [inserted] = await txn
@@ -569,6 +588,16 @@ export class WalletCommandsService implements WalletCommands {
           }
         }
 
+        const turnover = this.activeTurnover();
+        const stake =
+          type === 'bet' && turnover
+            ? await turnover.stakeStamp(sp, {
+                userId,
+                product: context?.product,
+                currency: debitCurrency,
+                realPart,
+              })
+            : null;
         // The ledger row carries the whole stake: a bet is a bet whichever balance paid for it.
         const { row: ledgerRow, replayed } = await this.writeLedgerRow(
           sp,
@@ -580,7 +609,7 @@ export class WalletCommandsService implements WalletCommands {
           debitedBalance,
           // Every bet records the part its real balance paid, a bonus-split one included, so the
           // ledger invariant can price it without guessing what the grant covered.
-          type === 'bet' ? { wager: context, realShare: realPart } : {},
+          type === 'bet' ? { wager: context, realShare: realPart, turnover: stake } : {},
         );
         // The wallet lock serializes this wallet's own moves, so only another wallet's debit or
         // credit can have taken the reference since the check above.
@@ -592,14 +621,8 @@ export class WalletCommandsService implements WalletCommands {
           );
         }
         // After `wager()` and its grant locks: the turnover row is always the last lock a bet takes.
-        if (type === 'bet') {
-          await this.activeTurnover()?.countStake(sp, {
-            userId,
-            ledgerRowId: ledgerRow.id,
-            product: context?.product,
-            currency: debitCurrency,
-            realPart,
-          });
+        if (stake?.state === 'counted') {
+          await turnover?.countStake(sp, userId, stake.contribution);
         }
         return { wagered, ledgerRow, debitedBalance };
       })
@@ -652,6 +675,20 @@ export class WalletCommandsService implements WalletCommands {
     return this.ports.turnover().addRequirement(tx, args);
   }
 
+  async lockWallets(tx: unknown, { userIds }: { userIds: readonly string[] }): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
+    const ids = [...new Set(userIds)].sort();
+    for (const userId of ids) {
+      await (tx as DrizzleDb)
+        .select({ id: wallet.id })
+        .from(wallet)
+        .where(eq(wallet.userId, userId))
+        .for('update');
+    }
+  }
+
   async movableFunds(tx: unknown, { userId, currency }: MovableFundsArgs): Promise<MovableFunds> {
     const txn = tx as DrizzleDb;
     const key = balanceKey(currency);
@@ -667,8 +704,9 @@ export class WalletCommandsService implements WalletCommands {
           realBalance: real,
         })
       : { locked: '0', free: real };
+    // After the grant locks above, so the turnover row stays the last lock taken.
     const turnover = this.activeTurnover();
-    if (turnover && (await turnover.isLocked(txn, userId))) {
+    if (turnover && (await turnover.refusal(txn, { userId, outflow: 'transfer' }))) {
       return { real, locked: real, free: '0' };
     }
     return { real, ...bonus };
@@ -1028,7 +1066,7 @@ export class WalletCommandsService implements WalletCommands {
     const txn = tx as DrizzleDb;
     const turnover = this.activeTurnover();
     const bonusWagering = this.ports.bonusWagering;
-    if (!bonusWagering && !turnover) {
+    if (!bonusWagering && !(await turnover?.tracks(txn, userId))) {
       return { completed: [], newBalance: null };
     }
     const row = await this.selectWallet(txn, userId, true);

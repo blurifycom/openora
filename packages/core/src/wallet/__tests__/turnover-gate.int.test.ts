@@ -20,37 +20,44 @@ import { WalletCommandsService } from '../service/wallet-commands.service.js';
 
 let db: TestDb;
 const rates = new Map<string, string>();
-const reader: ExchangeRateReader = {
-  getRate: async () => null,
+const reader = mock<ExchangeRateReader>({
+  getRate: vi.fn(async (from: string) => {
+    const rate = rates.get(from);
+    return rate === undefined ? null : { rate, asOf: new Date().toISOString() };
+  }),
   convert: vi.fn(async (amount: string, from: string) => {
     const rate = rates.get(from);
     return rate === undefined ? null : moneyScaleBy(amount, rate);
   }),
-};
+});
 
 const eligibility = mock<PlayEligibilityPort>({
   isRestricted: vi.fn().mockResolvedValue(false),
   checkPlay: vi.fn().mockResolvedValue(null),
 });
 
-function services(multiplier: string) {
+function services(multiplier: string, transferCredits?: 'cash') {
+  const audit = makeAuditWriter();
   const turnover = new TurnoverService({
     drizzle: db.drizzle,
     events: makeOutboxEventBus(),
-    audit: makeAuditWriter(),
+    audit,
     config: WalletTurnoverConfigSchema.parse({ multiplier }),
     pivotCurrency: 'USD',
     rates: reader,
   });
   const commands = new WalletCommandsService(eligibility, makeAuditWriter(), {
-    platformConfig: definePlatformConfig({ wallet: { turnover: { multiplier } } }),
+    platformConfig: definePlatformConfig({
+      wallet: { turnover: { multiplier }, ...(transferCredits ? { transferCredits } : {}) },
+    }),
     turnover: () => turnover,
   });
-  return { turnover, commands };
+  return { turnover, commands, audit };
 }
 
 let on: ReturnType<typeof services>;
 let off: ReturnType<typeof services>;
+let cash: ReturnType<typeof services>;
 
 const expectMoney = (actual: string | null | undefined, expected: string, label: string) =>
   expect(moneyCompare(String(actual), expected) === 0, `${label}: ${String(actual)}`).toBe(true);
@@ -109,6 +116,7 @@ beforeAll(async () => {
   db = await createTestDb([migrateOutbox, migrate]);
   on = services('1');
   off = services('0');
+  cash = services('1', 'cash');
 });
 
 afterAll(async () => {
@@ -129,7 +137,7 @@ describe('the outflow gate', () => {
     });
   });
 
-  it('refuses as pending while an entry has no rate, then prices it on a withdrawal', async () => {
+  it('refuses as pending while an entry has no rate, and only a pricing pass prices it', async () => {
     const userId = await player();
     const currency = `X${randomUUID().slice(0, 6).toUpperCase()}`;
     await owe(on.turnover, userId, '10', currency);
@@ -137,11 +145,11 @@ describe('the outflow gate', () => {
     await expect(assertOutflow(userId)).rejects.toMatchObject({
       data: { pending: true, remaining: '0' },
     });
-    // A transfer does not price; it stays refused as pending.
     rates.set(currency, '3');
-    await expect(assertOutflow(userId, 'transfer')).rejects.toMatchObject({
-      data: { pending: true },
-    });
+    await expect(assertOutflow(userId)).rejects.toMatchObject({ data: { pending: true } });
+
+    await on.turnover.pricePendingNow(userId);
+
     const refusal = await assertOutflow(userId).catch((error: unknown) => error);
     expect(refusal).toMatchObject({ data: { pending: false } });
     expectMoney((refusal as TurnoverLockedError).data.remaining, '30', 'priced remaining');
@@ -174,25 +182,6 @@ describe('a debit through the command port', () => {
     },
   );
 
-  it('refuses a withdrawal debit as a withdrawal', async () => {
-    const userId = await player();
-    await owe(on.turnover, userId, '100');
-
-    await expect(debit(on.commands, userId, 'withdrawal')).rejects.toMatchObject({
-      data: { outflow: 'withdrawal' },
-    });
-  });
-
-  it('lets bets, losses, admin debits and swap out-legs through', async () => {
-    const userId = await player();
-    await owe(on.turnover, userId, '100');
-
-    for (const type of ['bet', 'manual_debit', 'swap_out'] as const) {
-      expect(await debit(on.commands, userId, type), type).toMatchObject({ ok: true });
-    }
-    expectMoney(await balanceOf(userId), '470', 'balance');
-  });
-
   it('answers a replay of a gift committed before the requirement, not a refusal', async () => {
     const userId = await player();
     const ref = randomUUID();
@@ -209,22 +198,105 @@ describe('a debit through the command port', () => {
     expect(await debit(off.commands, userId, 'gift')).toMatchObject({ ok: true });
     expect(await movable(off.commands, userId)).toMatchObject({ locked: '0' });
   });
+});
 
-  it('reports nothing movable while turnover is unmet, and the whole balance once it is met', async () => {
+describe('a cash transfer between players', () => {
+  const gift = (
+    commands: WalletCommandsService,
+    from: string,
+    to: string,
+    providerRefId = randomUUID(),
+  ) =>
+    db.drizzle.db.transaction(async (tx) => {
+      await commands.lockWallets(tx, { userIds: [from, to] });
+      const providerRef = { providerName: 'gifts', providerRefId };
+      const sent = await commands.debit(tx, {
+        userId: from,
+        amount: '1',
+        currency: 'USD',
+        type: 'gift',
+        providerRef,
+      });
+      const received = await commands.credit(tx, {
+        userId: to,
+        amount: '1',
+        currency: 'USD',
+        type: 'gift',
+        providerRef,
+      });
+      return { sent, received };
+    });
+
+  it('runs opposite transfers side by side without a deadlock and keeps both balances whole', async () => {
+    const a = await player('100');
+    const b = await player('100');
+
+    for (let run = 0; run < 20; run += 1) {
+      const results = await Promise.all([
+        gift(cash.commands, a, b),
+        gift(cash.commands, b, a),
+        gift(cash.commands, a, b),
+      ]);
+      for (const { sent, received } of results) {
+        expect(sent).toMatchObject({ ok: true, moved: true });
+        expect(received).toMatchObject({ ok: true, moved: true });
+      }
+    }
+
+    expectMoney(await balanceOf(a), '80', 'sender balance');
+    expectMoney(await balanceOf(b), '120', 'recipient balance');
+  });
+
+  it('skips a player with no wallet and creates none', async () => {
+    const a = await player('100');
+    const stranger = randomUUID();
+
+    await db.drizzle.db.transaction((tx) =>
+      cash.commands.lockWallets(tx, { userIds: [stranger, a] }),
+    );
+
+    expect(await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, stranger))).toEqual(
+      [],
+    );
+  });
+
+  it('credits a recipient once per provider and reference', async () => {
+    const userId = await player('0');
+    const providerRefId = randomUUID();
+    const credit = (providerName: string) =>
+      db.drizzle.db.transaction((tx) =>
+        cash.commands.credit(tx, {
+          userId,
+          amount: '5',
+          currency: 'USD',
+          type: 'rain',
+          providerRef: { providerName, providerRefId },
+        }),
+      );
+
+    expect(await credit('rain-a')).toMatchObject({ ok: true, moved: true });
+    expect(await credit('rain-b')).toMatchObject({ ok: true, moved: true });
+    expect(await credit('rain-a')).toMatchObject({ ok: true, moved: false });
+    expectMoney(await balanceOf(userId), '10', 'balance');
+  });
+});
+
+describe('a staff clear', () => {
+  it('audits how many entries it cleared and the first hundred of their ids', async () => {
     const userId = await player();
-    await owe(on.turnover, userId, '100');
+    for (let n = 0; n < 101; n += 1) {
+      await owe(on.turnover, userId, '1');
+    }
+    on.audit.recordInTransaction.mockClear();
 
-    const locked = await movable(on.commands, userId);
-    expectMoney(locked.locked, '500', 'locked');
-    expectMoney(locked.free, '0', 'free');
+    expect(await on.turnover.clear(randomUUID(), { userId, reason: 'goodwill' })).toMatchObject({
+      cleared: true,
+      summary: { locked: false },
+    });
 
-    await db.drizzle.db
-      .update(walletTurnover)
-      .set({ progress: '100' })
-      .where(eq(walletTurnover.userId, userId));
-    const free = await movable(on.commands, userId);
-    expectMoney(free.locked, '0', 'locked after');
-    expectMoney(free.free, '500', 'free after');
+    const [, entry] = on.audit.recordInTransaction.mock.calls.at(-1) ?? [];
+    expect(entry).toMatchObject({ action: 'wallet.turnover.cleared', after: { entryCount: 101 } });
+    expect((entry as { after: { entryIds: string[] } }).after.entryIds).toHaveLength(100);
   });
 });
 

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gt, inArray, isNull, not, sql } from 'drizzle-orm';
 import type {
   AuditWritePort,
   ClientMeta,
@@ -50,6 +50,8 @@ const isLiveTransferGrant = (sources: readonly TransferGrantSource[]) =>
     inArray(promoGrant.source, [...sources]),
   );
 
+const openRound = sql`exists (select 1 from ${promoGrantRound} where ${promoGrantRound.grantId} = ${promoGrant.id} and ${promoGrantRound.settledAt} is null)`;
+
 const remainingWagering = (grant: Pick<PromoGrant, 'wageringRequired' | 'wageringProgress'>) => {
   const left = moneySubtract(grant.wageringRequired, grant.wageringProgress);
   return moneyCompare(left, ZERO) > 0 ? left : ZERO;
@@ -71,19 +73,25 @@ export class GrantConversionService {
   ) {}
 
   async convert(
-    { sources, limit, dryRun }: ConvertTransferGrantsInput,
+    { sources, limit, dryRun, after }: ConvertTransferGrantsInput,
     actor: { id: Uuid; meta?: ClientMeta | undefined },
   ): Promise<ConvertTransferGrantsResult> {
     const wallet = this.walletPorts();
+    // A grant with an open bet is never a candidate, so a page of them cannot stall the batch.
     const candidates = await this.drizzle.db
       .select({ id: promoGrant.id })
       .from(promoGrant)
-      .where(isLiveTransferGrant(sources))
+      .where(
+        and(
+          isLiveTransferGrant(sources),
+          not(openRound),
+          after === undefined ? undefined : gt(promoGrant.id, after),
+        ),
+      )
       .orderBy(asc(promoGrant.id))
       .limit(limit);
 
     const converted: ConvertedTransferGrant[] = [];
-    let skippedOpenRound = 0;
     for (const { id } of candidates) {
       const outcome = dryRun
         ? await this.preview(id, sources)
@@ -94,9 +102,7 @@ export class GrantConversionService {
             );
             return null;
           });
-      if (outcome === 'open_round') {
-        skippedOpenRound += 1;
-      } else if (outcome !== null) {
+      if (outcome !== null && outcome !== 'open_round') {
         converted.push(outcome);
       }
     }
@@ -105,7 +111,17 @@ export class GrantConversionService {
       .select({ n: count() })
       .from(promoGrant)
       .where(isLiveTransferGrant(sources));
-    return { converted, skippedOpenRound, remaining: left?.n ?? 0 };
+    // Counted after the loop, so a grant whose bet opened mid-run counts here once.
+    const [open] = await this.drizzle.db
+      .select({ n: count() })
+      .from(promoGrant)
+      .where(and(isLiveTransferGrant(sources), openRound));
+    return {
+      converted,
+      skippedOpenRound: open?.n ?? 0,
+      remaining: left?.n ?? 0,
+      nextCursor: candidates.length < limit ? null : (candidates.at(-1)?.id ?? null),
+    };
   }
 
   private walletPorts(): WalletPorts {
@@ -132,12 +148,17 @@ export class GrantConversionService {
     if (await this.hasOpenRound(db, grantId)) {
       return 'open_round';
     }
+    const cash = capConversion(
+      grant.bonusBalance,
+      grant.grantedAmount,
+      grant.terms.maxWinMultiplier,
+    );
     return {
       grantId,
       userId: grant.userId,
       currency: grant.currency,
-      cash: capConversion(grant.bonusBalance, grant.grantedAmount, grant.terms.maxWinMultiplier),
-      requiredInCurrency: remainingWagering(grant),
+      cash,
+      requiredInCurrency: moneyCompare(cash, ZERO) > 0 ? remainingWagering(grant) : ZERO,
       entryStatus: null,
     };
   }
@@ -175,10 +196,12 @@ export class GrantConversionService {
         return null;
       }
       const cash = completion.convertedAmount;
-      if (moneyCompare(cash, ZERO) > 0) {
+      const paysCash = moneyCompare(cash, ZERO) > 0;
+      if (paysCash) {
         await this.creditCash(tx, wallet, grant, cash);
       }
-      const requiredInCurrency = remainingWagering(grant);
+      // No cash, nothing to lock: the requirement would hold the player's own deposits instead.
+      const requiredInCurrency = paysCash ? remainingWagering(grant) : ZERO;
       const entry =
         moneyCompare(requiredInCurrency, ZERO) > 0
           ? await wallet.addTurnoverRequirement(tx, {

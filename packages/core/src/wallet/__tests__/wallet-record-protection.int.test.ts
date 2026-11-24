@@ -130,6 +130,22 @@ describe('wallet_transaction record protection (real PG)', () => {
     ).resolves.toBeDefined();
   });
 
+  it('moves a stake only from deferred to counted once its turnover state is set', async () => {
+    const unset = await seedLedgerRow({ type: 'bet', status: 'completed' });
+    await expect(update(unset.id, { turnoverState: 'reversal' })).resolves.toBeDefined();
+
+    const deferred = await seedLedgerRow({
+      type: 'bet',
+      status: 'completed',
+      turnoverContribution: '10',
+      turnoverState: 'deferred',
+    });
+    await expect(update(deferred.id, { turnoverState: 'counted' })).resolves.toBeDefined();
+    await rejectedWith(update(deferred.id, { turnoverState: 'deferred' }), /append-only/);
+    await rejectedWith(update(deferred.id, { turnoverState: null }), /append-only/);
+    await rejectedWith(update(unset.id, { turnoverState: 'counted' }), /append-only/);
+  });
+
   it('passes an update that matches no row', async () => {
     await seedLedgerRow();
 

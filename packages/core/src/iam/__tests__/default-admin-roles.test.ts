@@ -67,4 +67,18 @@ describe('DEFAULT_ADMIN_ROLES', () => {
 
     expect(holders.map((role) => role.key).sort()).toEqual([...requesters].sort());
   });
+
+  it.each(['turnover', 'turnover-config'] as const)(
+    'lets only the compliance roles write %s',
+    (resource) => {
+      const writers = DEFAULT_ADMIN_ROLES.filter(
+        (role) => !role.isSuperAdmin && role.matrix[resource] === 'read_write',
+      );
+
+      expect(writers.map((role) => role.key).sort()).toEqual([
+        'compliance-manager',
+        'kyc-aml-officer',
+      ]);
+    },
+  );
 });

@@ -80,6 +80,9 @@ const transferCredit = (args: Partial<WalletCreditArgs> & Pick<WalletCreditArgs,
     }),
   );
 
+const withdrawUsd = (client: TestClient) =>
+  client.post('/wallet/withdraw', { amount: '1', currency: 'USD', idempotencyKey: randomUUID() });
+
 const priceNow = () => app.container.get(JOB_QUEUE).enqueue(queue('wallet-turnover-pricing'), {});
 
 beforeAll(async () => {
@@ -233,6 +236,17 @@ describe('a swap', () => {
 describe('an unpriced credit', () => {
   it('stays pending and locked until the pricing job prices it, once', async () => {
     const { client, userId } = await player('pending');
+    const funded = await (
+      await asAdmin(app.app)
+    ).post('/wallet/manual-adjustments', {
+      userId,
+      direction: 'credit',
+      amount: '5',
+      currency: 'USD',
+      reason: 'turnover pricing test funds',
+      idempotencyKey: randomUUID(),
+    });
+    expect(funded.status).toBe(200);
     const currency = unratedCurrency();
     await transferCredit({ userId, currency, amount: '10', allowNewCurrency: true });
 
@@ -245,24 +259,11 @@ describe('an unpriced credit', () => {
       async () => expect(await entriesOf(client)).toMatchObject([{ status: 'counted' }]),
       { timeout: 20_000, interval: 100 },
     );
-    await priceNow();
-    await priceNow();
-
-    // A later credit priced by a later run proves the repeat runs above have finished.
-    const sentinel = await player('sentinel');
-    const sentinelCurrency = unratedCurrency();
-    await transferCredit({
-      userId: sentinel.userId,
-      currency: sentinelCurrency,
-      amount: '1',
-      allowNewCurrency: true,
+    const refused = await withdrawUsd(client);
+    expect(refused.status).toBe(409);
+    expect(await readJson(refused)).toMatchObject({
+      data: { reason: 'turnover_requirement_unmet', pending: false },
     });
-    await rate(sentinelCurrency, '1');
-    await priceNow();
-    await vi.waitFor(
-      async () => expect(await entriesOf(sentinel.client)).toMatchObject([{ status: 'counted' }]),
-      { timeout: 20_000, interval: 100 },
-    );
 
     const summary = await summaryOf(client);
     expect(summary).toMatchObject({ pendingCount: 0, locked: true });

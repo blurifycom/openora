@@ -13,7 +13,7 @@ does not repeat it.
   chain and no vendor holds a per-player balance. A database trigger denies deleting a
   `wallet_transaction` row and rewriting what defines it (amount, type, currency, time, idempotency
   key, reference value); only the status, review, provider reference and `turnoverState` columns
-  move, and `balanceAfter`, `realShare` and `turnoverContribution` are filled once and then
+  move (`turnoverState` once set only from `deferred` to `counted`), and `balanceAfter`, `realShare` and `turnoverContribution` are filled once and then
   frozen. `balanceAfter` is the
   player's balance in that currency after the row moved money, set in the same transaction as the
   move; it is null on older rows, on a deposit that has not settled, and on a refund (which writes

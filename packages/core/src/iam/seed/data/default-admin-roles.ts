@@ -54,8 +54,8 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       'mcp-access': RW,
       'agent-chat': RW,
       'mcp-token': RW,
-      turnover: RW,
-      'turnover-config': RW,
+      turnover: R,
+      'turnover-config': R,
     },
   },
   {
@@ -72,7 +72,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       'game-config': RW,
       analytics: RW,
       sportsbook: RW,
-      'turnover-config': RW,
+      'turnover-config': R,
     },
   },
   {

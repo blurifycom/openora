@@ -13,6 +13,7 @@ import {
   TurnoverDisabledError,
   TurnoverLockedError,
   WAGER_PRODUCTS,
+  isTurnoverEnabled,
   queue,
   type AddTurnoverRequirementArgs,
   type AddTurnoverRequirementResult,
@@ -45,6 +46,7 @@ import type {
 
 const CONFIG_KEY = 'global';
 const PRICING_PAGE = 500;
+const AUDITED_ENTRY_IDS = 100;
 
 export const TURNOVER_PRICING_QUEUE = queue('wallet-turnover-pricing');
 export const TurnoverPricingJobSchema = z.object({});
@@ -85,8 +87,6 @@ type LedgerRow = typeof walletTransaction.$inferSelect;
 
 export type TurnoverStake = {
   userId: User['id'];
-  /** The bet's ledger row, stamped with what it counts. */
-  ledgerRowId: LedgerRow['id'];
   product: WagerProduct | undefined;
   currency: string;
   /** The part of the stake the real balance paid. */
@@ -139,7 +139,7 @@ export class TurnoverService {
   constructor(private readonly deps: TurnoverServiceDeps) {}
 
   get enabled(): boolean {
-    return moneyCompare(this.deps.config.multiplier, '0') > 0;
+    return isTurnoverEnabled(this.deps.config);
   }
 
   private on(tx?: unknown): DrizzleDb {
@@ -175,7 +175,7 @@ export class TurnoverService {
       progress: row.progress,
       remaining,
       dustThreshold: this.deps.config.dustThreshold,
-      locked: moneyCompare(remaining, this.deps.config.dustThreshold) > 0 || row.pendingCount > 0,
+      locked: !this.isMet(row),
       pendingCount: row.pendingCount,
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -239,45 +239,35 @@ export class TurnoverService {
     meta?: ClientMeta,
   ): Promise<{ cleared: boolean; summary: TurnoverSummary }> {
     return this.deps.drizzle.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(walletTurnover)
-        .where(eq(walletTurnover.userId, userId))
-        .for('update');
-      const live = await tx
-        .select({ id: walletTurnoverEntry.id })
-        .from(walletTurnoverEntry)
+      const row = await this.lockRow(tx, userId);
+      if (!row) {
+        return { cleared: false, summary: await this.summary(userId, tx) };
+      }
+      const now = sql<Date>`now()`;
+      const cleared = await tx
+        .update(walletTurnoverEntry)
+        .set({ status: 'cleared', clearedAt: now, clearedBy: adminId, clearReason: reason })
         .where(
           and(
             eq(walletTurnoverEntry.userId, userId),
             inArray(walletTurnoverEntry.status, ['counted', 'pending']),
           ),
         )
-        .orderBy(walletTurnoverEntry.id)
-        .for('update');
+        .returning({ id: walletTurnoverEntry.id });
       const owes =
-        row !== undefined &&
-        (moneyCompare(row.required, '0') !== 0 ||
-          moneyCompare(row.progress, '0') !== 0 ||
-          row.pendingCount > 0 ||
-          live.length > 0);
+        moneyCompare(row.required, '0') !== 0 ||
+        moneyCompare(row.progress, '0') !== 0 ||
+        row.pendingCount > 0 ||
+        cleared.length > 0;
       if (!owes) {
         return { cleared: false, summary: await this.summary(userId, tx) };
       }
       const before = this.toSummary(row);
-      const now = new Date();
-      const entryIds = live.map((entry) => entry.id);
       const [updated] = await tx
         .update(walletTurnover)
         .set({ required: '0', progress: '0', pendingCount: 0, clearedAt: now })
         .where(eq(walletTurnover.userId, userId))
         .returning();
-      if (entryIds.length > 0) {
-        await tx
-          .update(walletTurnoverEntry)
-          .set({ status: 'cleared', clearedAt: now, clearedBy: adminId, clearReason: reason })
-          .where(inArray(walletTurnoverEntry.id, entryIds));
-      }
       const after = this.toSummary(updated ?? row);
       await this.deps.audit.recordInTransaction(tx, {
         actorId: adminId,
@@ -298,7 +288,8 @@ export class TurnoverService {
           remaining: after.remaining,
           pendingCount: after.pendingCount,
           reason,
-          entryIds,
+          entryCount: cleared.length,
+          entryIds: cleared.slice(0, AUDITED_ENTRY_IDS).map((entry) => entry.id),
         },
         ...meta,
       });
@@ -392,6 +383,13 @@ export class TurnoverService {
       return amount;
     }
     return (await this.deps.rates?.convert(amount, currency, pivotCurrency, tx)) ?? null;
+  }
+
+  private async rate(currency: string, pivotCurrency: string, tx: unknown): Promise<string | null> {
+    if (currency.toUpperCase() === pivotCurrency) {
+      return '1';
+    }
+    return (await this.deps.rates?.getRate(currency, pivotCurrency, tx))?.rate ?? null;
   }
 
   private async findEntry(
@@ -560,17 +558,20 @@ export class TurnoverService {
       .from(walletTurnoverEntry)
       .where(and(eq(walletTurnoverEntry.userId, userId), eq(walletTurnoverEntry.status, 'pending')))
       .orderBy(walletTurnoverEntry.id);
-    const quotes: { id: string; pivotValue: string; required: string }[] = [];
-    for (const entry of pending) {
-      const pivotValue = await this.price(entry.amount, entry.currency, current.pivotCurrency, db);
-      if (pivotValue !== null) {
-        quotes.push({
-          id: entry.id,
-          pivotValue,
-          required: moneyScaleBy(pivotValue, entry.multiplier),
-        });
+    const rates = new Map<string, string | null>();
+    for (const { currency } of pending) {
+      if (!rates.has(currency)) {
+        rates.set(currency, await this.rate(currency, current.pivotCurrency, db));
       }
     }
+    const quotes = pending.flatMap((entry) => {
+      const rate = rates.get(entry.currency);
+      if (rate === null || rate === undefined) {
+        return [];
+      }
+      const pivotValue = moneyScaleBy(entry.amount, rate);
+      return [{ id: entry.id, pivotValue, required: moneyScaleBy(pivotValue, entry.multiplier) }];
+    });
     if (quotes.length === 0) {
       return 0;
     }
@@ -600,38 +601,39 @@ export class TurnoverService {
     return priced;
   }
 
-  /** Whether an outflow would be refused now, under the turnover row lock on the caller's transaction. */
-  async isLocked(tx: unknown, userId: User['id']): Promise<boolean> {
+  /**
+   * Prices the player's pending entries in a transaction of its own, so a withdrawal decides on
+   * the newest known requirement without a rate lookup under its money locks, and the pricing
+   * stays when the withdrawal is refused.
+   */
+  async pricePendingNow(userId: User['id']): Promise<void> {
     if (!this.enabled) {
-      return false;
+      return;
     }
-    const row = await this.lockRow(tx as DrizzleDb, userId);
-    return row !== undefined && !this.isMet(row);
+    const row = await this.readRow(this.deps.drizzle.db, userId);
+    if (!row || row.pendingCount === 0) {
+      return;
+    }
+    await this.deps.drizzle.db.transaction((tx) => this.pricePending(tx, userId));
   }
 
   /**
-   * Refuses an outflow while the requirement is unmet, under the turnover row lock on the
-   * caller's transaction, after the wallet, balance and grant locks it already holds. A withdrawal
-   * first prices the player's pending entries, so it decides on the newest known requirement.
-   * @throws TurnoverLockedError while more than dust remains or an entry is still unpriced.
+   * What an outflow would be refused with now, under the turnover row lock on the caller's
+   * transaction, after the wallet, balance and grant locks it already holds; null when it passes.
    */
-  async assertOutflow(
+  async refusal(
     tx: unknown,
     { userId, outflow }: { userId: User['id']; outflow: TurnoverOutflow },
-  ): Promise<void> {
+  ): Promise<TurnoverLockedError | null> {
     if (!this.enabled) {
-      return;
+      return null;
     }
-    const db = tx as DrizzleDb;
-    if (outflow === 'withdrawal' && ((await this.readRow(db, userId))?.pendingCount ?? 0) > 0) {
-      await this.pricePending(db, userId);
-    }
-    const row = await this.lockRow(db, userId);
+    const row = await this.lockRow(tx as DrizzleDb, userId);
     if (!row || this.isMet(row)) {
-      return;
+      return null;
     }
     const { pivotCurrency, required, progress, remaining } = this.toSummary(row);
-    throw new TurnoverLockedError(this.deps.config.lockedMessage, {
+    return new TurnoverLockedError(this.deps.config.lockedMessage, {
       outflow,
       pivotCurrency,
       required,
@@ -639,6 +641,17 @@ export class TurnoverService {
       remaining,
       pending: row.pendingCount > 0,
     });
+  }
+
+  /** @throws TurnoverLockedError while more than dust remains or an entry is still unpriced. */
+  async assertOutflow(
+    tx: unknown,
+    args: { userId: User['id']; outflow: TurnoverOutflow },
+  ): Promise<void> {
+    const refused = await this.refusal(tx, args);
+    if (refused) {
+      throw refused;
+    }
   }
 
   /** The pricing job: one transaction per player with a pending entry, so no lock outlives its player. */
@@ -671,60 +684,60 @@ export class TurnoverService {
     }
   }
 
-  private async productPercent(product: WagerProduct, db: DrizzleDb): Promise<number> {
-    return (await this.overrides(db))[product] ?? this.deps.config.productPercent[product];
-  }
-
-  private stamp(
-    db: DrizzleDb,
-    ledgerRowId: LedgerRow['id'],
-    contribution: string,
-    state: NonNullable<LedgerRow['turnoverState']>,
-  ) {
-    return db
-      .update(walletTransaction)
-      .set({ turnoverContribution: contribution, turnoverState: state })
-      .where(eq(walletTransaction.id, ledgerRowId));
+  /** Whether the player has a turnover row at all: one primary-key read. */
+  async tracks(tx: unknown, userId: User['id']): Promise<boolean> {
+    return (await this.readRow(tx as DrizzleDb, userId)) !== undefined;
   }
 
   /**
-   * Counts a bet's real part on the caller's transaction, after its ledger row is written. Nothing
-   * is priced or stamped while nothing is owed. A product in `countAtSettle` is priced and stamped
-   * `deferred` here, and counts when its round settles.
+   * What a bet's real part counts, read before its ledger row is written so the row carries it.
+   * Null while nothing is owed. A product in `countAtSettle` is `deferred`: it counts when its
+   * round settles.
    */
-  async countStake(
+  async stakeStamp(
     tx: unknown,
-    { userId, ledgerRowId, product, currency, realPart }: TurnoverStake,
-  ): Promise<void> {
+    { userId, product, currency, realPart }: TurnoverStake,
+  ): Promise<{ contribution: string; state: 'counted' | 'deferred' } | null> {
     if (!this.enabled || product === undefined || !isPositiveMoney(realPart)) {
-      return;
+      return null;
     }
     const db = tx as DrizzleDb;
-    const owed = await this.readRow(db, userId);
-    if (!owed || this.isMet(owed)) {
-      return;
+    const [owed] = await db
+      .select({ row: walletTurnover, overrides: walletTurnoverConfig.productPercent })
+      .from(walletTurnover)
+      .leftJoin(walletTurnoverConfig, eq(walletTurnoverConfig.singletonKey, CONFIG_KEY))
+      .where(eq(walletTurnover.userId, userId));
+    if (!owed || this.isMet(owed.row)) {
+      return null;
     }
-    const percent = await this.productPercent(product, db);
+    const percent = owed.overrides?.[product] ?? this.deps.config.productPercent[product];
     if (percent === 0) {
-      return;
+      return null;
     }
-    const pivotValue = await this.price(realPart, currency, owed.pivotCurrency, db);
+    const pivotValue = await this.price(realPart, currency, owed.row.pivotCurrency, db);
     if (pivotValue === null) {
-      return;
+      return null;
     }
     const contribution = moneyMultiplyDivide(pivotValue, String(percent), '100');
     if (!isPositiveMoney(contribution)) {
-      return;
+      return null;
     }
-    if (this.deps.config.countAtSettle.includes(product)) {
-      await this.stamp(db, ledgerRowId, contribution, 'deferred');
-      return;
-    }
+    return {
+      contribution,
+      state: this.deps.config.countAtSettle.includes(product) ? 'deferred' : 'counted',
+    };
+  }
+
+  /**
+   * Adds a `counted` stake to progress under the turnover row lock, the last lock a bet takes,
+   * after its stamped ledger row is written. A requirement a staff clear met meanwhile gains nothing.
+   */
+  async countStake(tx: unknown, userId: User['id'], contribution: string): Promise<void> {
+    const db = tx as DrizzleDb;
     const row = await this.lockRow(db, userId);
     if (!row || this.isMet(row)) {
       return;
     }
-    await this.stamp(db, ledgerRowId, contribution, 'counted');
     await this.writeRow(db, row, { progress: moneyAdd(row.progress, contribution) });
   }
 
@@ -756,9 +769,11 @@ export class TurnoverService {
   /**
    * The round's final result reached the wallet: its `deferred` stakes count now, net of its
    * reversals. The conditional flip is the guard, so a re-settle after a reopen counts nothing more.
+   * A stake placed at or before the player's last staff clear flips but adds nothing, like a
+   * stake that counted before that clear.
    */
   async settleRound(tx: unknown, round: TurnoverRound): Promise<void> {
-    if (!this.enabled || this.deps.config.countAtSettle.length === 0) {
+    if (!this.enabled) {
       return;
     }
     const db = tx as DrizzleDb;
@@ -777,11 +792,16 @@ export class TurnoverService {
           eq(t.turnoverState, 'deferred'),
         ),
       )
-      .returning({ contribution: t.turnoverContribution });
-    if (flipped.length === 0) {
+      .returning({
+        contribution: t.turnoverContribution,
+        afterClear: sql<boolean>`${t.createdAt} > coalesce((select ${walletTurnover.clearedAt} from ${walletTurnover} where ${walletTurnover.userId} = ${round.userId}), '-infinity')`,
+      });
+    const settled = flipped
+      .filter(({ afterClear }) => afterClear)
+      .reduce((sum, row) => moneyAdd(sum, row.contribution ?? '0'), '0');
+    if (!isPositiveMoney(settled)) {
       return;
     }
-    const settled = flipped.reduce((sum, row) => moneyAdd(sum, row.contribution ?? '0'), '0');
     const { counted, reversed } = await this.roundSums(db, this.roundScope(round));
     const delta = moneySubtract(
       maxZero(moneySubtract(counted, reversed)),
@@ -848,7 +868,10 @@ export class TurnoverService {
     if (!isPositiveMoney(share)) {
       return;
     }
-    await this.stamp(db, reversal.ledgerRowId, share, 'reversal');
+    await db
+      .update(t)
+      .set({ turnoverContribution: share, turnoverState: 'reversal' })
+      .where(eq(t.id, reversal.ledgerRowId));
     const countedNet = maxZero(moneySubtract(sums.counted, sums.reversed));
     const delta = moneySubtract(
       maxZero(moneySubtract(moneySubtract(sums.counted, sums.reversed), share)),

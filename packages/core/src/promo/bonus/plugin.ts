@@ -23,6 +23,7 @@ import {
   WALLET_COMMANDS,
   WALLET_READER,
   domainEventSchemas,
+  isTurnoverEnabled,
   resolveWalletTurnoverConfig,
   queue,
   type JobQueueAdapter,
@@ -34,7 +35,6 @@ import {
   DRIZZLE,
   EVENT_BUS,
   createLogger,
-  moneyCompare,
   type CoreTokenCatalog,
   type DrizzleTx,
   type Plugin,
@@ -359,12 +359,11 @@ export default {
           c.get(EVENT_BUS),
           // Resolved per call: WALLET_COMMANDS is built from this module's own ports.
           () => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined),
-          moneyCompare(
+          isTurnoverEnabled(
             resolveWalletTurnoverConfig(
               c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
-            ).multiplier,
-            '0',
-          ) > 0,
+            ),
+          ),
           logger,
         ),
         adminGuard: c.get(ADMIN_GUARD),

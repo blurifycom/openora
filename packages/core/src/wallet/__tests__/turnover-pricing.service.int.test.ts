@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { moneyCompare, moneyScaleBy } from '@openora/core/server';
 import { WalletTurnoverConfigSchema, type ExchangeRateReader } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter, makeEventBus } from '../../testing/mock.js';
+import { makeAuditWriter, makeEventBus, mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { walletTurnover, walletTurnoverEntry } from '../schema/index.js';
 import { TurnoverService } from '../service/turnover.service.js';
@@ -12,13 +12,16 @@ import { TurnoverService } from '../service/turnover.service.js';
 let db: TestDb;
 const rates = new Map<string, string>();
 
-const reader: ExchangeRateReader = {
-  getRate: async () => null,
-  convert: async (amount, from) => {
+const reader = mock<ExchangeRateReader>({
+  getRate: vi.fn(async (from: string) => {
+    const rate = rates.get(from);
+    return rate === undefined ? null : { rate, asOf: new Date().toISOString() };
+  }),
+  convert: vi.fn(async (amount: string, from: string) => {
     const rate = rates.get(from);
     return rate === undefined ? null : moneyScaleBy(amount, rate);
-  },
-};
+  }),
+});
 
 const service = (multiplier = '1') =>
   new TurnoverService({
@@ -83,6 +86,24 @@ describe('TurnoverService pending pricing', () => {
       .from(walletTurnoverEntry)
       .where(eq(walletTurnoverEntry.userId, userId));
     expect(entries.map((e) => e.status)).toEqual(['counted', 'counted']);
+  });
+
+  it('looks a rate up once per currency however many entries it prices', async () => {
+    const svc = service();
+    const userId = randomUUID();
+    const currency = unratedCurrency();
+    for (const amount of ['1', '2', '3']) {
+      await credit(svc, userId, currency, amount);
+    }
+    rates.set(currency, '2');
+    vi.mocked(reader.getRate).mockClear();
+
+    expect(await db.drizzle.db.transaction((tx) => svc.pricePending(tx, userId))).toBe(3);
+
+    expect(vi.mocked(reader.getRate).mock.calls.filter(([from]) => from === currency)).toHaveLength(
+      1,
+    );
+    expectMoney((await turnoverOf(userId))?.required, '12', 'required');
   });
 
   it('leaves an entry pending while its currency still has no rate', async () => {

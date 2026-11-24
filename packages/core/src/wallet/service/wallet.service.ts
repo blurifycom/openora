@@ -75,6 +75,7 @@ import {
   type BonusLifecycleCommands,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
+  withTurnoverLock,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -1781,12 +1782,9 @@ export class WalletService {
       return balances.map((balance, i) => ({ ...balance, ...locks[i] }));
     }
     const turnoverLocked = (await turnover.summary(userId, txn)).locked;
-    return balances.map((row, i) => {
-      const bonus = locks[i] ?? { locked: '0', free: row.balance };
-      return turnoverLocked
-        ? { ...row, locked: row.balance, free: '0', bonusLocked: bonus.locked }
-        : { ...row, ...bonus, bonusLocked: bonus.locked };
-    });
+    return balances.map((row, i) =>
+      withTurnoverLock(row, locks[i] ?? { locked: '0', free: row.balance }, turnoverLocked),
+    );
   }
 
   /** A player without a wallet reads as empty rather than as an error. */
@@ -2390,6 +2388,8 @@ export class WalletService {
       );
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    // Its own transaction, so a price found here survives the refusal the gate below may answer.
+    await this.turnover?.pricePendingNow(userId);
 
     return this.drizzle.db.transaction(async (txn) => {
       // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.

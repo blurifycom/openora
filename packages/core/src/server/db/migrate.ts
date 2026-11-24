@@ -87,9 +87,12 @@ export function appendOnlyTableSql(
     mutableColumns,
     setOnceColumns = [],
     terminal,
+    transitions = [],
   }: {
     mutableColumns: string[];
     setOnceColumns?: string[];
+    /** A column that may change only along these `[from, to]` pairs; null is an unset column. */
+    transitions?: { column: string; allowed: readonly (readonly [string | null, string])[] }[];
     terminal?: {
       column: string;
       values: string[];
@@ -110,6 +113,10 @@ export function appendOnlyTableSql(
           ...(terminal.growOnlyTotals ?? []).flat(),
         ]
       : []),
+    ...transitions.flatMap(({ column, allowed }) => [
+      column,
+      ...allowed.flatMap(([from, to]) => (from === null ? [to] : [from, to])),
+    ]),
   ]) {
     if (!SQL_IDENTIFIER.test(name)) {
       throw new Error(`Invalid SQL identifier: ${name}`);
@@ -156,6 +163,20 @@ export function appendOnlyTableSql(
          .join('\n       ')}
      END IF;`
     : '';
+  const transitionChecks = transitions
+    .map(({ column, allowed }) => {
+      const permitted = allowed
+        .map(([from, to]) =>
+          from === null
+            ? `(OLD.${column} IS NULL AND NEW.${column}::text = '${to}')`
+            : `(OLD.${column}::text = '${from}' AND NEW.${column}::text = '${to}')`,
+        )
+        .join(' OR ');
+      return `IF NEW.${column} IS DISTINCT FROM OLD.${column} AND NOT (${permitted || 'false'}) THEN
+       RAISE EXCEPTION '${table} is append-only: ${column} cannot change from % to %', OLD.${column}, NEW.${column};
+     END IF;`;
+    })
+    .join('\n     ');
   const createTriggerIfMissing = (name: string, timing: string, each: string, fn: string) =>
     `IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '${table}'::regclass AND tgname = '${name}') THEN
        CREATE TRIGGER ${name} BEFORE ${timing} ON ${table} FOR EACH ${each} EXECUTE FUNCTION ${fn}();
@@ -172,6 +193,7 @@ export function appendOnlyTableSql(
      END IF;
      ${setOnceChecks}
      ${terminalChecks}
+     ${transitionChecks}
      RETURN NEW;
    END;
    $$;

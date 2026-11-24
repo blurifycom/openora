@@ -27,6 +27,7 @@ import {
   WagerProductSchema,
   AdminTurnoverEntrySchema,
   TurnoverCreditTypeSchema,
+  TurnoverPercentSchema,
   TurnoverEntrySchema,
   TurnoverSummarySchema,
 } from '@openora/core/contracts';
@@ -503,8 +504,6 @@ export const ClearTurnoverResultSchema = z.object({
   cleared: z.boolean(),
   summary: TurnoverSummarySchema,
 });
-
-const TurnoverPercentSchema = z.number().int().min(0).max(100);
 
 export const TurnoverConfigViewSchema = z.object({
   multiplier: MoneyAmountSchema,

@@ -89,7 +89,8 @@ export const CronExpressionSchema = z
     'must be a 5- or 6-field cron expression',
   );
 
-const TurnoverPercentSchema = z.number().int().min(0).max(100);
+/** The percent of a stake that counts toward turnover, per product. */
+export const TurnoverPercentSchema = z.number().int().min(0).max(100);
 
 const TURNOVER_DEFAULT_LOCKED_MESSAGE = 'Wager your deposits before withdrawing or sending funds.';
 
@@ -276,6 +277,13 @@ export function resolveWalletTurnoverConfig(
   config: WalletConfig | undefined,
 ): WalletTurnoverConfig {
   return WalletTurnoverConfigSchema.parse(config?.turnover ?? {});
+}
+
+/** Whether the turnover requirement is on: a multiplier above '0'. */
+export function isTurnoverEnabled({
+  multiplier,
+}: Pick<WalletTurnoverConfig, 'multiplier'>): boolean {
+  return /[1-9]/.test(multiplier);
 }
 
 const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';

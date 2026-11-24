@@ -94,6 +94,7 @@ export {
   TurnoverEntryStatusSchema,
   TurnoverLockedError,
   TurnoverSummarySchema,
+  withTurnoverLock,
 } from './turnover.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';

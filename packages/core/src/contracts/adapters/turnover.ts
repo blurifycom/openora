@@ -81,12 +81,29 @@ export class TurnoverLockedError extends Error {
   }
 }
 
-/** A requirement was asked for while `wallet.turnover.multiplier` is '0'. Maps to CONFLICT. */
+/**
+ * A requirement was asked for while `wallet.turnover.multiplier` is '0'. Thrown out of
+ * `WalletCommands.addTurnoverRequirement`; no router maps it, so a caller answers its own refusal.
+ */
 export class TurnoverDisabledError extends Error {
   constructor() {
     super('the turnover requirement is off');
     this.name = 'TurnoverDisabledError';
   }
+}
+
+/**
+ * One balance's lock figures under both locks: the stricter of the two, never their sum. While
+ * turnover is locked the whole balance is locked; `bonusLocked` is the bonus lock alone.
+ */
+export function withTurnoverLock<T extends { balance: string }>(
+  row: T,
+  bonus: { locked: string; free: string },
+  turnoverLocked: boolean,
+): T & { locked: string; free: string; bonusLocked: string } {
+  return turnoverLocked
+    ? { ...row, locked: row.balance, free: '0', bonusLocked: bonus.locked }
+    : { ...row, ...bonus, bonusLocked: bonus.locked };
 }
 
 export type AddTurnoverRequirementArgs = {

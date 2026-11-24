@@ -72,7 +72,10 @@ import {
   WithdrawalNotPendingError,
   requireBonusFundLocks,
 } from './service/wallet.service.js';
-import { WalletCommandsService } from './service/wallet-commands.service.js';
+import {
+  WalletCommandsService,
+  cashTransferKindsWithoutTurnover,
+} from './service/wallet-commands.service.js';
 import { LedgerApiService } from './service/ledger-api.service.js';
 import { LedgerRgLimitsService } from './service/ledger-rg-limits.service.js';
 import { LedgerPlayEligibilityService } from './service/ledger-play-eligibility.service.js';
@@ -616,6 +619,13 @@ export default {
       if (Object.keys(platformConfig?.wallet?.significantAmountThresholds ?? {}).length === 0) {
         logger.warn(
           'wallet.significantAmountThresholds is not configured - large bets and wins are not audited',
+        );
+      }
+      const untracked = cashTransferKindsWithoutTurnover(platformConfig?.wallet);
+      if (untracked.length > 0) {
+        logger.warn(
+          { kinds: untracked },
+          'wallet.transferCredits is cash but these transfer kinds carry no turnover requirement - a received transfer can be withdrawn at once',
         );
       }
       const wallet = walletService(c);
