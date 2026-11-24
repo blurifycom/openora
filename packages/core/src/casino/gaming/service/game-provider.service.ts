@@ -10,14 +10,22 @@ import {
   pageToOffset,
   uniqueConstraintName,
 } from '@openora/core/server';
-import { eq, and, asc, count, ilike, inArray, ne, or } from 'drizzle-orm';
+import { eq, and, asc, count, exists, ilike, inArray, ne, or } from 'drizzle-orm';
 import { isAllowedHost, type GameProviderAggregatorMapping } from '@openora/core/contracts';
-import { game, gameProvider, gameProviderAggregatorMapping } from '../schema/index.js';
+import {
+  type GameCategory,
+  game,
+  gameCategory,
+  gameCategoryGame,
+  gameProvider,
+  gameProviderAggregatorMapping,
+} from '../schema/index.js';
 import type { CreateProviderInput, UpdateProviderInput } from '../contract/index.js';
 import {
   mappingsByProviderIds,
   markCategoriesRankDirtyForProviders,
   pendingReviewCountsByProviderIds,
+  playableGameCondition,
   providerSummaryColumns,
   type CatalogActor,
 } from '../../shared/game-catalog.js';
@@ -101,8 +109,35 @@ export class GameProviderService {
     private readonly allowedLogoHosts: readonly string[] = [],
   ) {}
 
-  async listActiveProviders({ page, limit }: { page: number; limit: number }) {
-    const where = eq(gameProvider.isActive, true);
+  async listActiveProviders({
+    page,
+    limit,
+    categoryId,
+  }: {
+    page: number;
+    limit: number;
+    categoryId?: GameCategory['id'];
+  }) {
+    const where = and(
+      eq(gameProvider.isActive, true),
+      categoryId === undefined
+        ? undefined
+        : exists(
+            this.drizzle.db
+              .select({ gameId: game.id })
+              .from(game)
+              .innerJoin(gameCategoryGame, eq(gameCategoryGame.gameId, game.id))
+              .innerJoin(gameCategory, eq(gameCategoryGame.categoryId, gameCategory.id))
+              .where(
+                and(
+                  eq(game.providerId, gameProvider.id),
+                  eq(gameCategoryGame.categoryId, categoryId),
+                  eq(gameCategory.isActive, true),
+                  playableGameCondition(),
+                ),
+              ),
+          ),
+    );
     const [items, [{ n }]] = await Promise.all([
       this.drizzle.db
         .select(providerSummaryColumns)
