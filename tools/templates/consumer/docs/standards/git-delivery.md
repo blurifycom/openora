@@ -27,8 +27,8 @@ Read this before a commit, PR, or branch operation.
   own terminal.
 - Branch off `dev`; never commit directly to a shared branch; never push without an explicit
   per-action "yes push", except the ticket branch `/ship` opens its MR from.
-- PR description is a review pack (summary, risks, diagram, API, DB and config, traces, AC and
-  evidence, after merge; the `create-pr` skill has the format) plus the ticket link. No secrets,
+- PR description is a review pack: the ticket key, "How it was checked", then only the sections
+  whose trigger fires (the `create-pr` skill lists them). No secrets,
   internal hostnames, or PII - it is the public record.
 - A PR that adds or changes a flow across components (request path, state machine, async job or
   webhook, a new module, overlay or vendor binding) carries a Mermaid `flowchart` or

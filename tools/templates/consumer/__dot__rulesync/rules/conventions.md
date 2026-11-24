@@ -106,8 +106,8 @@ above) if this repo has no UI apps.
   HEAD). Conventional commits, lowercase subject (PR
   title too - a squash merge turns it into the commit), one PR per ticket (a story or a sub-task),
   however big - never split by size. Never push without explicit confirmation. The description is
-  the review pack from the `create-pr` skill (summary, risks, diagram, API, DB and config, traces,
-  AC and evidence with the walkthrough video, after merge) and the bare ticket key - but no test list or CI checklist the diff and pipeline already show, no URLs,
+  the review pack from the `create-pr` skill (the bare ticket key, "How it was checked", then the
+  triggered sections: diagrams, endpoints, data, traces, AC and evidence, the walkthrough video) - but no test list or CI checklist the diff and pipeline already show, no URLs,
   hostnames, secrets, or PII. Detail: `docs/standards/git-delivery.md`.
 - **Fix the import, never work around a lint or boundary violation.** Agent rules are generated
   from `.rulesync/` via `pnpm gen:agents` - never hand-edit a generated file. Detail:
