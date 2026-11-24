@@ -295,6 +295,34 @@ describe('turnover stakes without the bonus module', () => {
     expectMoney(await progressOf(userId), '20', 'after a whole reversal');
   });
 
+  it('shares an unnamed reversal over the whole stake of a round that spans a staff clear', async () => {
+    const { commands, turnover } = on;
+    const { userId } = await player();
+    await owe(turnover, userId, '100');
+    const early = await bet(commands, userId, '40');
+    await turnover.clear(randomUUID(), { userId, reason: 'goodwill' });
+    await owe(turnover, userId, '100');
+    await bet(commands, userId, '30', { round: early.round });
+    expectMoney(await progressOf(userId), '30', 'before the reversal');
+
+    const reversal = await db.drizzle.db.transaction((tx) =>
+      commands.credit(tx, {
+        userId,
+        amount: '40',
+        currency: 'USD',
+        type: 'bet_reversal',
+        providerRef: {
+          providerName: 'agg',
+          providerRefId: randomUUID(),
+          externalRoundId: early.round,
+        },
+      }),
+    );
+
+    expect(reversal).toMatchObject({ ok: true, moved: true });
+    expectMoney(await progressOf(userId), '12.857142857142857143', 'progress');
+  });
+
   it('stamps a bet racing a staff clear so that the stamp matches what it added', async () => {
     const { commands, turnover } = on;
     for (let run = 0; run < 25; run += 1) {

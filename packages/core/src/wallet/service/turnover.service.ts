@@ -782,15 +782,16 @@ export class TurnoverService {
   ): Promise<RoundSums> {
     const t = walletTransaction;
     const isBet = sql`${t.type} = 'bet' and ${t.direction} = 'debit'`;
+    const afterClear = this.afterLastClear(userId);
     const [sums] = await db
       .select({
-        counted: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${isBet} and ${t.turnoverState} = 'counted'), 0)`,
-        deferred: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${isBet} and ${t.turnoverState} = 'deferred'), 0)`,
-        reversed: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${t.turnoverState} = 'reversal'), 0)`,
+        counted: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${isBet} and ${t.turnoverState} = 'counted' and ${afterClear}), 0)`,
+        deferred: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${isBet} and ${t.turnoverState} = 'deferred' and ${afterClear}), 0)`,
+        reversed: sql<string>`coalesce(sum(${t.turnoverContribution}) filter (where ${t.turnoverState} = 'reversal' and ${afterClear}), 0)`,
         staked: sql<string>`coalesce(sum(${t.amount}) filter (where ${isBet}), 0)`,
       })
       .from(t)
-      .where(and(scope, eq(t.status, 'completed'), this.afterLastClear(userId)));
+      .where(and(scope, eq(t.status, 'completed')));
     return sums ?? { counted: '0', deferred: '0', reversed: '0', staked: '0' };
   }
 

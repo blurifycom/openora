@@ -395,8 +395,9 @@ export const ConvertTransferGrantsResultSchema = z.object({
   /** Live grants of the requested sources still left after this call. */
   remaining: z.number().int().nonnegative(),
   /**
-   * The last grant this call looked at; pass it as `after` to go on. Null once none is left after
-   * it, which `remaining > 0` can follow: a grant skipped for an open round sits behind the cursor.
+   * The last grant this call looked at; pass it as `after` to go on. Null when this call returned
+   * fewer than `limit` candidates, so a full last page is followed by one empty call. `remaining > 0`
+   * can follow a null cursor: a grant skipped for an open round sits behind the cursor.
    */
   nextCursor: UuidSchema.nullable(),
 });

@@ -7,14 +7,14 @@
 
 Anti-money-laundering rules in many markets require a deposit to be wagered a set number of times
 before it leaves. Without it a player can deposit, place nothing, and withdraw or gift the
-money to another player, layering funds through the operator. ADR-0064 locks only bonus
-money. Many operators need no such rule, so this one is generic, opt-in and off by default.
+money, layering funds through the operator. ADR-0064 locks only bonus
+money. Many operators need none, so it is generic, opt-in and off by default.
 
 ## Decision
 
 **Wallet-internal, not a port.** The requirement lives in the wallet: its own tables, a
-`TurnoverService`, and hooks on the credit, stake and outflow paths, all in one transaction. It is not a rebindable port, since an overlay that rebound it could unlock
-money. Consumers reach it through the optional `WalletCommands.addTurnoverRequirement` and
+`TurnoverService`, and hooks on the credit, stake and outflow paths, all in one transaction. It is no rebindable port: an overlay
+rebinding it could unlock money. Consumers reach it through the optional `WalletCommands.addTurnoverRequirement` and
 `WalletReader.readTurnover`.
 
 **The rule.** `wallet.turnover.multiplier` (default `'0'`, off). Each credit of a kind in
@@ -63,6 +63,9 @@ and `after`/`nextCursor` page the batch.
 - Approving a queued withdrawal does not re-check the requirement.
 - With multiplier `0` the rule is off, and the read routes answer `enabled: false`.
 - A priced entry keeps its rate, so a later rate change does not move it.
+- The staff-clear cut-off is by timestamp: a reversal whose transaction opened before a clear that
+  committed first subtracts nothing, even for a stake placed after that clear. The window is the
+  reversal's own wait for the wallet lock.
 - A stake is never an outflow, so a product where one player's stake becomes another's win is outside
   this lock; such an operator should weigh another control.
 - An older instance applies no gate, so enable the multiplier only once every instance runs this
