@@ -21,17 +21,26 @@ description: Commit, push, and open a pull request on this repo's forge, targeti
 
 ## Pull-request description
 
-- State the user-facing change and its reason briefly.
-- Add short, reproducible local test steps for the changed behavior (for example, `pnpm dev` then the relevant URLs or user flow).
-- Close the ticket by key at the end: `Closes <KEY>-n` if this PR finishes it, else `Refs <KEY>-n` (see `docs/agents/issue-tracker.md`).
-- Do not include a generic verification-command list: CI already reports those checks.
-- **Attach the manual-verification evidence.** The videos are what a reviewer reads as proof of a user-visible change: one walkthrough video (`ui-verify` "Video evidence"): a clip per acceptance criterion, the before/after pair on a fix, then the four shots of every changed screen, joined into one `<ticket>-walkthrough.mp4`. Upload that one file to the forge and embed the markdown it returns in a "Video" section with its chapter list - `docs/agents/forge.md` says how (its "Attach evidence" section). A local path under `apps/e2e/test-results/` shows a reviewer nothing; never put one in a description. An API-only change attaches the request/response trace instead. Paste the `tester` pass's verdict table next to it. Skip this only when nothing user-visible changed.
-- **Diagram the flow.** A change that adds or changes a flow across components (a request path through gates and a vendor, a state machine, an async job or webhook, a new module or overlay) embeds a fenced `mermaid` block (`flowchart` or `sequenceDiagram`), right after the summary - GitHub and GitLab both render it. Name nodes as the code does, keep it under ~15 nodes, include the refusal and failure branches. No flow (copy, styling, deps, a one-file fix): no diagram.
-- A paired change links neither way: the shared branch name pairs the two requests. The OSS repo is public, so its PR never names this repo or the operator; this request may be read by people outside the team, so it never names or links the OSS repo.
+A review pack: what a reviewer needs to retell the change after one read. Generated, not written from memory: diffs come from `git diff origin/<target>...HEAD`, schema from the migration files, evidence from the test run, and every hand-written claim links `file#Lnn` at the head SHA. Summary, risks and diagram sit at the top; every other section fits one screen, with longer detail in `<details>`. A section the change has nothing for is left out. In this order:
+
+1. **Summary** - one sentence: the user-facing change and why.
+2. **Risks** - numbered, worst first, each backed by a number or a code link. "None." when there are none.
+3. **Diagram** - a change that adds or changes a flow across components (a request path through gates and a vendor, a state machine, an async job or webhook, a new module or overlay) embeds a fenced `mermaid` block (`flowchart` or `sequenceDiagram`): nodes named as the code names them, under ~15, refusal and failure branches included. No flow (copy, styling, deps, a one-file fix): no diagram.
+4. **API** - a table `endpoint | runs in | change (added, changed, removed) | code link`, one row per endpoint, event or job. A ```diff of the payload only when its shape changes.
+5. **DB and config** - one ```diff block: tables and columns the migrations add or change, data backfilled or copied, env vars added or removed. A value only a person has goes under "Needs before deploy".
+6. **Traces** - for a changed request path on money or a hot path, when the local run exported traces: the span waterfall of one run per main path (queries, writes and locks in `<details>`), one sentence per failure path with its status and reason per caller. n = 1, so no percentiles.
+7. **AC and evidence** - the `tester` verdict table: `AC | evidence (spec:test, trace id, video chapter) | not tested`, UNCHECKED rows included.
+8. **Video** - one walkthrough video (`ui-verify` "Video evidence"): a clip per acceptance criterion, the before/after pair on a fix, then the four shots of every changed screen, joined into one `<ticket>-walkthrough.mp4`. Upload that one file to the forge and embed the markdown it returns with its chapter list - `docs/agents/forge.md` says how (its "Attach evidence" section). A local path under `apps/e2e/test-results/` shows a reviewer nothing; never put one in a description. An API-only change attaches the request/response trace instead. Skip it only when nothing user-visible changed.
+9. **Test locally** - short, reproducible steps for the changed behaviour (`pnpm dev`, then the URLs or the flow).
+10. **After merge** - docs, runbooks or ADRs to update and rollout steps. "Outside the repo" changes go here too.
+
+Then close the ticket by key: `Closes <KEY>-n` if this PR finishes it, else `Refs <KEY>-n` (see `docs/agents/issue-tracker.md`). No generic verification-command list: CI reports those checks.
+
+A paired change links neither way: the shared branch name pairs the two requests. The OSS repo is public, so its PR never names this repo or the operator; this request may be read by people outside the team, so it never names or links the OSS repo.
 
 ## Rules
 
 - NEVER push without an explicit per-action "yes push" from the user (or `/ship` on its ticket branch, see step 6). Invoking this skill does NOT authorize a push. Report the commit SHA, ask, then push only on yes.
 - `pnpm verify` must pass on the commit you push.
-- Keep the pull request scoped to one concern; split unrelated changes into separate ones.
+- One ticket, one pull request, however big; never split a ticket into several by size. Unrelated changes found on the way stay out of it.
 - No AI-attribution trailers anywhere - not in the commit, not in the pull-request title or description. No "Generated with", no "Co-Authored-By: Claude", no robot-emoji footer.

@@ -104,10 +104,10 @@ above) if this repo has no UI apps.
 - **Green before review:** `/check` (typecheck + lint + unit tests) while iterating, `pnpm verify`
   on the committed tree before the PR (the `guard-mr` hook refuses to open one until it passed on
   HEAD). Conventional commits, lowercase subject (PR
-  title too - a squash merge turns it into the commit), one PR per concern. Never push without
-  explicit confirmation. The description carries what / why / acceptance criteria / bare ticket
-  key, the manual-verification evidence (one walkthrough video, a clip per acceptance criterion, before and
-  after on a fix) - but no test list or CI checklist the diff and pipeline already show, no URLs,
+  title too - a squash merge turns it into the commit), one PR per ticket (a story or a sub-task),
+  however big - never split by size. Never push without explicit confirmation. The description is
+  the review pack from the `create-pr` skill (summary, risks, diagram, API, DB and config, traces,
+  AC and evidence with the walkthrough video, after merge) and the bare ticket key - but no test list or CI checklist the diff and pipeline already show, no URLs,
   hostnames, secrets, or PII. Detail: `docs/standards/git-delivery.md`.
 - **Fix the import, never work around a lint or boundary violation.** Agent rules are generated
   from `.rulesync/` via `pnpm gen:agents` - never hand-edit a generated file. Detail:

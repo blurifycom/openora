@@ -6,7 +6,9 @@ Read this before a commit, PR, or branch operation.
   `docs`, `test`, `ci`, `perf`. E.g. `feat(wallet): atomic debit command port`.
 - Subject starts lowercase, acronyms included (`feat(pam): kyc status filter`). This applies to
   the PR title too - squash merges derive the commit message from it.
-- One PR = one concern. Stage files explicitly; never `git add -A` when foreign changes are in
+- One ticket = one PR, however big: a story shipped by its own key is one PR for its whole
+  scope, a sub-task shipped by its own key is one PR for that sub-task. Never split a ticket into
+  several PRs by size; splitting is a person's call, made by creating sub-tasks. Stage files explicitly; never `git add -A` when foreign changes are in
   the tree.
 - Green before review: `pnpm verify` on the committed tree. It is the full gate and records the
   verified commit; the `guard-mr` hook blocks opening the PR/MR without it.
@@ -25,7 +27,8 @@ Read this before a commit, PR, or branch operation.
   own terminal.
 - Branch off `dev`; never commit directly to a shared branch; never push without an explicit
   per-action "yes push", except the ticket branch `/ship` opens its MR from.
-- PR description carries intent: what / why / acceptance criteria / ticket link. No secrets,
+- PR description is a review pack (summary, risks, diagram, API, DB and config, traces, AC and
+  evidence, after merge; the `create-pr` skill has the format) plus the ticket link. No secrets,
   internal hostnames, or PII - it is the public record.
 - A PR that adds or changes a flow across components (request path, state machine, async job or
   webhook, a new module, overlay or vendor binding) carries a Mermaid `flowchart` or
