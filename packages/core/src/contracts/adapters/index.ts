@@ -166,7 +166,6 @@ export {
   userContactsOf,
   userIdOfPlayer,
   userIdsOfPlayers,
-  userIdsWithPlayerStatus,
   withPlayerIds,
 } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';

@@ -1,6 +1,6 @@
 import { createToken } from './token.js';
 import type { User } from '../schemas/identity.js';
-import type { KycStatus, Player, PlayerStatus } from '../schemas/player.js';
+import type { KycStatus, Player } from '../schemas/player.js';
 
 export type IdentityReader = {
   /** Timestamp of the player's most recent session, or null if they have never logged in. Used for inactive evaluation. */
@@ -74,12 +74,6 @@ export type IdentityReader = {
    * {@link playerFactsOf}.
    */
   getPlayerFacts?(userIds: readonly User['id'][]): Promise<Map<User['id'], PlayerFacts>>;
-  /**
-   * The user id of every player whose status is one of `statuses` (eg `closed`,
-   * `self_excluded`), for a sweep that stops paying them. Optional; a caller fails closed
-   * through {@link userIdsWithPlayerStatus}.
-   */
-  getUserIdsByPlayerStatus?(statuses: readonly PlayerStatus[]): Promise<User['id'][]>;
 };
 
 export type LeaderboardName = { username: string; hideUsername: boolean };
@@ -170,16 +164,6 @@ export function playerFactsOf(
   return userIds.length === 0
     ? Promise.resolve(new Map())
     : required(reader, 'getPlayerFacts')(unique(userIds));
-}
-
-/** `getUserIdsByPlayerStatus` for a caller that cannot work without it; throws like {@link userIdOfPlayer}. */
-export function userIdsWithPlayerStatus(
-  reader: IdentityReader,
-  statuses: readonly PlayerStatus[],
-): Promise<User['id'][]> {
-  return statuses.length === 0
-    ? Promise.resolve([])
-    : required(reader, 'getUserIdsByPlayerStatus')([...new Set(statuses)]);
 }
 
 /**

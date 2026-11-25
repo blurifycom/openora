@@ -5,7 +5,6 @@ import type {
   LeaderboardName,
   Player,
   PlayerFacts,
-  PlayerStatus,
   User,
   UserContact,
 } from '@openora/core/contracts';
@@ -160,17 +159,6 @@ export class IdentityReaderService implements IdentityReader {
       .leftJoin(player, eq(player.userId, user.id))
       .where(sql`${user.id} = ANY(${sql.param([...userIds])}::uuid[])`);
     return new Map(rows.map(({ userId, ...facts }) => [userId, facts]));
-  }
-
-  async getUserIdsByPlayerStatus(statuses: readonly PlayerStatus[]): Promise<User['id'][]> {
-    if (statuses.length === 0) {
-      return [];
-    }
-    const rows = await this.drizzle.db
-      .select({ userId: player.userId })
-      .from(player)
-      .where(inArray(player.status, [...statuses]));
-    return rows.map((row) => row.userId);
   }
 
   async getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null> {

@@ -93,16 +93,4 @@ describe('IDENTITY_READER answers what the old money-side joins did', () => {
     expect(sorted(facts)).toEqual(sorted(old));
     expect(facts.get(userIds[0] ?? '')).toMatchObject({ country: 'DE', firstName: 'Ada' });
   });
-
-  it('getUserIdsByPlayerStatus: the player rows in those statuses', async () => {
-    const statuses = ['closed', 'self_excluded'] as const;
-    const rows = await db.drizzle.db
-      .select({ userId: player.userId })
-      .from(player)
-      .where(inArray(player.status, [...statuses]));
-
-    const found = await reader.getUserIdsByPlayerStatus(statuses);
-    expect([...found].sort()).toEqual(rows.map((row) => row.userId).sort());
-    expect(found).toHaveLength(2);
-  });
 });
