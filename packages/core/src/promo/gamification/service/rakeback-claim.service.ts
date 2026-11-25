@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
 import type {
   IdentityReader,
   AuditWritePort,
@@ -213,7 +213,7 @@ export class RakebackClaimService {
       .where(
         and(
           eq(promoRakebackAccrual.status, 'accrued'),
-          inArray(promoRakebackAccrual.userId, candidates),
+          sql`${promoRakebackAccrual.userId} = ANY(${sql.param(candidates)}::uuid[])`,
         ),
       )
       .groupBy(promoRakebackAccrual.userId, promoRakebackAccrual.currency)
