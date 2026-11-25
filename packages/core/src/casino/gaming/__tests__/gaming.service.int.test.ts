@@ -767,10 +767,15 @@ describe('GamingService admin list filters (real PG)', () => {
   });
 
   /** The rule pairs compliance answers `listGeoRulePairs` with, read from the seeded tables. */
-  async function geoRulePairs(countries?: readonly string[]): Promise<GameGeoRules> {
+  async function geoRulePairs(filter?: { countries?: readonly string[] }): Promise<GameGeoRules> {
+    const countries = filter?.countries;
     const [games, providers] = await Promise.all([
       db.drizzle.db
-        .selectDistinct({ gameId: gameGeoRule.gameId, countryCode: gameGeoRule.countryCode })
+        .selectDistinct({
+          gameId: gameGeoRule.gameId,
+          countryCode: gameGeoRule.countryCode,
+          source: gameGeoRule.source,
+        })
         .from(gameGeoRule)
         .where(countries ? inArray(gameGeoRule.countryCode, [...countries]) : undefined),
       db.drizzle.db

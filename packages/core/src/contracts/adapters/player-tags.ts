@@ -6,7 +6,8 @@ import type { TagKey } from '../schemas/tag.js';
  * without importing the tag module's schema (module isolation). Absent from the map == no active tags.
  */
 export type PlayerTags = {
-  getActiveTagKeys(userIds: readonly string[]): Promise<Map<string, TagKey[]>>;
+  /** Read on `tx` (a `DrizzleTx`) when given, so a caller in a transaction takes no second connection. */
+  getActiveTagKeys(userIds: readonly string[], tx?: unknown): Promise<Map<string, TagKey[]>>;
 };
 
 export const PLAYER_TAGS: Token<PlayerTags> = createToken('PLAYER_TAGS');

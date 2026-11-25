@@ -9,7 +9,7 @@ import {
   pageToOffset,
   alreadyInUseError,
 } from '@openora/core/server';
-import { and, asc, count, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
 import {
   AssignPlayerTagInput,
@@ -169,17 +169,17 @@ export class TagService implements PlayerTags {
   }
 
   // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
-  public async getActiveTagKeys(userIds: readonly string[]) {
+  public async getActiveTagKeys(userIds: readonly string[], tx?: DrizzleTx) {
     const result = new Map<string, TagKey[]>();
     if (userIds.length === 0) {
       return result;
     }
-    const rows = await this.drizzle.db
+    const rows = await (tx ?? this.drizzle.db)
       .select({ userId: player.userId, key: tag.key })
       .from(player)
       .innerJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
       .innerJoin(tag, eq(tag.id, playerTag.tagId))
-      .where(inArray(player.userId, [...userIds]));
+      .where(sql`${player.userId} = ANY(${sql.param([...userIds])}::uuid[])`);
     for (const row of rows) {
       const keys = result.get(row.userId) ?? [];
       keys.push(row.key);

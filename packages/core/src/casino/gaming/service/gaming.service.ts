@@ -369,7 +369,7 @@ export class GamingService {
     // The plain blocked filter needs every rule; the country filters only their countries.
     return listGeoRulePairs.call(
       gameGeoCheck,
-      geoBlocked === undefined ? [...new Set(countries)] : undefined,
+      geoBlocked === undefined ? { countries: [...new Set(countries)] } : undefined,
     );
   }
 

@@ -71,6 +71,29 @@ describe('TagService.getActiveTagKeys (real PG)', () => {
     expect(map.has(untagged)).toBe(false);
   });
 
+  it('reads on the caller transaction when given one', async () => {
+    const userId = randomUUID();
+    const rollback = new Error('rollback');
+    const seen = await db.drizzle.db
+      .transaction(async (tx) => {
+        const [row] = await tx.insert(player).values({ userId }).returning();
+        await tx.insert(playerTag).values({
+          playerId: row!.id,
+          tagId: await tagIdFor('vip'),
+          assignReason: 'seed',
+          assignActor: 'manual',
+          assignActorUserId: randomUUID(),
+        });
+        const onTx = await svc.getActiveTagKeys([userId], tx);
+        expect(onTx.get(userId)).toEqual(['vip']);
+        throw rollback;
+      })
+      .catch((err: unknown) => err);
+
+    expect(seen).toBe(rollback);
+    expect((await svc.getActiveTagKeys([userId])).has(userId)).toBe(false);
+  });
+
   it('excludes assignments that were removed', async () => {
     const userId = await seedPlayerWithTags(['vip'], ['high_risk']);
 

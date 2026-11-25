@@ -2091,3 +2091,30 @@ describe('ComplianceService.replaceGameGeoRules (real PG)', () => {
     );
   });
 });
+
+describe('ComplianceService.listGeoRulePairs (real PG)', () => {
+  it('narrows the game pairs by country, game and source, the provider pairs by country only', async () => {
+    const [first, second, providerId] = [randomUUID(), randomUUID(), randomUUID()];
+    await db.drizzle.db.insert(gameGeoRule).values([
+      { gameId: first, countryCode: 'DE', reason: 'sync', source: 'vendor' },
+      { gameId: first, countryCode: 'FR', reason: 'admin' },
+      { gameId: second, countryCode: 'DE', reason: 'sync', source: 'vendor' },
+    ]);
+    await db.drizzle.db.insert(providerGeoRule).values([
+      { providerId, countryCode: 'DE', reason: 'licence' },
+      { providerId, countryCode: 'US', reason: 'licence' },
+    ]);
+    const { svc } = makeService();
+
+    expect(
+      await svc.listGeoRulePairs({ countries: ['DE'], gameIds: [first], source: 'vendor' }),
+    ).toEqual({
+      games: [{ gameId: first, countryCode: 'DE', source: 'vendor' }],
+      providers: [{ providerId, countryCode: 'DE' }],
+    });
+    expect((await svc.listGeoRulePairs({ gameIds: [first] })).games).toHaveLength(2);
+    expect((await svc.listGeoRulePairs({ source: 'vendor' })).games).toHaveLength(2);
+    const all = await svc.listGeoRulePairs();
+    expect([all.games.length, all.providers.length]).toEqual([3, 2]);
+  });
+});

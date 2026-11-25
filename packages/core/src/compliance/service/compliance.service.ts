@@ -12,7 +12,20 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { and, asc, count, eq, exists, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  ne,
+  or,
+  sql,
+  type AnyColumn,
+  type SQL,
+} from 'drizzle-orm';
 import {
   countryRule,
   gameGeoRule,
@@ -623,20 +636,37 @@ export class ComplianceService {
     };
   }
 
-  async listGeoRulePairs(countries?: readonly string[]): Promise<GameGeoRules> {
+  async listGeoRulePairs(
+    filter: { countries?: readonly string[]; gameIds?: readonly string[]; source?: string } = {},
+  ): Promise<GameGeoRules> {
+    const { countries, gameIds, source } = filter;
     const db = this.drizzle.db;
+    const inCountries = (column: AnyColumn) =>
+      countries ? sql`${column} = ANY(${sql.param([...countries])}::text[])` : undefined;
     const [games, providers] = await Promise.all([
       db
-        .selectDistinct({ gameId: gameGeoRule.gameId, countryCode: gameGeoRule.countryCode })
+        .selectDistinct({
+          gameId: gameGeoRule.gameId,
+          countryCode: gameGeoRule.countryCode,
+          source: gameGeoRule.source,
+        })
         .from(gameGeoRule)
-        .where(countries ? inArray(gameGeoRule.countryCode, [...countries]) : undefined),
+        .where(
+          and(
+            inCountries(gameGeoRule.countryCode),
+            gameIds
+              ? sql`${gameGeoRule.gameId} = ANY(${sql.param([...gameIds])}::uuid[])`
+              : undefined,
+            source === undefined ? undefined : eq(gameGeoRule.source, source),
+          ),
+        ),
       db
         .selectDistinct({
           providerId: providerGeoRule.providerId,
           countryCode: providerGeoRule.countryCode,
         })
         .from(providerGeoRule)
-        .where(countries ? inArray(providerGeoRule.countryCode, [...countries]) : undefined),
+        .where(inCountries(providerGeoRule.countryCode)),
     ]);
     return { games, providers };
   }
