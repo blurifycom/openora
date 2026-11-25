@@ -1,6 +1,6 @@
 <!--
 A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. Plain words and diagrams, no code, paths or symbol names; generated from the diff, the schema diff and real spans, never invented. This repo is public: bare ticket keys only, no internal URLs, hosts, operator names or personal data.
-Keep a section only when its trigger fires; delete the rest. Every section but "How it was checked" stays collapsed, its summary line carrying the gist. Mermaid: horizontal, no fills, a coloured border on what changed (added #3fb950, changed #d29922, removed #f85149 dashed).
+Keep a section only when its trigger fires; delete the rest. Budget: what shows before anything is expanded fits one screen (about 1500 characters), and each section fits one screen (about 1500 characters plus its diagram); the detail lives in the diagram or table, not in paragraphs. Every section but "How it was checked" stays collapsed, its summary line carrying the gist. Mermaid: horizontal, no fills, a coloured border on what changed (added #3fb950, changed #d29922, removed #f85149 dashed).
 First line: the bare ticket key, or `Closes #<issue>`. Sections 2 (infra path), 7 (e2e steps) and 11 (video) are left out: this repo has no deploy infra or player UI.
 -->
 
