@@ -319,6 +319,18 @@ describe('BullMqJobQueue', () => {
     ]);
   });
 
+  it('close gives up waiting on a dead Redis instead of hanging shutdown', async () => {
+    const q = new BullMqJobQueue('redis://127.0.0.1:1');
+    vi.spyOn(q['logger'], 'error').mockImplementation(() => undefined);
+    q.registerWorker({ queue: queue('down'), schema: Payload, handler: () => undefined });
+    void q.schedule(queue('down'), 'down.cron', {}, { everyMs: 60_000 }).catch(() => undefined);
+    const startedAt = Date.now();
+
+    await q.close();
+
+    expect(Date.now() - startedAt).toBeLessThan(4_000);
+  });
+
   it('close drains an in-flight job before resolving', async () => {
     const q = makeQueue();
     let started = false;

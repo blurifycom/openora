@@ -82,13 +82,22 @@ export async function isDueForAutoPayout(
   return state?.isSelfExcluded === true;
 }
 
-/** `isDueForAutoPayout` with the projection row share-locked for the payout's transaction. */
+/**
+ * `isDueForAutoPayout` with the exclusion rows and the projection row share-locked for the
+ * payout's transaction, in that order: a lift updates its exclusion row and then writes the
+ * projection, so taking the projection first deadlocks against it.
+ */
 export async function isDueForAutoPayoutLocked(
   tx: DrizzleTx,
   ledger: LedgerPlayEligibilityPort | undefined,
   exclusions: RgExclusionReader | undefined,
   userId: Uuid,
 ): Promise<boolean> {
+  const exclusion = await exclusions?.getExclusionState(userId, tx);
   const state = (await ledger?.stateOf(userId, tx)) ?? null;
-  return isDueForAutoPayout(exclusions, userId, state?.status ?? null, tx);
+  return (
+    state?.status === 'closed' ||
+    state?.status === 'self_excluded' ||
+    exclusion?.isSelfExcluded === true
+  );
 }

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
+import { PLAY_ELIGIBILITY_PROJECTION } from '@openora/core/contracts';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import { walletTransaction } from '@openora/core/wallet/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import { promoRankPeriodicReward } from '@openora/core/promo/schema/gamification';
@@ -25,6 +27,11 @@ let admin: TestClient;
 const CONFIG_PATH = '/backoffice/promo/ranks/config';
 
 const drizzle = () => app.container.get(DRIZZLE).db;
+
+// A direct write bypasses identity's publisher, so re-project as a script would; the platform's
+// RG routes would also end the login the claim needs.
+const reproject = () =>
+  backfillPlayEligibility(drizzle(), app.container.get(PLAY_ELIGIBILITY_PROJECTION));
 
 const newPlayer = () =>
   registerAndMaterializePlayer(app, { email: `rank-reward-${randomUUID()}@example.test` });
@@ -190,6 +197,7 @@ describe('a player claiming a periodic rank reward', () => {
     const { client, userId } = await newPlayer();
     const reward = await leave(userId);
     await drizzle().update(user).set({ rgBlocked: true }).where(eq(user.id, userId));
+    await reproject();
 
     const res = await claim(client, reward.id);
 

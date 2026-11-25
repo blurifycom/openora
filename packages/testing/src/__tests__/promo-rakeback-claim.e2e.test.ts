@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { and, eq, like, sql } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE, EVENT_BUS } from '@openora/core/server';
-import { WAGER_TRACKING } from '@openora/core/contracts';
+import { PLAY_ELIGIBILITY_PROJECTION, WAGER_TRACKING } from '@openora/core/contracts';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
@@ -27,6 +28,11 @@ let app: TestApp;
 let admin: TestClient;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
+
+// A direct write bypasses identity's publisher, so re-project as a script would; the platform's
+// RG routes would also end the login the claim needs.
+const reproject = () =>
+  backfillPlayEligibility(drizzle(), app.container.get(PLAY_ELIGIBILITY_PROJECTION));
 
 const newPlayer = () =>
   registerAndMaterializePlayer(app, { email: `rakeback-${randomUUID()}@example.test` });
@@ -182,6 +188,7 @@ describe('a player claiming rakeback on the house edge', () => {
     const { client, userId } = await newPlayer();
     await bet(userId, '1000');
     await drizzle().update(user).set({ rgBlocked: true }).where(eq(user.id, userId));
+    await reproject();
 
     const res = await claim(client);
 
@@ -398,6 +405,7 @@ describe('rakeback auto-payout on self-exclusion', () => {
       .update(player)
       .set({ status: 'self_excluded' })
       .where(eq(player.userId, userId));
+    await reproject();
     selfExclusionActivated(userId);
     await vi.waitFor(async () => {
       expect(await accrualsOf(userId)).toEqual([expect.objectContaining({ status: 'claimed' })]);
