@@ -7,6 +7,9 @@ describe('Cooling-off', () => {
   it.todo('player starts cooling-off twice and gets an active-exclusion conflict');
   it.todo('cooling-off ends on its own once the period has elapsed and the player plays again');
   it.todo('admin lifts a cooling-off period and the lift is audited');
+  it.todo(
+    'an admin without the compliance permission lifting a cooling-off period is refused as forbidden',
+  );
 });
 
 describe('Self-exclusion', () => {

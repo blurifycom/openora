@@ -5,7 +5,7 @@ describe('KYC global switch and withdrawal gate', () => {
     'admin turns the global KYC switch off and a player with deposits over the threshold withdraws without KYC',
   );
   it.todo(
-    'admin turns the global KYC switch on and the same player is blocked from withdrawing until approved',
+    'admin turns the global KYC switch on and a player with deposits over the threshold is blocked from withdrawing until approved',
   );
   it.todo('player whose cumulative completed deposits stay at the threshold withdraws without KYC');
   it.todo(
@@ -28,18 +28,6 @@ describe('KYC global switch and withdrawal gate', () => {
   it.todo('player cannot read or change the global KYC configuration through the admin route');
   it.todo(
     'admin updates the global KYC configuration with a stale version and gets a version conflict',
-  );
-});
-
-describe('Actions that need basic KYC', () => {
-  it.todo('player without basic KYC cannot send a gift and nothing is debited');
-  it.todo('player without basic KYC cannot send a rain or donate and gets a KYC-required error');
-  it.todo('player without basic KYC cannot join or create a PvP match');
-  it.todo('player with approved basic KYC can gift, rain, donate and join PvP');
-  it.todo('approval of basic KYC lifts the block on the next request without a new session');
-  it.todo('a player with KYC pending is treated as unverified for gift, rain, donate and PvP');
-  it.todo(
-    'with the global KYC switch off the gift, rain, donate and PvP actions do not require KYC',
   );
 });
 

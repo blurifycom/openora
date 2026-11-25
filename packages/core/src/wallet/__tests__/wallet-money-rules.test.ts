@@ -44,21 +44,6 @@ describe('deposit minimum', () => {
   it.todo('accepts an amount equal to the minimum');
 });
 
-describe('withdrawal auto-approval threshold', () => {
-  it.todo('auto-approves an amount below the threshold in the reference currency');
-  it.todo('queues an amount equal to or above the threshold');
-  it.todo('converts the amount to the reference currency at the stored rate');
-  it.todo('queues when no fresh rate exists instead of auto-approving');
-  it.todo('prefers a per-player rule over the global threshold');
-  it.todo('queues everything when auto-withdrawal is disabled');
-});
-
-describe('locked amount', () => {
-  it.todo('is zero when no withdrawal is pending or processing');
-  it.todo('sums pending and processing withdrawals of the currency only');
-  it.todo('ignores completed, rejected, failed and cancelled withdrawals');
-});
-
 describe('decimal money math', () => {
   it.todo('adds and subtracts amounts without binary float error');
   it.todo('compares amounts of different scale as equal when numerically equal');

@@ -50,14 +50,13 @@ const toRepoPath = (path) =>
 
 export default {
   testRunner: 'vitest',
+  allowEmpty: true,
   vitest: {
     configFile: 'packages/core/vitest.mutation.config.ts',
     // Plugins load through `import(path)`, which vitest's related-files graph cannot see, so
     // with this on a mutant in plugin code runs zero tests and is reported as survived.
     related: false,
-    // A test calls `process.chdir()`, which threads do not support.
     pool: 'forks',
-    allowEmpty: true,
   },
   checkers: ['typescript'],
   tsconfigFile: 'packages/core/tsconfig.json',

@@ -1,7 +1,9 @@
 import { describe, it } from 'vitest';
 
 describe('Player deposit, loss and wager limits', () => {
-  it.todo('player sets a daily deposit limit and a deposit over it is refused');
+  it.todo(
+    'player sets a daily deposit limit and a deposit route request over it is refused with no ledger row',
+  );
   it.todo('player sets weekly and monthly limits and the tightest window refuses first');
   it.todo('player sets a loss limit and a bet that would exceed it is refused');
   it.todo('player sets a wager limit and the next bet over it is refused');

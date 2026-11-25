@@ -10,6 +10,7 @@ describe('player withdrawal request', () => {
   it.todo(
     'a withdrawal threshold in another currency is evaluated in the reference currency at the stored rate',
   );
+  it.todo('a withdrawal exactly at the auto threshold is still paid out automatically');
   it.todo('a withdrawal below the asset minimum is refused and the balance is unchanged');
   it.todo('a withdrawal not above the network fee is refused and the balance is unchanged');
   it.todo(
@@ -27,19 +28,6 @@ describe('player withdrawal request', () => {
   );
   it.todo('a withdrawal with no fresh exchange rate is refused and nothing is debited');
   it.todo('a withdrawal for a currency or network with withdrawals switched off is refused');
-  it.todo(
-    'a withdrawal before the 1x wagering on the deposit is met is refused and the balance is unchanged',
-  );
-  it.todo('a withdrawal after the 1x wagering on the deposit is met is accepted');
-  it.todo(
-    'a withdrawal that needs KYC from an unverified player is refused and the balance is unchanged',
-  );
-  it.todo(
-    'a withdrawal from a player with a withdrawal lock waits unapproved until the lock is released',
-  );
-  it.todo(
-    'a withdrawal from a player held by another module cannot be approved until the hold releases',
-  );
   it.todo('an unauthenticated caller requesting a withdrawal is refused with 401');
   it.todo("a player cannot see or act on another player's withdrawal");
 });
