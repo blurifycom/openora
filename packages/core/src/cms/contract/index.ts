@@ -100,7 +100,8 @@ export const CreateBannerConfigurationInputSchema = z.object({
    * Return the placement's existing configuration (the default one, else the newest) instead
    * of creating another. The check and the insert are atomic per placement, so concurrent
    * callers on an empty placement get the same configuration. The existing one is returned as
-   * it is, whatever its layout. Absent or false = always create.
+   * it is, whatever its layout. Absent or false = always create. Setting it also requires
+   * `content:update`, since it can return an existing configuration's images.
    */
   reuseExisting: z.boolean().optional(),
 });
