@@ -83,8 +83,8 @@ const REMOTE_PROJECTION_WRITE = {
 
 /**
  * Every money port a platform module reads, by name. `remoteFlag` sets `remote: true` on the
- * client, which ADR-0062 reads: a lift or loosening reaches the ledger by its event, and the
- * ledger refuses on a stale heartbeat.
+ * client, which makes the owner follow ADR-0062: a restriction is written first, a lift or
+ * loosening reaches the ledger by its event.
  */
 export const MONEY_REMOTE_PORTS = {
   WALLET_READER: port<WalletReader>(WALLET_READER, {

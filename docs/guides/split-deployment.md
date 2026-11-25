@@ -145,11 +145,10 @@ The money modules (`wallet`, `bonus`, `gamification`, `gaming`, `betting`, `exch
 | `WALLET_READER`                                  | every read                                                                          |
 | `EXCHANGE_RATE_READER`                           | `getRate`, `convert`                                                                |
 | `ADMIN_WALLET_REPORTING`, `ADMIN_GAME_REPORTING` | every report                                                                        |
-| `LEDGER_API_V1`                                  | `bet`, `win`, `reverse`, `closeRound`, `balance` (not the sportsbook ops)           |
 | `PLAY_ELIGIBILITY_PROJECTION`                    | `write`, `reconcile`, `heartbeat`, bound with `remote: true`                        |
 | `RG_LIMIT_LEDGER`                                | `write`, `reconcile`, `drifted`, `heartbeat`, `spendFor`, bound with `remote: true` |
 
-`remote: true` turns on ADR-0062: a lift or a loosened limit reaches the ledger by its event, a restriction still writes first and fails the change when the write fails, and the ledger refuses stakes and deposits once the heartbeat is stale.
+`remote: true` makes the owners follow ADR-0062: a lift or a loosened limit reaches the ledger by its event, and a restriction still writes first and fails the change when the write fails. On the money service, a non-empty `MONEY_PORTS_CALLERS` arms the stale check: stakes, deposits and wagers refuse once the last heartbeat is older than `LEDGER_PROJECTION_STALE_MS`, or missing. A fresh split install therefore refuses until the platform's first beat, at most `LEDGER_PROJECTION_HEARTBEAT_MS`.
 
 Ports that take the caller's transaction cannot cross the network: `WALLET_COMMANDS`, `WAGER_TRACKING`, `BONUS_LIFECYCLE`, `BONUS_WAGERING`, `BONUS_GRANTS`, `BONUS_GRANT_LEDGER`, `GAMING_COMMANDS`, `RG_LIMITS` and `LEDGER_PLAY_ELIGIBILITY`. With `MONEY_SERVICE_URL` set, a kept module whose `requiresPorts` names one fails the boot with the module and the port in the message.
 
@@ -172,7 +171,7 @@ INTERNAL_API_SECRETS=<shared secret>
 
 `MONEY_PORTS_CALLERS` is a comma list of `SERVICE_NAME`s; unset refuses every caller. Every call goes through one route, naming the port and method; the money service answers from its own binding and refuses a port or method outside the table above. A required `tx` argument is never sent: the money service runs a write in a transaction of its own and a read on its own connection.
 
-Failures close. Nothing is cached, and each call times out at 2s. A read that cannot be answered (timeout, network, 5xx) throws a 503 `SERVICE_UNAVAILABLE`, never a zero balance; a refused call (4xx) stays a 500. A write carries an idempotency key in its signed body and is retried once with the same body after a timeout, network failure or 5xx, then throws. Every remote write is idempotent at its owner (a keyed ledger op, a versioned projection write, a heartbeat), so a retry of a write that was applied applies nothing. In production the URL must be https unless `MONEY_SERVICE_ALLOW_HTTP=true`. Rollback is redeploying the platform with `MONEY_SERVICE_URL` unset.
+Failures close. Nothing is cached, and each call times out at 2s. A read that cannot be answered (timeout, network, 5xx) throws a 503 `SERVICE_UNAVAILABLE`, never a zero balance; a refused call (4xx) stays a 500. A write is retried once with the same body after a timeout, network failure or 5xx, then throws. Every remote write is idempotent at the money service (a projection write keeps the newer version, a reconcile applies only a newer one, a heartbeat), so a retry or a late first attempt never replaces newer state. A typed port refusal (`RgRateUnavailableError`) comes back as a 422 with its code, is rethrown as the same class and is never retried. In production the URL must be https unless `MONEY_SERVICE_ALLOW_HTTP=true`. Rollback is redeploying the platform with `MONEY_SERVICE_URL` unset.
 
 ## A module on a database of its own
 

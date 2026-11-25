@@ -30,7 +30,8 @@ projections, which the money service reads from its own `MONEY_PORTS_CALLERS` be
 a stake (eligibility) and a deposit or wager (limits) refuse with `LedgerProjectionStaleError`
 (`ledger_projection_stale`: 503 on the deposit and casino start-round routes, a `player_blocked`
 refusal on the Ledger API and the sportsbook ledger) once the last beat is older than
-`LEDGER_PROJECTION_STALE_MS` (default 60000), or missing. A local writer is never checked.
+`LEDGER_PROJECTION_STALE_MS` (default 60000), or missing. Without `MONEY_PORTS_CALLERS` nothing is checked;
+with it set the check runs even for a writer in the same process.
 
 **Drift.** The wallet reconciliation cycle (hourly by default) already compares each projection with
 its owner, repairs through `reconcile` or the owner's `repair`, and files `play_eligibility_drift` /
