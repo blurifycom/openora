@@ -48,6 +48,7 @@ import { migrate } from '../migrate.js';
 import { promoRace, promoRacePayout, promoRaceWager } from '../schema/index.js';
 import { RacePayoutService, STUCK_AFTER_FAILURES } from '../service/race-payout.service.js';
 import type { RacePosition } from '../contract/index.js';
+import { identityOver } from './ledger-eligibility-shim.js';
 
 let db: TestDb;
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
@@ -77,6 +78,7 @@ const service = (
     audit,
     events,
     logger,
+    identity: identityOver(db.drizzle),
   });
 
 // The wallet plugin's own WALLET_COMMANDS binding, so a payout writes a real ledger row.

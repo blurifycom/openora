@@ -147,7 +147,7 @@ export default {
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts,
     // and the services above need the wallet's and the provider's ports.
     ctx.mcp.tool(turnoverExposureTool, (c) => {
-      const turnover = new SportsbookTurnoverService(c.get(DRIZZLE));
+      const turnover = new SportsbookTurnoverService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => turnover.turnoverExposure(input);
     });
     ctx.mcp.tool(promotionReportTool, (c) => {
@@ -155,11 +155,11 @@ export default {
       return (input) => promotionReport(drizzle, input);
     });
     ctx.mcp.tool(debtsTool, (c) => {
-      const debts = new SportsbookDebtsSummaryService(c.get(DRIZZLE));
+      const debts = new SportsbookDebtsSummaryService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => debts.summary(input);
     });
     ctx.mcp.tool(betsFindTool, (c) => {
-      const bets = new BetsFindService(c.get(DRIZZLE));
+      const bets = new BetsFindService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => bets.find(input);
     });
 

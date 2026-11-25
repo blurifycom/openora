@@ -30,6 +30,7 @@ import { DEFAULT_PAYOUT_ANCHORS, type SetRankConfigInput } from '../contract/ind
 import { seedRankLadder } from '../seed/index.js';
 import { RankPayoutService } from '../service/rank-payout.service.js';
 import { RankAdminService } from '../service/rank-admin.service.js';
+import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
 
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
@@ -51,7 +52,7 @@ const service = (
   new RankPayoutService(
     db.drizzle,
     mock<BonusGrantCommands>({ grant }),
-    mock<PlayEligibilityPort>({ isRestricted }),
+    ledgerEligibilityOver(db.drizzle, isRestricted),
     mock<ExchangeRateReader>({ convert }),
     mock<WalletReader>({ getBalances }),
     events,
@@ -786,7 +787,7 @@ describe('leaving a periodic reward to claim', () => {
     const noGrants = new RankPayoutService(
       db.drizzle,
       undefined,
-      mock<PlayEligibilityPort>({ isRestricted }),
+      ledgerEligibilityOver(db.drizzle, isRestricted),
       mock<ExchangeRateReader>({ convert }),
       mock<WalletReader>({ getBalances }),
       makeOutboxEventBus(),
@@ -882,7 +883,7 @@ describe('leaving a periodic reward to claim', () => {
     const noGrants = new RankPayoutService(
       db.drizzle,
       undefined,
-      mock<PlayEligibilityPort>({ isRestricted }),
+      ledgerEligibilityOver(db.drizzle, isRestricted),
       mock<ExchangeRateReader>({ convert }),
       mock<WalletReader>({ getBalances }),
       makeOutboxEventBus(),

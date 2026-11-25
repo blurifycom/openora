@@ -5,6 +5,8 @@ import {
   EXCHANGE_RATE_READER,
   JOB_QUEUE,
   PLATFORM_CONFIG,
+  IDENTITY_READER,
+  LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
   RATE_LIMITER,
   RG_EXCLUSION_READER,
@@ -169,10 +171,11 @@ const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
     rates: c.get(EXCHANGE_RATE_READER),
     logger,
     audit: c.get(AUDIT_WRITER),
+    identity: c.get(IDENTITY_READER),
   });
 
 const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+  new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger, c.get(IDENTITY_READER));
 
 const promoConfig = (c: TypedContainer<CoreTokenCatalog>) =>
   PromoConfigSchema.parse(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {});
@@ -187,11 +190,18 @@ const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
   );
 
 const rankChallengeService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RankChallengeService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+  new RankChallengeService(
+    c.get(DRIZZLE),
+    c.get(EXCHANGE_RATE_READER),
+    logger,
+    c.get(IDENTITY_READER),
+  );
 
 export default {
   id: 'gamification',
   dependsOn: ['exchange-rate', 'audit'],
+  // Player names, player ids and nothing else of identity's: through its reader (BF-826).
+  requiresPorts: [IDENTITY_READER],
   register(ctx) {
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(rakebackLiabilityTool, (c) => {
@@ -508,7 +518,7 @@ export default {
       rankPayouts = new RankPayoutService(
         c.get(DRIZZLE),
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
-        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        c.has(LEDGER_PLAY_ELIGIBILITY) ? c.get(LEDGER_PLAY_ELIGIBILITY) : undefined,
         c.get(EXCHANGE_RATE_READER),
         c.get(WALLET_READER),
         c.get(EVENT_BUS),
@@ -534,6 +544,7 @@ export default {
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         logger,
+        identity: c.get(IDENTITY_READER),
       });
       rankChallengePayouts = new RankChallengePayoutService(
         c.get(DRIZZLE),
@@ -544,6 +555,7 @@ export default {
         c.get(AUDIT_WRITER),
         c.get(EVENT_BUS),
         logger,
+        c.get(IDENTITY_READER),
       );
       streaks = streakService(c);
       events = c.get(EVENT_BUS);
@@ -554,7 +566,7 @@ export default {
       rakebackClaims = new RakebackClaimService({
         drizzle: c.get(DRIZZLE),
         wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
-        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        eligibility: c.has(LEDGER_PLAY_ELIGIBILITY) ? c.get(LEDGER_PLAY_ELIGIBILITY) : undefined,
         exclusions: c.has(RG_EXCLUSION_READER) ? c.get(RG_EXCLUSION_READER) : undefined,
         rates: c.get(EXCHANGE_RATE_READER),
         referenceCurrency,
@@ -562,15 +574,17 @@ export default {
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         logger,
+        identity: c.get(IDENTITY_READER),
       });
       rankRewardClaims = new RankRewardClaimService({
         drizzle: c.get(DRIZZLE),
         wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
-        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        eligibility: c.has(LEDGER_PLAY_ELIGIBILITY) ? c.get(LEDGER_PLAY_ELIGIBILITY) : undefined,
         exclusions: c.has(RG_EXCLUSION_READER) ? c.get(RG_EXCLUSION_READER) : undefined,
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         logger,
+        identity: c.get(IDENTITY_READER),
       });
       const jobQueue = c.get(JOB_QUEUE);
       jobs = jobQueue;
@@ -673,7 +687,11 @@ export default {
         races: raceService(c),
         raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         rankChallenge: rankChallengeService(c),
-        rankChallengeAdmin: new RankChallengeAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        rankChallengeAdmin: new RankChallengeAdminService(
+          c.get(DRIZZLE),
+          c.get(AUDIT_WRITER),
+          c.get(IDENTITY_READER),
+        ),
         rakebackClaims,
         rakebackAdmin: new RakebackAdminService({
           drizzle: c.get(DRIZZLE),

@@ -1,7 +1,11 @@
 import { and, count, eq, gte, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleService } from '@openora/core/server';
-import { dayRangeInstants } from '@openora/core/contracts';
-import { player } from '@openora/core/pam/schema/profile';
+import {
+  dayRangeInstants,
+  userIdOfPlayer,
+  withPlayerIds,
+  type IdentityReader,
+} from '@openora/core/contracts';
 import {
   resolveTransactionsFindRange,
   type TransactionsFind,
@@ -22,7 +26,10 @@ const SORT_COLUMNS: Record<TransactionsFindSortBy, SQL> = {
  * no address, hash, provider reference or review note.
  */
 export class TransactionsFindService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly identity: IdentityReader,
+  ) {}
 
   async find(
     {
@@ -41,6 +48,8 @@ export class TransactionsFindService {
     const range = resolveTransactionsFindRange(days, now);
     const { from, to } = dayRangeInstants(range);
     const db = this.drizzle.db;
+    // The player id names a user through IDENTITY_READER; an unknown one matches nothing.
+    const playerUserId = playerId ? await userIdOfPlayer(this.identity, playerId) : null;
     const where = and(
       gte(tx.createdAt, from),
       lte(tx.createdAt, to),
@@ -52,8 +61,7 @@ export class TransactionsFindService {
             db
               .select({ walletId: wallet.id })
               .from(wallet)
-              .innerJoin(player, eq(player.userId, wallet.userId))
-              .where(eq(player.id, playerId)),
+              .where(playerUserId === null ? sql`false` : eq(wallet.userId, playerUserId)),
           )
         : undefined,
       currency ? eq(tx.currency, currency.toUpperCase()) : undefined,
@@ -64,7 +72,7 @@ export class TransactionsFindService {
       db
         .select({
           transactionId: tx.id,
-          playerId: player.id,
+          userId: wallet.userId,
           type: tx.type,
           status: tx.status,
           amount: tx.amount,
@@ -74,7 +82,6 @@ export class TransactionsFindService {
         })
         .from(tx)
         .innerJoin(wallet, eq(wallet.id, tx.walletId))
-        .leftJoin(player, eq(player.userId, wallet.userId))
         .where(where)
         // The transaction id breaks ties, so equal figures always list in the same order.
         .orderBy(sql`${SORT_COLUMNS[sortBy]} ${direction}`, sql`${tx.id} ${direction}`)
@@ -86,7 +93,7 @@ export class TransactionsFindService {
       to: range.dateTo,
       total: totals[0]?.total ?? 0,
       truncated: rows.length > limit,
-      transactions: rows.slice(0, limit).map((row) => ({
+      transactions: (await withPlayerIds(this.identity, rows.slice(0, limit))).map((row) => ({
         ...row,
         createdAt: row.createdAt.toISOString(),
       })),

@@ -6,7 +6,7 @@ import { createLogger, type DrizzleService, type DrizzleTx } from '@openora/core
 import {
   PlayEligibilitySnapshotSchema,
   playRefusalOf,
-  type PlayEligibilityPort,
+  type LedgerPlayEligibilityPort,
   type PlayEligibilityProjectionPort,
   type PlayEligibilitySnapshot,
   type PlayEligibilityState,
@@ -30,6 +30,15 @@ function rowOf(input: PlayEligibilitySnapshot): ProjectionRow {
     banExpires: toDate(snapshot.banExpires),
   };
 }
+
+const stateOf = (row: PlayEligibilityState): PlayEligibilityState => ({
+  rgBlocked: row.rgBlocked,
+  rgBlockedUntil: row.rgBlockedUntil,
+  isActive: row.isActive,
+  banned: row.banned,
+  banExpires: row.banExpires,
+  status: row.status,
+});
 
 const sameInstant = (a: Date | null, b: Date | null) => a?.getTime() === b?.getTime();
 
@@ -71,7 +80,7 @@ const fromExcluded = {
 };
 
 export class LedgerPlayEligibilityService
-  implements Required<PlayEligibilityPort>, PlayEligibilityProjectionPort
+  implements LedgerPlayEligibilityPort, PlayEligibilityProjectionPort
 {
   constructor(private readonly drizzle: Pick<DrizzleService, 'db'>) {}
 
@@ -96,6 +105,22 @@ export class LedgerPlayEligibilityService
   async checkPlay(userId: User['id'], tx?: unknown): Promise<PlayRefusal | null> {
     const row = await this.read(userId, tx);
     return row ? playRefusalOf(row) : 'account_inactive';
+  }
+
+  async stateOf(userId: User['id'], tx?: unknown): Promise<PlayEligibilityState | null> {
+    const row = await this.read(userId, tx);
+    return row ? stateOf(row) : null;
+  }
+
+  async statesOf(userIds: readonly User['id'][]): Promise<Map<User['id'], PlayEligibilityState>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.drizzle.db
+      .select()
+      .from(ledgerPlayEligibility)
+      .where(sql`${ledgerPlayEligibility.userId} = ANY(${sql.param([...new Set(userIds)])}::uuid[])`);
+    return new Map(rows.map((row) => [row.userId, stateOf(row)]));
   }
 
   async write(snapshot: PlayEligibilitySnapshot, tx: unknown): Promise<void> {

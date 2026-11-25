@@ -12,6 +12,7 @@ import {
   JOB_QUEUE,
   MoneyAmountSchema,
   PLATFORM_CONFIG,
+  IDENTITY_READER,
   PLAY_ELIGIBILITY,
   PromoConfigSchema,
   RATE_LIMITER,
@@ -107,7 +108,7 @@ const DepositJobSchema = z.object({
 export default {
   id: 'bonus',
   dependsOn: ['audit'],
-  requiresPorts: [PLAY_ELIGIBILITY],
+  requiresPorts: [PLAY_ELIGIBILITY, IDENTITY_READER],
   controlPorts: [
     {
       port: GEO_CHECK_COMMANDS,
@@ -123,7 +124,7 @@ export default {
       return (input) => summary.grantsSummary(input);
     });
     ctx.mcp.tool(grantsFindTool, (c) => {
-      const grants = new GrantsFindService(c.get(DRIZZLE));
+      const grants = new GrantsFindService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => grants.find(input);
     });
     ctx.provideSealed(
@@ -358,7 +359,7 @@ export default {
           .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
       }
       return createBonusRouter({
-        grants: new GrantReaderService(c.get(DRIZZLE)),
+        grants: new GrantReaderService(c.get(DRIZZLE), c.get(IDENTITY_READER)),
         offers,
         realtime: c.get(REALTIME_TRANSPORT),
         weights: new WeightService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),

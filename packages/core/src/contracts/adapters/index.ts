@@ -153,8 +153,15 @@ export type {
 export { WALLET_READER } from './wallet-reader.js';
 
 export type { UserCommands } from './identity.js';
-export type { IdentityReader } from './identity-reader.js';
-export { userIdOfPlayer, userIdsOfPlayers } from './identity-reader.js';
+export type { IdentityReader, LeaderboardName, UserContact } from './identity-reader.js';
+export {
+  leaderboardNamesOf,
+  playerIdsOfUsers,
+  userContactsOf,
+  userIdOfPlayer,
+  userIdsOfPlayers,
+  withPlayerIds,
+} from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 export type {
   Account,
@@ -384,6 +391,7 @@ export type { GeoCheckCommands } from './geo-check-commands.js';
 export { GEO_CHECK_COMMANDS } from './geo-check-commands.js';
 export type {
   GameGeoCheckPort,
+  GameGeoRules,
   GameGeoCheckInput,
   GameGeoDecision,
   GameGeoDenialReason,
@@ -541,6 +549,7 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
 export type {
+  LedgerPlayEligibilityPort,
   PlayEligibilityPort,
   PlayEligibilityProjectionPort,
   PlayEligibilitySourcePort,

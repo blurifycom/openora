@@ -1,10 +1,9 @@
 import { and, asc, count, desc, eq, inArray, ne, or, type SQL } from 'drizzle-orm';
-import { player } from '@openora/core/pam/schema/profile';
-import { user } from '@openora/core/pam/schema/identity';
 import type {
+  IdentityReader,
   AuditWritePort,
   DomainEventPayload,
-  PlayEligibilityPort,
+  LedgerPlayEligibilityPort,
   RgExclusionReader,
   Uuid,
   WalletCommands,
@@ -33,6 +32,7 @@ import {
 import { announceCashCredit } from '../shared/cash-credit-event.js';
 import {
   cashClaimBlocker,
+  autoPayoutCandidates,
   isDueForAutoPayout,
   isDueForAutoPayoutLocked,
 } from '../shared/cash-claim-eligibility.js';
@@ -68,11 +68,13 @@ type PaidOutcome = Claimed['outcome'];
 type RankRewardClaimDeps = {
   drizzle: DrizzleService;
   wallet: WalletCommands | undefined;
-  eligibility: PlayEligibilityPort | undefined;
+  /** LEDGER_PLAY_ELIGIBILITY: the claim gates read the ledger's projection, never identity. */
+  eligibility: LedgerPlayEligibilityPort | undefined;
   exclusions: RgExclusionReader | undefined;
   audit: AuditWritePort;
   events: EventBus;
   logger: { info: (context: object, message: string) => void };
+  identity: IdentityReader;
 };
 
 const toReward = (row: PromoRankPeriodicReward): RankPeriodicReward => ({
@@ -169,7 +171,7 @@ export class RankRewardClaimService {
    */
   async autoPay(userId: Uuid): Promise<Claimed[]> {
     return this.deps.drizzle.db.transaction(async (tx) => {
-      if (!(await isDueForAutoPayoutLocked(tx, this.deps.exclusions, userId))) {
+      if (!(await isDueForAutoPayoutLocked(tx, this.deps.eligibility, this.deps.exclusions, userId))) {
         return [];
       }
       const rows = await tx
@@ -192,17 +194,14 @@ export class RankRewardClaimService {
   }
 
   async dueForAutoPayout(): Promise<Uuid[]> {
-    const rows = await this.deps.drizzle.db
-      .selectDistinct({ userId: promoRankPeriodicReward.userId, status: player.status })
+    const owed = await this.deps.drizzle.db
+      .selectDistinct({ userId: promoRankPeriodicReward.userId })
       .from(promoRankPeriodicReward)
-      .leftJoin(player, eq(player.userId, promoRankPeriodicReward.userId))
-      .leftJoin(user, eq(user.id, promoRankPeriodicReward.userId))
-      .where(
-        and(
-          eq(promoRankPeriodicReward.status, 'claimable'),
-          or(inArray(player.status, ['closed', 'self_excluded']), eq(user.rgBlocked, true)),
-        ),
-      );
+      .where(eq(promoRankPeriodicReward.status, 'claimable'));
+    const rows = await autoPayoutCandidates(
+      this.deps.eligibility,
+      owed.map((row) => row.userId),
+    );
     const due = await mapConcurrent(rows, AUTO_PAYOUT_CHECK_CONCURRENCY, (row) =>
       isDueForAutoPayout(this.deps.exclusions, row.userId, row.status),
     );
@@ -346,7 +345,7 @@ export class RankRewardClaimService {
         transactionId: credited.transactionId,
       },
     });
-    await announceCashCredit(tx, this.deps.events, {
+    await announceCashCredit(tx, this.deps, {
       userId: row.userId,
       amount: row.amount,
       currency: row.currency,

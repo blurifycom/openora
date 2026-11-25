@@ -53,6 +53,7 @@ import {
   type MirrorTargetPolicy,
   type User,
 } from '@openora/core/contracts';
+import type { GameGeoRules } from '@openora/core/contracts';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
@@ -620,6 +621,24 @@ export class ComplianceService {
       countryCode: result.countryCode,
       redirectUrl: result.redirectUrl,
     };
+  }
+
+  async listGeoRulePairs(countries?: readonly string[]): Promise<GameGeoRules> {
+    const db = this.drizzle.db;
+    const [games, providers] = await Promise.all([
+      db
+        .selectDistinct({ gameId: gameGeoRule.gameId, countryCode: gameGeoRule.countryCode })
+        .from(gameGeoRule)
+        .where(countries ? inArray(gameGeoRule.countryCode, [...countries]) : undefined),
+      db
+        .selectDistinct({
+          providerId: providerGeoRule.providerId,
+          countryCode: providerGeoRule.countryCode,
+        })
+        .from(providerGeoRule)
+        .where(countries ? inArray(providerGeoRule.countryCode, [...countries]) : undefined),
+    ]);
+    return { games, providers };
   }
 
   async listGloballyBlockedCountries(): Promise<string[]> {

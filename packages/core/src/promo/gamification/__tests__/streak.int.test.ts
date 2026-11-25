@@ -15,6 +15,7 @@ import {
   promoStreakRoundWager,
 } from '../schema/index.js';
 import { StreakService } from '../service/streak.service.js';
+import { identityOver } from './ledger-eligibility-shim.js';
 
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();
@@ -50,6 +51,7 @@ beforeAll(async () => {
     rates: mock<ExchangeRateReader>({ convert }),
     logger,
     audit,
+    identity: identityOver(db.drizzle),
   });
 });
 

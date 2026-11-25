@@ -1,7 +1,7 @@
+import { leaderboardNamesOf } from '@openora/core/contracts';
 import { and, asc, count, desc, eq, gt, isNull, lte, sql } from 'drizzle-orm';
-import { player } from '@openora/core/pam/schema/profile';
-import { user } from '@openora/core/pam/schema/identity';
 import type {
+  IdentityReader,
   ExchangeRateReader,
   SettledWagerArgs,
   Uuid,
@@ -91,6 +91,7 @@ export class RaceService implements WagerTrackingCommands {
     private readonly drizzle: DrizzleService,
     private readonly rates: ExchangeRateReader,
     private readonly logger: { warn: (context: object, message: string) => void },
+    private readonly identity: IdentityReader,
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
@@ -305,12 +306,8 @@ export class RaceService implements WagerTrackingCommands {
         .select({
           userId: promoRaceWager.userId,
           wagered: promoRaceWager.wagered,
-          username: user.username,
-          hideUsername: player.hideUsernameOnLeaderboards,
         })
         .from(promoRaceWager)
-        .innerJoin(user, eq(user.id, promoRaceWager.userId))
-        .leftJoin(player, eq(player.userId, promoRaceWager.userId))
         .where(eq(promoRaceWager.raceId, raceId))
         .orderBy(...RACE_STANDING_ORDER)
         .limit(LEADERBOARD_CAP),
@@ -321,12 +318,22 @@ export class RaceService implements WagerTrackingCommands {
         .where(eq(promoRaceWager.raceId, raceId)),
     ]);
 
-    const entries: RaceLeaderboardEntry[] = ranked.map((row, index) => ({
+    // Names through IDENTITY_READER; a standing identity no longer knows drops out, as the inner
+    // join on the user table once dropped it.
+    const names = await leaderboardNamesOf(
+      this.identity,
+      ranked.map((row) => row.userId),
+    );
+    const named = ranked.flatMap((row) => {
+      const name = names.get(row.userId);
+      return name ? [{ ...row, ...name }] : [];
+    });
+    const entries: RaceLeaderboardEntry[] = named.map((row, index) => ({
       userId: row.userId,
       username:
         row.userId === userId
           ? row.username
-          : (row.hideUsername ?? false)
+          : row.hideUsername
             ? INCOGNITO
             : maskUsername(row.username),
       wagered: row.wagered,

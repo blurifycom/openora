@@ -5,21 +5,17 @@ import {
   eq,
   gt,
   inArray,
-  isNotNull,
   isNull,
   lt,
-  lte,
-  notInArray,
   or,
   sql,
 } from 'drizzle-orm';
-import { player } from '@openora/core/pam/schema/profile';
-import { user } from '@openora/core/pam/schema/identity';
 import type {
+  IdentityReader,
   AuditWritePort,
   DomainEventPayload,
   ExchangeRateReader,
-  PlayEligibilityPort,
+  LedgerPlayEligibilityPort,
   RgExclusionReader,
   Uuid,
   WalletCommands,
@@ -49,8 +45,9 @@ import type {
 import { claimedByCurrency, priceRakeback, unclaimedRakeback } from '../shared/rakeback-totals.js';
 import { announceCashCredits } from '../shared/cash-credit-event.js';
 import {
-  CLAIM_BLOCKED_STATUSES,
   cashClaimBlocker,
+  claimBlockerOf,
+  autoPayoutCandidates,
   isDueForAutoPayout,
   isDueForAutoPayoutLocked,
 } from '../shared/cash-claim-eligibility.js';
@@ -95,7 +92,8 @@ export type RakebackClaimed = { userId: Uuid; claimId: Uuid; paid: RakebackPaid[
 type RakebackClaimDeps = {
   drizzle: DrizzleService;
   wallet: WalletCommands | undefined;
-  eligibility: PlayEligibilityPort | undefined;
+  /** LEDGER_PLAY_ELIGIBILITY: the claim gates read the ledger's projection, never identity. */
+  eligibility: LedgerPlayEligibilityPort | undefined;
   exclusions: RgExclusionReader | undefined;
   rates: ExchangeRateReader;
   referenceCurrency: string;
@@ -103,6 +101,7 @@ type RakebackClaimDeps = {
   audit: AuditWritePort;
   events: EventBus | undefined;
   logger: { info: (context: object, message: string) => void };
+  identity: IdentityReader;
 };
 
 /**
@@ -149,7 +148,7 @@ export class RakebackClaimService {
   async autoPay(userId: Uuid): Promise<RakebackClaimed | null> {
     try {
       return await this.deps.drizzle.db.transaction(async (tx) =>
-        (await isDueForAutoPayoutLocked(tx, this.deps.exclusions, userId))
+        (await isDueForAutoPayoutLocked(tx, this.deps.eligibility, this.deps.exclusions, userId))
           ? this.settle(tx, userId, `auto:${randomUUID()}`, 'auto_paid')
           : null,
       );
@@ -162,21 +161,14 @@ export class RakebackClaimService {
   }
 
   async dueForAutoPayout(): Promise<Uuid[]> {
-    const rows = await this.deps.drizzle.db
-      .selectDistinct({
-        userId: promoRakebackAccrual.userId,
-        status: player.status,
-        rgBlocked: user.rgBlocked,
-      })
+    const owed = await this.deps.drizzle.db
+      .selectDistinct({ userId: promoRakebackAccrual.userId })
       .from(promoRakebackAccrual)
-      .leftJoin(player, eq(player.userId, promoRakebackAccrual.userId))
-      .leftJoin(user, eq(user.id, promoRakebackAccrual.userId))
-      .where(
-        and(
-          eq(promoRakebackAccrual.status, 'accrued'),
-          or(inArray(player.status, ['closed', 'self_excluded']), eq(user.rgBlocked, true)),
-        ),
-      );
+      .where(eq(promoRakebackAccrual.status, 'accrued'));
+    const rows = await autoPayoutCandidates(
+      this.deps.eligibility,
+      owed.map((row) => row.userId),
+    );
     const due = await mapConcurrent(rows, AUTO_PAYOUT_CHECK_CONCURRENCY, (row) =>
       isDueForAutoPayout(this.deps.exclusions, row.userId, row.status),
     );
@@ -195,20 +187,13 @@ export class RakebackClaimService {
   ): Promise<number> {
     const db = this.deps.drizzle.db;
     const cutoff = new Date(now.getTime() - NOTIFY_INTERVAL_MS);
-    const candidates = db
+    const accrued = await db
       .selectDistinct({ userId: promoRakebackAccrual.userId })
       .from(promoRakebackAccrual)
       .innerJoin(promoPlayerRank, eq(promoPlayerRank.userId, promoRakebackAccrual.userId))
-      .innerJoin(player, eq(player.userId, promoRakebackAccrual.userId))
-      .innerJoin(user, eq(user.id, promoRakebackAccrual.userId))
       .where(
         and(
           eq(promoRakebackAccrual.status, 'accrued'),
-          notInArray(player.status, [...CLAIM_BLOCKED_STATUSES, 'self_excluded']),
-          or(
-            eq(user.rgBlocked, false),
-            and(isNotNull(user.rgBlockedUntil), lte(user.rgBlockedUntil, now)),
-          ),
           or(
             isNull(promoPlayerRank.lastClaimableNotifiedAt),
             lt(promoPlayerRank.lastClaimableNotifiedAt, cutoff),
@@ -219,6 +204,14 @@ export class RakebackClaimService {
           ),
         ),
       );
+    // Only players who could claim: the ledger's projection, not the identity tables (ADR-0056).
+    const states = (await this.deps.eligibility?.statesOf(accrued.map((row) => row.userId))) ?? new Map();
+    const candidates = accrued
+      .map((row) => row.userId)
+      .filter((userId) => claimBlockerOf(states.get(userId) ?? null, now) === null);
+    if (candidates.length === 0) {
+      return 0;
+    }
     const rows = await db
       .select({
         userId: promoRakebackAccrual.userId,
@@ -390,7 +383,7 @@ export class RakebackClaimService {
     if (!events) {
       return;
     }
-    await announceCashCredits(tx, events, userId, paid);
+    await announceCashCredits(tx, { events, identity: this.deps.identity }, userId, paid);
   }
 
   private async replay(tx: DrizzleTx, userId: Uuid, idempotencyKey: string) {
@@ -423,7 +416,7 @@ export class RakebackClaimService {
 
   private async assertMayClaim(tx: DrizzleTx, userId: Uuid) {
     if (!this.deps.eligibility) {
-      throw new Error('rakeback claim needs PLAY_ELIGIBILITY bound');
+      throw new Error('rakeback claim needs LEDGER_PLAY_ELIGIBILITY bound');
     }
     const blocker = await cashClaimBlocker(tx, this.deps.eligibility, userId, { lock: true });
     if (blocker === 'restricted') {
