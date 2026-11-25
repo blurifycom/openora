@@ -1,15 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  inArray,
-  isNull,
-  lt,
-  or,
-  sql,
-} from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type {
   IdentityReader,
   AuditWritePort,
@@ -205,7 +195,8 @@ export class RakebackClaimService {
         ),
       );
     // Only players who could claim: the ledger's projection, not the identity tables (ADR-0056).
-    const states = (await this.deps.eligibility?.statesOf(accrued.map((row) => row.userId))) ?? new Map();
+    const states =
+      (await this.deps.eligibility?.statesOf(accrued.map((row) => row.userId))) ?? new Map();
     const candidates = accrued
       .map((row) => row.userId)
       .filter((userId) => claimBlockerOf(states.get(userId) ?? null, now) === null);

@@ -4,7 +4,7 @@ import {
   ADMIN_GUARD,
   createLogger,
   retryUntilDone,
-  startProjectionHeartbeat,
+  projectionHeartbeatEveryMs,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
@@ -123,6 +123,7 @@ const RECENT_LIMIT_CHANGE_MS = 10 * 60_000;
 
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
+const RG_LIMITS_HEARTBEAT_QUEUE = queue('compliance-ledger-heartbeat');
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 const KYC_EXEMPTION_QUEUE = queue('kyc-exemption');
 
@@ -204,6 +205,7 @@ export default {
     let selfServiceRef: RgSelfServiceService | null = null;
     let monitorRef: RgMonitoringService | null = null;
     let healRecentLimitsRef: (() => Promise<number>) | null = null;
+    let limitsHeartbeatRef: (() => Promise<void>) | null = null;
     const monitoring = (c: TypedContainer<CoreTokenCatalog>) =>
       (monitorRef ??= new RgMonitoringService({
         drizzle: c.get(DRIZZLE),
@@ -444,6 +446,16 @@ export default {
       },
     });
     ctx.jobs.worker({
+      queue: RG_LIMITS_HEARTBEAT_QUEUE,
+      schema: RgMonitorJobSchema,
+      handler: async () => {
+        if (!limitsHeartbeatRef) {
+          throw new Error('compliance: the limits heartbeat ran before its router was built');
+        }
+        await limitsHeartbeatRef();
+      },
+    });
+    ctx.jobs.worker({
       queue: RG_MONITOR_QUEUE,
       schema: RgMonitorJobSchema,
       handler: async () => {
@@ -516,15 +528,7 @@ export default {
         logger.warn(msg);
       }
       backfillRgLimitsAtBoot(c);
-      // Only where compliance is selected, the same rule as its schedules (ADR-0062).
-      if (options?.mounted !== false) {
-        const ledger = c.get(RG_LIMIT_LEDGER);
-        startProjectionHeartbeat(
-          () => ledger.heartbeat(),
-          (dispose) => c.onDispose(dispose),
-          (err) => logger.error({ err }, 'compliance: limits heartbeat failed'),
-        );
-      }
+      limitsHeartbeatRef = () => c.get(RG_LIMIT_LEDGER).heartbeat();
       healRecentLimitsRef = () =>
         backfillRgLimits(c.get(DRIZZLE).db, c.get(RG_LIMIT_LEDGER), {
           changedSince: new Date(Date.now() - RECENT_LIMIT_CHANGE_MS),
@@ -552,6 +556,15 @@ export default {
         void jobQueueRef
           .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000 })
           .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
+        // One recurring job, not a timer per replica (ADR-0062).
+        void jobQueueRef
+          .schedule(
+            RG_LIMITS_HEARTBEAT_QUEUE,
+            'compliance-ledger-heartbeat',
+            {},
+            { everyMs: projectionHeartbeatEveryMs() },
+          )
+          .catch((err) => logger.error({ err }, 'compliance: limits heartbeat schedule failed'));
       }
 
       return createComplianceRouter({

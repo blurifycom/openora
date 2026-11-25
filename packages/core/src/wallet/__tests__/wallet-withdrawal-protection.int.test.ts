@@ -156,6 +156,37 @@ describe('WalletService.withdraw - Withdrawal PIN (real PG)', () => {
     expect(await withdrawalRows()).toHaveLength(1);
   });
 
+  it('refuses the request when the PIN verifier throws, and creates nothing', async () => {
+    const { svc } = makeService(
+      makeWithdrawalSecurity({
+        verifyPin: vi.fn(() => Promise.reject(new Error('identity down'))),
+      }),
+    );
+    const w = await seedWallet('BTC');
+    await seedMatureWithdrawalAddress(db, { userId: w.userId, currency: 'BTC', address: ADDRESS });
+
+    await expect(svc.withdraw(btcWithdrawal(w.userId))).rejects.toThrow('identity down');
+
+    expect(await withdrawalRows()).toHaveLength(0);
+    expect(await balanceOf(w.userId, 'BTC')).toBe(5);
+  });
+
+  it('refuses the approval when the PIN lockout read throws, and leaves it queued', async () => {
+    const security = makeWithdrawalSecurity();
+    const { svc } = makeService(security);
+    const w = await seedWallet('BTC');
+    await seedMatureWithdrawalAddress(db, { userId: w.userId, currency: 'BTC', address: ADDRESS });
+    const { transactionId } = await svc.withdraw(btcWithdrawal(w.userId));
+    vi.mocked(security.pinLockedUntil).mockRejectedValueOnce(new Error('identity down'));
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toThrow(
+      'identity down',
+    );
+
+    const [queued] = await withdrawalRows();
+    expect(queued).toMatchObject({ status: 'pending', reviewedBy: null });
+  });
+
   it('refuses a withdrawal that carries no PIN, and creates nothing', async () => {
     const { svc } = makeService(pinVerdict({ status: 'missing' }));
     const w = await seedWallet('BTC');

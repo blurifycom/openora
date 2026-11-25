@@ -125,7 +125,9 @@ export class LedgerPlayEligibilityService
     const rows = await this.drizzle.db
       .select()
       .from(ledgerPlayEligibility)
-      .where(sql`${ledgerPlayEligibility.userId} = ANY(${sql.param([...new Set(userIds)])}::uuid[])`);
+      .where(
+        sql`${ledgerPlayEligibility.userId} = ANY(${sql.param([...new Set(userIds)])}::uuid[])`,
+      );
     return new Map(rows.map((row) => [row.userId, stateOf(row)]));
   }
 

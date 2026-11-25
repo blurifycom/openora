@@ -38,6 +38,7 @@ import {
   type LedgerV1MoveOutcome,
   type LedgerV1RefusalReason,
   type LedgerV1Refused,
+  LedgerProjectionStaleError,
   type LedgerV1ReverseArgs,
   type LedgerV1WinArgs,
   type SportsbookLedger,
@@ -112,6 +113,8 @@ const REFUSAL_BY_ERROR: ReadonlyArray<
 > = [
   [WalletReplayMismatchError, 'fingerprint_mismatch'],
   [WalletRgRestrictedError, 'player_blocked'],
+  // Fail closed: a stale copy may be missing the restriction that would refuse this stake.
+  [LedgerProjectionStaleError, 'player_blocked'],
   [RgLimitExceededError, 'limit'],
   [MaxBetExceededError, 'max_bet_exceeded'],
   [GamingUnknownGameError, 'unknown_game'],

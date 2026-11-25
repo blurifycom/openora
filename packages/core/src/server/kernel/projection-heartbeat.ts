@@ -15,18 +15,9 @@ export function envMs(name: string, fallback: number): number {
 }
 
 /**
- * Calls `beat` now and every `LEDGER_PROJECTION_HEARTBEAT_MS` (default 10 s) until the container
- * is disposed (ADR-0062). Start it only where the owning module is selected (`mounted`), so a
- * process that merely binds the module's ports never claims the projection is fresh.
+ * How often an owner beats its ledger projection: `LEDGER_PROJECTION_HEARTBEAT_MS`, default 10 s
+ * (ADR-0062). The owner schedules one recurring job at this interval where its module is selected,
+ * so one replica beats per tick, never every one.
  */
-export function startProjectionHeartbeat(
-  beat: () => Promise<void>,
-  onDispose: (dispose: () => void) => void,
-  onError: (err: unknown) => void,
-): void {
-  const run = () => void beat().catch(onError);
-  const timer = setInterval(run, envMs('LEDGER_PROJECTION_HEARTBEAT_MS', 10_000));
-  timer.unref();
-  onDispose(() => clearInterval(timer));
-  run();
-}
+export const projectionHeartbeatEveryMs = (): number =>
+  envMs('LEDGER_PROJECTION_HEARTBEAT_MS', 10_000);

@@ -30,6 +30,8 @@ import {
   AdminSecurityConfigSchema,
   domainEventSchemas,
   type RealtimeTransport,
+  JOB_QUEUE,
+  queue,
 } from '@openora/core/contracts';
 import {
   ADMIN_GUARD,
@@ -39,10 +41,11 @@ import {
   LOCAL_SESSION_RESOLVER,
   createLogger,
   retryUntilDone,
-  startProjectionHeartbeat,
+  projectionHeartbeatEveryMs,
   parseInternalCallers,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
+import * as z from 'zod';
 import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
@@ -83,6 +86,7 @@ import { TwoFactorSetupPolicyService } from './service/two-factor-setup-policy.s
 
 type IdentityContainer = TypedContainer<CoreTokenCatalog>;
 
+const PLAY_ELIGIBILITY_HEARTBEAT_QUEUE = queue('identity-ledger-heartbeat');
 const logger = createLogger('identity');
 
 // Fail loud, the way compliance does for its KYC gate: refuse to boot in production, warn
@@ -235,6 +239,17 @@ export default {
     // set before any real event arrives - same ordering as compliance/plugin.ts's KYC
     // status push.
     let realtimeTransport: RealtimeTransport | null = null;
+    let playEligibilityHeartbeatRef: (() => Promise<void>) | null = null;
+    ctx.jobs.worker({
+      queue: PLAY_ELIGIBILITY_HEARTBEAT_QUEUE,
+      schema: z.object({}),
+      handler: async () => {
+        if (!playEligibilityHeartbeatRef) {
+          throw new Error('identity: the eligibility heartbeat ran before its router was built');
+        }
+        await playEligibilityHeartbeatRef();
+      },
+    });
 
     // Domain events are durable and cross-replica, but delivered to only ONE replica
     // per Redis Streams consumer group - wrong for a live UI push. Republish onto
@@ -395,14 +410,22 @@ export default {
       if (options?.mounted !== false) {
         assertAuthSurfaceGuards(c);
         // Only where identity is selected: a process that merely binds its ports must not claim
-        // the play eligibility projection is fresh (ADR-0062).
+        // the play eligibility projection is fresh. One recurring job, not a timer per replica
+        // (ADR-0062).
         if (c.has(PLAY_ELIGIBILITY_PROJECTION)) {
           const projection = c.get(PLAY_ELIGIBILITY_PROJECTION);
-          startProjectionHeartbeat(
-            () => projection.heartbeat(),
-            (dispose) => c.onDispose(dispose),
-            (err) => logger.error({ err }, 'identity: play eligibility heartbeat failed'),
-          );
+          playEligibilityHeartbeatRef = () => projection.heartbeat();
+          void c
+            .get(JOB_QUEUE)
+            .schedule(
+              PLAY_ELIGIBILITY_HEARTBEAT_QUEUE,
+              'identity-ledger-heartbeat',
+              {},
+              { everyMs: projectionHeartbeatEveryMs() },
+            )
+            .catch((err) =>
+              logger.error({ err }, 'identity: eligibility heartbeat schedule failed'),
+            );
         }
       }
       realtimeTransport = c.get(REALTIME_TRANSPORT);

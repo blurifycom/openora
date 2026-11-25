@@ -205,7 +205,7 @@ describe('claiming a streak reward', () => {
       rates: mock<ExchangeRateReader>({ convert }),
       logger,
       audit,
-    identity: identityOver(db.drizzle),
+      identity: identityOver(db.drizzle),
     });
     await db.drizzle.db
       .insert(promoPlayerStreak)

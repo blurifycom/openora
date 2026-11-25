@@ -326,6 +326,8 @@ describe('the rank rewards a player reads', () => {
 describe('rank reward auto-payout', () => {
   it('pays every unclaimed reward of a self-excluded player, once', async () => {
     const userId = await newPlayer('self_excluded');
+    // The RG block that refuses a claim never holds back an auto-payout.
+    isRestricted.mockResolvedValue(true);
     const a = await leave(userId, '1');
     const b = await leave(userId, '2');
 
@@ -336,7 +338,6 @@ describe('rank reward auto-payout', () => {
     expect(first.every((paid) => paid.outcome === 'auto_paid')).toBe(true);
     expect(second).toEqual([]);
     expect(credit).toHaveBeenCalledTimes(2);
-    expect(isRestricted).not.toHaveBeenCalled();
     expect((await rewardRow(a.id))?.status).toBe('auto_paid');
     expect(recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),

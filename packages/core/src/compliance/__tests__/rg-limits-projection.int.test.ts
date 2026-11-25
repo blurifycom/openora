@@ -9,11 +9,13 @@ import {
   PLAY_ELIGIBILITY_PROJECTION,
   RG_LIMITS,
   RG_LIMIT_LEDGER,
+  RG_LIMITS_SOURCE,
   WALLET_COMMANDS,
   defaultResponsibleGamingConfig,
   type ExchangeRateReader,
   type RgLimitLedgerPort,
   type RgLimitsSnapshot,
+  type RgLimitsSourcePort,
 } from '@openora/core/contracts';
 import {
   Container,
@@ -36,6 +38,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import identityPlugin from '@openora/core/pam/plugins/identity';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import {
+  ledgerProjectionHeartbeat,
   ledgerUserLimit,
   ledgerUserLimitVersion,
   wallet,
@@ -79,7 +82,9 @@ const SEED_LEDGER = '../../wallet/drizzle/migrations/0047_seed_ledger_user_limit
 
 const HOUR = 60 * 60 * 1000;
 
-function services(ledger: Pick<RgLimitLedgerPort, 'write'> = container.get(RG_LIMIT_LEDGER)) {
+function services(
+  ledger: Pick<RgLimitLedgerPort, 'write' | 'remote'> = container.get(RG_LIMIT_LEDGER),
+) {
   const events = makeEventBus();
   const rg = new RgService({
     drizzle: db.drizzle,
@@ -509,5 +514,105 @@ describe('the projection outside a limit write (real PG)', () => {
     expect(wager).toMatchObject({ currency: 'JPY' });
     // 5,000 USD is 750,000 JPY.
     await expect(bet(userId, '5000')).rejects.toMatchObject(refused);
+  });
+});
+
+describe('a limits projection written from another service (real PG, ADR-0062)', () => {
+  // Whether compliance's source binding says it reaches the ledger over the network.
+  let sourceRemote: boolean | undefined;
+  const source: RgLimitsSourcePort = {
+    page: async () => [],
+    snapshots: async () => [],
+    repair: async () => [],
+    get remote() {
+      return sourceRemote;
+    },
+  };
+  const deposit = (userId: string) =>
+    container.get(RG_LIMITS).checkDeposit(db.drizzle.db, userId, '1', 'USD');
+  const stale = { code: 'ledger_projection_stale', projection: 'rg_limits' };
+  const beatAgo = (seconds: number) =>
+    db.drizzle.db
+      .update(ledgerProjectionHeartbeat)
+      .set({ beatAt: sql`now() - make_interval(secs => ${seconds})` })
+      .where(eq(ledgerProjectionHeartbeat.projection, 'rg_limits'));
+  /** The real ledger behind a remote binding: same writes, `remote: true`. */
+  const remoteLedger = (
+    write = vi.fn((s: RgLimitsSnapshot, tx: unknown) => ledger().write(s, tx)),
+  ) => ({ write, remote: true }) satisfies Pick<RgLimitLedgerPort, 'write' | 'remote'>;
+  const ledger = () => container.get(RG_LIMIT_LEDGER);
+
+  beforeAll(() => {
+    container.register(RG_LIMITS_SOURCE, () => source);
+  });
+
+  beforeEach(async () => {
+    sourceRemote = undefined;
+    await db.drizzle.db.delete(ledgerProjectionHeartbeat);
+  });
+
+  it('never checks freshness when the writer is local, even with no heartbeat', async () => {
+    const userId = await fundedPlayer();
+
+    await expect(deposit(userId)).resolves.toMatchObject({ allowed: true });
+    await expect(bet(userId)).resolves.toMatchObject({ ok: true });
+  });
+
+  it('refuses a deposit and a wager once a remote writer stops beating, and allows them on a fresh beat', async () => {
+    const userId = await fundedPlayer();
+    sourceRemote = true;
+
+    await expect(deposit(userId)).rejects.toMatchObject({ ...stale, lastBeatAt: null });
+
+    await ledger().heartbeat();
+    await expect(deposit(userId)).resolves.toMatchObject({ allowed: true });
+    await expect(bet(userId)).resolves.toMatchObject({ ok: true });
+
+    await beatAgo(120);
+    await expect(deposit(userId)).rejects.toMatchObject(stale);
+    await expect(bet(userId)).rejects.toMatchObject(stale);
+  });
+
+  it('fails a lowered limit on a remote ledger whose write throws, and commits nothing', async () => {
+    const userId = await fundedPlayer();
+    const { selfService } = services(
+      remoteLedger(vi.fn(() => Promise.reject(new Error('ledger unreachable')))),
+    );
+
+    await expect(selfService.upsertLimit(userId, wagerLimit('15'))).rejects.toThrow(
+      'ledger unreachable',
+    );
+
+    expect(
+      await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId)),
+    ).toHaveLength(0);
+  });
+
+  it('commits a confirmed raise first on a remote ledger, and reaches the ledger by its event', async () => {
+    const userId = await fundedPlayer();
+    const write = vi.fn((s: RgLimitsSnapshot, tx: unknown) => ledger().write(s, tx));
+    const { selfService, events } = services(remoteLedger(write));
+    await selfService.upsertLimit(userId, wagerLimit('20'));
+    await selfService.upsertLimit(userId, wagerLimit('1000'));
+    const [row] = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    await db.drizzle.db
+      .update(userLimit)
+      .set({
+        pendingEffectiveAt: new Date(Date.now() - HOUR),
+        pendingExpiresAt: new Date(Date.now() + HOUR),
+      })
+      .where(eq(userLimit.id, row!.id));
+    const writesBefore = write.mock.calls.length;
+
+    await selfService.confirmPendingChange(row!.id, userId);
+
+    expect(write).toHaveBeenCalledTimes(writesBefore);
+    expect((await projected(userId)).amounts).toEqual([20]);
+    await expect(bet(userId, '25')).rejects.toMatchObject(refused);
+
+    const raised = publishedSnapshots(events).at(-1)!;
+    await expect(ledger().reconcile([raised])).resolves.toBe(1);
+    expect((await projected(userId)).amounts).toEqual([1000]);
+    await expect(bet(userId, '25')).resolves.toMatchObject({ ok: true });
   });
 });

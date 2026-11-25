@@ -198,6 +198,41 @@ describe('WalletService.withdraw KYC policy (real PG)', () => {
     expect(await balanceOf(w.id)).toBe('100.000000000000000000');
   });
 
+  it('refuses the request when the policy throws, without debiting', async () => {
+    const { svc } = makeService('pending', true, {
+      requiresKycForWithdrawal: vi.fn(() => Promise.reject(new Error('compliance down'))),
+    });
+    const w = await seedWallet();
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '50', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toThrow('compliance down');
+    expect(await txCount(w.id)).toBe(0);
+    expect(await balanceOf(w.id)).toBe('100.000000000000000000');
+  });
+
+  it('refuses the approval when the policy throws, and leaves the withdrawal queued', async () => {
+    const requiresKycForWithdrawal = vi.fn(async () => false);
+    const { svc } = makeService('pending', true, { requiresKycForWithdrawal });
+    const w = await seedWallet();
+    const { transactionId } = await svc.withdraw({
+      userId: w.userId,
+      amount: '50',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+    requiresKycForWithdrawal.mockRejectedValueOnce(new Error('compliance down'));
+
+    await expect(svc.approveWithdrawal(randomUUID(), transactionId)).rejects.toThrow(
+      'compliance down',
+    );
+    const [row] = await db.drizzle.db
+      .select({ status: walletTransaction.status })
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, transactionId));
+    expect(row?.status).toBe('pending');
+  });
+
   it('hands the policy a null pivot amount when the currency cannot be priced', async () => {
     const requiresKycForWithdrawal = vi.fn(async () => true);
     const { svc } = makeService('pending', true, { requiresKycForWithdrawal });

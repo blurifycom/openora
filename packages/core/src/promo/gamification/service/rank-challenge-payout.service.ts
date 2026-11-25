@@ -194,12 +194,16 @@ export class RankChallengePayoutService {
     };
     await this.events.emitInTransaction(tx, 'promo.rank-challenge.won', won);
     if (paidCashAmount !== null) {
-      await announceCashCredit(tx, { events: this.events, identity: this.identity }, {
-        userId: claim.userId,
-        amount: paidCashAmount,
-        currency: paidCurrency,
-        transactionId,
-      });
+      await announceCashCredit(
+        tx,
+        { events: this.events, identity: this.identity },
+        {
+          userId: claim.userId,
+          amount: paidCashAmount,
+          currency: paidCurrency,
+          transactionId,
+        },
+      );
     }
     return won;
   }

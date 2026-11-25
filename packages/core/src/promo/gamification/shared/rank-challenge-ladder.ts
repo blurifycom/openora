@@ -46,7 +46,9 @@ export async function withWinners<T extends Pick<PromoRankChallengeTier, 'id'>>(
  * Adds each winner's username through IDENTITY_READER. A winner identity no longer knows reads
  * as an open tier, as the inner join on the user table once made it.
  */
-export async function nameWinners<T extends { winnerUserId: Uuid | null; claimedAt: string | null }>(
+export async function nameWinners<
+  T extends { winnerUserId: Uuid | null; claimedAt: string | null },
+>(
   identity: IdentityReader,
   tiers: readonly T[],
 ): Promise<(T & { winnerUsername: string | null })[]> {

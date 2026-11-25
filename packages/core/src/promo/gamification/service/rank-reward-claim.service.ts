@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, ne, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ne, type SQL } from 'drizzle-orm';
 import type {
   IdentityReader,
   AuditWritePort,
@@ -171,7 +171,9 @@ export class RankRewardClaimService {
    */
   async autoPay(userId: Uuid): Promise<Claimed[]> {
     return this.deps.drizzle.db.transaction(async (tx) => {
-      if (!(await isDueForAutoPayoutLocked(tx, this.deps.eligibility, this.deps.exclusions, userId))) {
+      if (
+        !(await isDueForAutoPayoutLocked(tx, this.deps.eligibility, this.deps.exclusions, userId))
+      ) {
         return [];
       }
       const rows = await tx

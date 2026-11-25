@@ -99,8 +99,7 @@ const claimsQuery = (db: DrizzleDb | DrizzleTx) =>
     .innerJoin(
       promoRankChallengeTier,
       eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
-    )
-;
+    );
 
 /**
  * The operator's side of the Rank Challenge: read/replace the ladder, list winner records, and

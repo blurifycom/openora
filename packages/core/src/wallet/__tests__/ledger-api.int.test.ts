@@ -9,6 +9,7 @@ import {
   IDENTITY_READER,
   LEDGER_API_V1,
   PLAY_ELIGIBILITY,
+  PLAY_ELIGIBILITY_SOURCE,
   WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
   WALLET_REVERSAL_UNMATCHED,
@@ -322,6 +323,19 @@ describe('Ledger API v1 bet (real PG)', () => {
         () => {},
         'player_blocked',
         (userId) => project(standing(userId, true, 1)),
+      ));
+
+    it('a stake on a projection whose remote writer stopped beating as player_blocked', () =>
+      refusedBy(
+        (c) =>
+          c.register(PLAY_ELIGIBILITY_SOURCE, () => ({
+            page: async () => [],
+            snapshots: async () => [],
+            repair: async () => [],
+            remote: true,
+          })),
+        'player_blocked',
+        (userId) => project(standing(userId, false, 1)),
       ));
 
     it('a reached wager limit as limit', () =>

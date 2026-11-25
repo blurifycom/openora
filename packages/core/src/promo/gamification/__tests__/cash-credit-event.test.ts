@@ -18,10 +18,15 @@ describe('announceCashCredits', () => {
     const { tx, select, identity } = fakeTx();
     const emitInTransaction = vi.fn<EventBus['emitInTransaction']>();
 
-    await announceCashCredits(tx, { events: mock<EventBus>({ emitInTransaction }), identity }, userId, [
-      { amount: '1', currency: 'USDT', transactionId: 'tx-1' },
-      { amount: '2', currency: 'EUR', transactionId: 'tx-2' },
-    ]);
+    await announceCashCredits(
+      tx,
+      { events: mock<EventBus>({ emitInTransaction }), identity },
+      userId,
+      [
+        { amount: '1', currency: 'USDT', transactionId: 'tx-1' },
+        { amount: '2', currency: 'EUR', transactionId: 'tx-2' },
+      ],
+    );
 
     expect(select).toHaveBeenCalledTimes(1);
     expect(select).toHaveBeenCalledWith(userId, tx);
@@ -35,9 +40,12 @@ describe('announceCashCredits', () => {
     const { tx, select, identity } = fakeTx();
     const emitInTransaction = vi.fn<EventBus['emitInTransaction']>();
 
-    await announceCashCredits(tx, { events: mock<EventBus>({ emitInTransaction }), identity }, userId, [
-      { amount: '1', currency: 'USDT', transactionId: null },
-    ]);
+    await announceCashCredits(
+      tx,
+      { events: mock<EventBus>({ emitInTransaction }), identity },
+      userId,
+      [{ amount: '1', currency: 'USDT', transactionId: null }],
+    );
 
     expect(select).not.toHaveBeenCalled();
     expect(emitInTransaction).not.toHaveBeenCalled();

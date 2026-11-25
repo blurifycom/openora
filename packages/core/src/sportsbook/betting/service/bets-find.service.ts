@@ -53,7 +53,7 @@ export class BetsFindService {
       lte(bet.createdAt, to),
       status?.length ? inArray(bet.status, status) : undefined,
       result?.length ? inArray(bet.result, result) : undefined,
-      playerId ? playerUserId === null ? sql`false` : eq(bet.userId, playerUserId) : undefined,
+      playerId ? (playerUserId === null ? sql`false` : eq(bet.userId, playerUserId)) : undefined,
       currency ? eq(bet.currency, currency.toUpperCase()) : undefined,
       minStake ? gte(bet.stake, minStake) : undefined,
     );

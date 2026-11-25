@@ -1,7 +1,8 @@
 import { and, asc, count, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleService } from '@openora/core/server';
 import {
-  dayEnd, dayStart,
+  dayEnd,
+  dayStart,
   userIdOfPlayer,
   withPlayerIds,
   type IdentityReader,
@@ -40,9 +41,7 @@ export class GrantsFindService {
     const where = and(
       status?.length ? inArray(grant.status, status) : undefined,
       source?.length ? inArray(grant.source, source) : undefined,
-      playerId
-        ? playerUserId === null ? sql`false` : eq(grant.userId, playerUserId)
-        : undefined,
+      playerId ? (playerUserId === null ? sql`false` : eq(grant.userId, playerUserId)) : undefined,
       currency ? eq(grant.currency, currency.toUpperCase()) : undefined,
       activatedFrom ? gte(grant.activatedAt, dayStart(activatedFrom)) : undefined,
       activatedTo ? lte(grant.activatedAt, dayEnd(activatedTo)) : undefined,

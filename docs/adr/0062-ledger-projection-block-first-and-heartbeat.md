@@ -21,11 +21,15 @@ local projection keeps writing every change in the transaction. Ports: `remote?:
 `RgLimitsPublisher.publish(tx, userId, { loosening })`.
 
 **Heartbeat.** The owner (identity, compliance) calls the projection port's `heartbeat()` every
-`LEDGER_PROJECTION_HEARTBEAT_MS` (default 10000), only where its module is selected (`mounted`).
+`LEDGER_PROJECTION_HEARTBEAT_MS` (default 10000) from one recurring job
+(`identity-ledger-heartbeat`, `compliance-ledger-heartbeat`) scheduled only where its module is
+selected (`mounted`), so one replica beats per tick. A stalled job queue therefore also refuses
+stakes once the beat is stale.
 The ledger stores it in `ledger_projection_heartbeat` at its own clock. When the owner's source port
 (`PLAY_ELIGIBILITY_SOURCE`, `RG_LIMITS_SOURCE`) carries `remote: true`, set by its remote binding,
 a stake (eligibility) and a deposit or wager (limits) refuse with `LedgerProjectionStaleError`
-(`ledger_projection_stale`, 503 on the deposit route) once the last beat is older than
+(`ledger_projection_stale`: 503 on the deposit and casino start-round routes, a `player_blocked`
+refusal on the Ledger API and the sportsbook ledger) once the last beat is older than
 `LEDGER_PROJECTION_STALE_MS` (default 60000), or missing. A local writer is never checked.
 
 **Drift.** The wallet reconciliation cycle (hourly by default) already compares each projection with

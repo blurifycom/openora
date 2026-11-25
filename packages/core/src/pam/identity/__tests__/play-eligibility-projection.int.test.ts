@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import {
@@ -8,6 +8,7 @@ import {
   PLAYER_STATUSES,
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
+  PLAY_ELIGIBILITY_SOURCE,
   WALLET_COMMANDS,
   definePlatformConfig,
   domainEventSchemas,
@@ -16,6 +17,7 @@ import {
   type PlayEligibilityPort,
   type PlayEligibilityProjectionPort,
   type PlayEligibilitySnapshot,
+  type PlayEligibilitySourcePort,
   type SmsAdapter,
 } from '@openora/core/contracts';
 import {
@@ -30,7 +32,12 @@ import { createTestDb, seedPlayerWithUser, seedUser, type TestDb } from '@openor
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
-import { ledgerPlayEligibility, wallet, walletBalance } from '@openora/core/wallet/schema';
+import {
+  ledgerPlayEligibility,
+  ledgerProjectionHeartbeat,
+  wallet,
+  walletBalance,
+} from '@openora/core/wallet/schema';
 import walletPlugin from '@openora/core/wallet/plugin';
 import { ledgerPlayEligibilityProjection } from '@openora/core/wallet/seed';
 import { makeAuditWriter, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
@@ -345,5 +352,85 @@ describe('a new registration reaches the ledger (real PG)', () => {
       .where(eq(user.email, email));
     // A user the ledger has no row for is refused as inactive, so `null` means the row landed.
     await expect(container.get(LEDGER_PLAY_ELIGIBILITY).checkPlay(account!.id)).resolves.toBeNull();
+  });
+});
+
+describe('a play eligibility projection written from another service (real PG, ADR-0062)', () => {
+  // Whether identity's source binding says it reaches the ledger over the network.
+  let sourceRemote: boolean | undefined;
+  const source: PlayEligibilitySourcePort = {
+    page: async () => [],
+    snapshots: async () => [],
+    repair: async () => [],
+    get remote() {
+      return sourceRemote;
+    },
+  };
+  const stale = { code: 'ledger_projection_stale', projection: 'play_eligibility' };
+  const beatAgo = (seconds: number) =>
+    db.drizzle.db
+      .update(ledgerProjectionHeartbeat)
+      .set({ beatAt: sql`now() - make_interval(secs => ${seconds})` })
+      .where(eq(ledgerProjectionHeartbeat.projection, 'play_eligibility'));
+  /** The real ledger behind a remote binding: `write` as given, `remote: true`. */
+  const remote = (write: PlayEligibilityProjectionPort['write']) => () =>
+    mock<PlayEligibilityProjectionPort>({ write: vi.fn(write), remote: true });
+
+  beforeAll(() => {
+    container.register(PLAY_ELIGIBILITY_SOURCE, () => source);
+  });
+
+  beforeEach(async () => {
+    sourceRemote = undefined;
+    await db.drizzle.db.delete(ledgerProjectionHeartbeat);
+  });
+
+  it('never checks freshness when the writer is local, even with no heartbeat', async () => {
+    const { userId } = await fundedPlayer();
+
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
+  });
+
+  it('refuses a stake once a remote writer stops beating, and allows it on a fresh beat', async () => {
+    const { userId } = await fundedPlayer();
+    sourceRemote = true;
+
+    await expect(bet(userId)).rejects.toMatchObject({ ...stale, lastBeatAt: null });
+
+    await ledger()!.heartbeat();
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
+
+    await beatAgo(120);
+    await expect(bet(userId)).rejects.toMatchObject(stale);
+  });
+
+  it('fails a block on a remote ledger whose write throws, and commits nothing', async () => {
+    const { userId } = await fundedPlayer();
+    const { block } = identity(remote(() => Promise.reject(new Error('ledger unreachable'))));
+
+    await expect(block(userId)).rejects.toThrow('ledger unreachable');
+
+    const [account] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
+    expect(account).toMatchObject({ rgBlocked: false, playEligibilityVersion: 0 });
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
+  });
+
+  it('commits a lift first on a remote ledger, and reaches the ledger by its event', async () => {
+    const { userId } = await fundedPlayer();
+    const write = vi.fn((s: PlayEligibilitySnapshot, tx: unknown) => ledger()!.write(s, tx));
+    const { block, unblock, events } = identity(remote(write));
+    await block(userId);
+    expect(write).toHaveBeenCalledTimes(1);
+
+    await unblock(userId);
+
+    expect(write).toHaveBeenCalledTimes(1);
+    const [account] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
+    expect(account).toMatchObject({ rgBlocked: false });
+    await expect(bet(userId)).rejects.toMatchObject(refused);
+
+    const [, lift] = emitted(events);
+    await expect(deliver(lift)).resolves.toBe(1);
+    await expect(bet(userId)).resolves.toMatchObject(allowed);
   });
 });

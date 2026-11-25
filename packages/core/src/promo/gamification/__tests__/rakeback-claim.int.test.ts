@@ -492,6 +492,8 @@ describe('the rakeback summary a player reads', () => {
 describe('rakeback auto-payout', () => {
   it('pays a self-excluded player below the minimum, once', async () => {
     const userId = await newPlayer('self_excluded');
+    // The RG block that refuses a claim never holds back an auto-payout.
+    isRestricted.mockResolvedValue(true);
     await accrue(userId, '0.2');
 
     const first = await claimsWith('10').autoPay(userId);
@@ -502,7 +504,6 @@ describe('rakeback auto-payout', () => {
     ]);
     expect(second).toBeNull();
     expect(credit).toHaveBeenCalledTimes(1);
-    expect(isRestricted).not.toHaveBeenCalled();
     const [claim] = await db.drizzle.db.select().from(promoRakebackClaim);
     expect(claim?.outcome).toBe('auto_paid');
     expect(claimAudit).toHaveBeenCalledExactlyOnceWith(
