@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 // resolved from the installed @openora/core. Add your own overlays after it - a
 // later registration of a DI token wins, so an adapter override must come after
 // the module it replaces. Opt a core module out with a filter, eg
-// `corePlugins().filter((p) => p.id !== 'chat')`.
+// `corePlugins().filter((p) => p.id !== 'chat')`. Chat runs as its own service in
+// compose.prod.yml, from this same registry; see docs/guides/split-deployment.md.
 //
 // Every `path` must be absolute: the plugin host imports it from inside
 // @openora/core, where a relative path or a bare package name resolves from
@@ -21,6 +22,10 @@ const fromApp = createRequire(import.meta.url).resolve;
 
 export const extensions: PluginEntry[] = [
   ...corePlugins(),
+
+  // Binds the chat ports to the chat service when CHAT_SERVICE_URL is set (compose.prod.yml);
+  // does nothing in a single process.
+  { id: 'chat-remote', path: fromApp('@openora/core/engagement/plugins/chat-remote') },
 
   // Your overlays. Generate with `pnpm gen plugin` / `pnpm gen adapter`.
   // Example (loaded after `wallet` so its PAYMENT_ADAPTER binding wins):

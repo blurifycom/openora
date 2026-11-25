@@ -1,12 +1,12 @@
 # Running Openora as more than one service
 
-By default one process loads every module. Any module can instead run in its own deployment unit, scaled and released on its own, while the rest stays together. Chat is the worked example here because it is the usual first candidate: long-lived connections, bursty traffic, few synchronous callers.
+A new consumer ships chat as its own service: `compose.prod.yml` in the consumer template runs the API and chat from one image, on one shared database, behind a gateway that routes the chat paths. The single process that loads every module stays supported for local dev, tests and small installs, and is what you run when you drop the chat service. Any other module can move out the same way, scaled and released on its own while the rest stays together. Chat is the worked example here because it is the usual first candidate: long-lived connections, bursty traffic, few synchronous callers.
 
 Nothing below needs a fork. It is environment variables read by `createApp` (`packages/core/src/server/runtime/create-app.ts`) and a plugin list you already have (`extensions.config.ts`). Production wiring (Postgres, `REDIS_URL`) is covered in [downstream-consumer.md](./downstream-consumer.md); the channel rules are in ADR-0030 and `.rulesync/rules/messaging-and-microservices.md`.
 
 ## The three variables
 
-- `SERVICE_MANIFEST`: comma-separated module ids this process boots. Unset means every module, and nothing in this guide applies.
+- `SERVICE_MANIFEST`: comma-separated module ids this process boots. Unset means every module (local dev, tests, a single-process install), and nothing in this guide applies.
 - `SERVICE_NAME`: the Redis Streams consumer group. Every service must have its own.
 - `REALTIME_NAMESPACE`: the prefix of every realtime key. Every service that talks to the same clients must share it.
 
@@ -67,6 +67,8 @@ Giving a module its own schema or database changes what is allowed across the bo
 Decide this per module, later. Splitting the process does not force it.
 
 ## Worked example: chat next to the main API
+
+The consumer template's `compose.prod.yml` is this example on one server, with the shared database and a Caddy gateway for the path prefixes. Its `api` service sets `SERVICE_MANIFEST` to every core module but `chat`, plus `chat-remote`; its `chat` service sets `chat` plus the dependency modules as `:no-routes`, which is the closed list the boot accepts for the core plugins. Both share `REALTIME_NAMESPACE=monolith` and `INTERNAL_API_SECRETS`. It leaves out `social` and `chat-commands`, which `corePlugins()` does not register. To run one process instead, remove `chat-remote` and the manifest variables from `api` and drop `chat` and `gateway`.
 
 Chat's HTTP routes sit under `/chat/*` (player) and `/backoffice/chat/*` (staff), and its handlers and jobs (room purge, moderation expiry) run wherever the module loads.
 

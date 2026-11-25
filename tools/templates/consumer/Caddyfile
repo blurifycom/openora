@@ -1,0 +1,5 @@
+:80 {
+	@chat path /chat/* /backoffice/chat/*
+	reverse_proxy @chat chat:3001
+	reverse_proxy api:3001
+}

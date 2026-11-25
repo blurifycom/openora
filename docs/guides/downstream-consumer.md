@@ -76,6 +76,11 @@ their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/mai
 
 ### Running more than one process
 
+Chat runs as its own service by default: the `compose.prod.yml` a new consumer gets starts the API and
+a `chat` service from one image on one shared database, with a gateway sending the chat paths to it
+(see the [split deployment guide](./split-deployment.md)). A single process that loads every module
+stays supported for local dev, tests and small installs; it is what you get with no `SERVICE_MANIFEST`.
+
 Replicas of one API share a `SERVICE_NAME` (unset means `monolith`) and split the work: each event
 and each job reaches one of them.
 
