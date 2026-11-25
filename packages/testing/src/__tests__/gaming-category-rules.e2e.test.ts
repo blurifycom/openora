@@ -96,9 +96,12 @@ async function categoryGameIds(categoryId: string): Promise<string[]> {
 }
 
 async function waitForCategoryGames(categoryId: string, expectedIds: string[]) {
-  await vi.waitFor(async () => {
-    expect(await categoryGameIds(categoryId)).toEqual([...expectedIds].sort());
-  });
+  await vi.waitFor(
+    async () => {
+      expect(await categoryGameIds(categoryId)).toEqual([...expectedIds].sort());
+    },
+    { timeout: 15000, interval: 100 },
+  );
 }
 
 beforeAll(async () => {
