@@ -9,7 +9,10 @@ import { createPool, type DrizzleDb } from '../drizzle.js';
 import { toEnvelope } from './relay.js';
 import { eventOutbox } from './schema.js';
 
-const USAGE = 'usage: openora-outbox-replay --since <ISO time> [--topic <topic>] [--dry-run]';
+const USAGE =
+  'usage: openora-outbox-replay --since <ISO time> [--topic <topic>] [--dry-run]\n' +
+  'A plugin consumer drops an event it already applied (processed_events); a bare bus.on ' +
+  'handler with no consumer name runs it again.';
 const BATCH = 500;
 
 class ReplayError extends Error {}
@@ -25,8 +28,9 @@ type Cursor = { occurredAt: string; seq: number; eventId: string };
 
 /**
  * Republishes the `event_outbox` rows published at or after `since` to the broker, oldest first
- * in the relay's order. Consumers drop what they already applied through `processed_events`,
- * which outlives every row this can read, so a replay never applies an event twice. A `since`
+ * in the relay's order. A named plugin consumer drops what it already applied through
+ * `processed_events`, which outlives every row this can read, so it never applies an event twice;
+ * a bare `bus.on` handler without a consumer name has no such record and runs it again. A `since`
  * older than `EVENT_RETENTION_MS` is refused: the relay has pruned part of that range, and a
  * replay that silently skipped it would look complete. Unpublished rows are left to the relay.
  */
