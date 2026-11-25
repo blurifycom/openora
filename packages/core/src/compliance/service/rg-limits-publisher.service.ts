@@ -75,7 +75,7 @@ function snapshotOf(userId: User['id'], version: number, rows: readonly LimitRow
 
 export class RgLimitsPublisher {
   constructor(
-    private readonly ledger: Pick<RgLimitLedgerPort, 'write'>,
+    private readonly ledger: Pick<RgLimitLedgerPort, 'write' | 'remote'>,
     private readonly events: Pick<EventBus, 'emitInTransaction'> | null,
   ) {}
 
@@ -83,8 +83,16 @@ export class RgLimitsPublisher {
    * Bumps the user's version, then projects their limits as this transaction sees them. The bump
    * comes first: it locks the version row, so a concurrent writer of the same user waits here and
    * reads the limits only after this one commits. A failed write fails the caller's change.
+   *
+   * Block-first (ADR-0062): every change writes the projection before its commit, except a
+   * `loosening` one (a confirmed raise or removal) on a remote ledger, whose write cannot roll
+   * back with this transaction: it commits first and reaches the ledger by the event.
    */
-  async publish(tx: DrizzleTx, userId: User['id']): Promise<void> {
+  async publish(
+    tx: DrizzleTx,
+    userId: User['id'],
+    { loosening = false }: { loosening?: boolean } = {},
+  ): Promise<void> {
     const [bumped] = await tx
       .insert(rgLimitVersion)
       .values({ userId, version: 1 })
@@ -97,7 +105,9 @@ export class RgLimitsPublisher {
       throw new Error(`rg_limit_version upsert returned no row for ${userId}`);
     }
     const snapshot = snapshotOf(userId, bumped.version, await readLimits(tx, [userId]));
-    await this.ledger.write(snapshot, tx);
+    if (!loosening || !this.ledger.remote) {
+      await this.ledger.write(snapshot, tx);
+    }
     await this.events?.emitInTransaction(tx, 'compliance.rg_limits.changed', snapshot);
   }
 }

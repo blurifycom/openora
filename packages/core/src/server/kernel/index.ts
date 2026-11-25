@@ -82,3 +82,4 @@ export type { EventStreamOptions, MultiplexedChannel, MultiplexedEvent } from '.
 export { loadPlatformConfig, resolvePlatformConfigPath } from './platform-config-loader.js';
 
 export { retryUntilDone } from './retry-until-done.js';
+export { envMs, startProjectionHeartbeat } from './projection-heartbeat.js';

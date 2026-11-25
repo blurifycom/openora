@@ -24,6 +24,7 @@ import {
   WALLET_DEPOSIT_STATUS_EVENT_STATUSES,
   ON_RAMP_STATUSES,
   WAGER_PRODUCTS,
+  LEDGER_PROJECTIONS,
   LEDGER_V1_KEYED_OPERATIONS,
   PLAYER_STATUSES,
   GATED_LIMIT_TYPES,
@@ -826,6 +827,14 @@ export const ledgerUserLimitVersion = pgTable('ledger_user_limit_version', {
   userId: uuid().primaryKey(),
   version: integer().notNull(),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// The last heartbeat each projection's owner wrote, at the ledger's clock (ADR-0062). A stake or
+// deposit refuses once it is older than LEDGER_PROJECTION_STALE_MS, but only where the owner
+// writes from another service; a local writer is in the same transaction and cannot fall behind.
+export const ledgerProjectionHeartbeat = pgTable('ledger_projection_heartbeat', {
+  projection: text({ enum: LEDGER_PROJECTIONS }).primaryKey(),
+  beatAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
 export type WalletJobRun = typeof walletJobRun.$inferSelect;

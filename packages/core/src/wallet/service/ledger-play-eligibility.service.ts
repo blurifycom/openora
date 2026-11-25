@@ -15,6 +15,7 @@ import {
 } from '@openora/core/contracts';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { ledgerPlayEligibility } from '../schema/index.js';
+import { assertFresh, beat, type ProjectionFreshness } from './ledger-projection-heartbeat.js';
 
 const log = createLogger('wallet:play-eligibility');
 
@@ -73,10 +74,15 @@ const fromExcluded = {
 export class LedgerPlayEligibilityService
   implements Required<PlayEligibilityPort>, PlayEligibilityProjectionPort
 {
-  constructor(private readonly drizzle: Pick<DrizzleService, 'db'>) {}
+  constructor(
+    private readonly drizzle: Pick<DrizzleService, 'db'>,
+    private readonly freshness?: ProjectionFreshness,
+  ) {}
 
   private async read(userId: User['id'], tx?: unknown) {
     const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
+    // A remote writer that stopped beating may hold back a restriction: refuse the stake.
+    await assertFresh(db, 'play_eligibility', this.freshness);
     const query = db
       .select()
       .from(ledgerPlayEligibility)
@@ -118,6 +124,10 @@ export class LedgerPlayEligibilityService
       .insert(ledgerPlayEligibility)
       .values(row)
       .onConflictDoUpdate({ target: ledgerPlayEligibility.userId, set: fromExcluded });
+  }
+
+  heartbeat(): Promise<void> {
+    return beat(this.drizzle.db, 'play_eligibility');
   }
 
   async reconcile(snapshots: readonly PlayEligibilitySnapshot[]): Promise<number> {

@@ -39,6 +39,7 @@ import {
   LOCAL_SESSION_RESOLVER,
   createLogger,
   retryUntilDone,
+  startProjectionHeartbeat,
   parseInternalCallers,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
@@ -393,6 +394,16 @@ export default {
     ctx.routers.add('identity', (c, options) => {
       if (options?.mounted !== false) {
         assertAuthSurfaceGuards(c);
+        // Only where identity is selected: a process that merely binds its ports must not claim
+        // the play eligibility projection is fresh (ADR-0062).
+        if (c.has(PLAY_ELIGIBILITY_PROJECTION)) {
+          const projection = c.get(PLAY_ELIGIBILITY_PROJECTION);
+          startProjectionHeartbeat(
+            () => projection.heartbeat(),
+            (dispose) => c.onDispose(dispose),
+            (err) => logger.error({ err }, 'identity: play eligibility heartbeat failed'),
+          );
+        }
       }
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       backfillPlayEligibilityAtBoot(c);

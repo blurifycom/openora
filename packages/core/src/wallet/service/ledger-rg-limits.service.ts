@@ -26,6 +26,7 @@ import {
   type User,
 } from '@openora/core/contracts';
 import { and, asc, desc, eq, gte, inArray, lt, lte, notInArray, sql } from 'drizzle-orm';
+import { assertFresh, beat, type ProjectionFreshness } from './ledger-projection-heartbeat.js';
 import {
   LOSS_LEGS,
   WAGER_LEGS,
@@ -112,7 +113,12 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
   constructor(
     private readonly drizzle: Pick<DrizzleService, 'db'>,
     private readonly rates: ExchangeRateReader | undefined,
+    private readonly freshness?: ProjectionFreshness,
   ) {}
+
+  heartbeat(): Promise<void> {
+    return beat(this.drizzle.db, 'rg_limits');
+  }
 
   checkDeposit(
     tx: unknown,
@@ -157,6 +163,8 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     amount: string,
     amountCurrency: string,
   ): Promise<RgLimitDecision> {
+    // Before the empty-scan shortcut: a stale copy may lack the limit that would refuse this.
+    await assertFresh(db, 'rg_limits', this.freshness);
     const scanned = await this.readLimits(db, userId, type);
     if (scanned.length === 0) {
       return { allowed: true };

@@ -87,6 +87,12 @@ function snapshotOf(userId: User['id'], state: ProjectedState): PlayEligibilityS
   };
 }
 
+const snapshotState = (s: PlayEligibilitySnapshot) => ({
+  ...s,
+  rgBlockedUntil: s.rgBlockedUntil === null ? null : new Date(s.rgBlockedUntil),
+  banExpires: s.banExpires === null ? null : new Date(s.banExpires),
+});
+
 /**
  * Writes a user's play eligibility to the ledger, the only place a stake is checked. Every
  * writer of an input (the RG block, `isActive`, the player status) calls `publish` in its own
@@ -127,7 +133,14 @@ export class PlayEligibilityPublisher {
       .where(eq(player.userId, userId))
       .limit(1);
     const snapshot = snapshotOf(userId, { ...account, status: profile?.status ?? null });
-    await this.projection()?.write(snapshot, tx);
+    // Block-first (ADR-0062): a restricting state is written before this transaction commits, so
+    // a write that fails fails the change. A playable state on a remote projection commits first
+    // and reaches the ledger by the event below: a remote write cannot roll back with this
+    // transaction, and a lift the ledger saw but identity rolled back would let a player stake.
+    const projection = this.projection();
+    if (projection && (!projection.remote || playRefusalOf(snapshotState(snapshot)) !== null)) {
+      await projection.write(snapshot, tx);
+    }
     await this.events.emitInTransaction(tx, 'identity.play_eligibility.changed', snapshot);
   }
 

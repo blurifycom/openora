@@ -280,7 +280,7 @@ export class RgSelfServiceService {
           if (deleted.length === 0) {
             throw new NoPendingLimitChangeError(limitId);
           }
-          await this.publish(tx, userId);
+          await this.publish(tx, userId, { loosening: true });
           return { kind: 'removed' as const, existing: current };
         }
 
@@ -315,7 +315,7 @@ export class RgSelfServiceService {
           ip: meta?.ip ?? null,
           userAgent: meta?.userAgent ?? null,
         });
-        await this.publish(tx, userId);
+        await this.publish(tx, userId, { loosening: true });
         return { kind: 'raised' as const, existing: current, row };
       }),
     );
@@ -464,8 +464,12 @@ export class RgSelfServiceService {
   }
 
   /** Re-projects the user's limits into the ledger, in the transaction that changed one. */
-  private publish(tx: DrizzleTx, userId: User['id']): Promise<void> {
-    return this.rg.limitsPublisher.publish(tx, userId);
+  private publish(
+    tx: DrizzleTx,
+    userId: User['id'],
+    options?: { loosening?: boolean },
+  ): Promise<void> {
+    return this.rg.limitsPublisher.publish(tx, userId, options);
   }
 
   private async assertOrdering(

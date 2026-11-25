@@ -4,6 +4,7 @@ import {
   ADMIN_GUARD,
   createLogger,
   retryUntilDone,
+  startProjectionHeartbeat,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
@@ -515,6 +516,15 @@ export default {
         logger.warn(msg);
       }
       backfillRgLimitsAtBoot(c);
+      // Only where compliance is selected, the same rule as its schedules (ADR-0062).
+      if (options?.mounted !== false) {
+        const ledger = c.get(RG_LIMIT_LEDGER);
+        startProjectionHeartbeat(
+          () => ledger.heartbeat(),
+          (dispose) => c.onDispose(dispose),
+          (err) => logger.error({ err }, 'compliance: limits heartbeat failed'),
+        );
+      }
       healRecentLimitsRef = () =>
         backfillRgLimits(c.get(DRIZZLE).db, c.get(RG_LIMIT_LEDGER), {
           changedSince: new Date(Date.now() - RECENT_LIMIT_CHANGE_MS),
