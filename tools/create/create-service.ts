@@ -48,7 +48,8 @@ const manifest = rawManifest
 
 const configSrc = readFileSync(join(repoRoot, 'extensions.config.ts'), 'utf8');
 const knownIds = [...configSrc.matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1]);
-const unknown = manifest.filter((m) => !knownIds.includes(m));
+// A flag (`wallet:no-routes`) is not part of the id; createApp validates the flag itself.
+const unknown = manifest.filter((m) => !knownIds.includes(m.split(':')[0] ?? m));
 if (unknown.length > 0) {
   console.error(`Unknown module id(s): ${unknown.join(', ')}.\nKnown: ${knownIds.join(', ')}`);
   process.exit(1);

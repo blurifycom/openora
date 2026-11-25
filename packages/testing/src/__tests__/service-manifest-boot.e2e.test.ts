@@ -53,7 +53,9 @@ afterAll(async () => {
 describe('a split service booted from the pnpm create:service example', () => {
   it('serves its modules, guards their admin routes, and serves none it leaves out', async () => {
     expect((await split.app.request('/health')).status).toBe(200);
-    expect((await split.app.request('/compliance/country-rules')).status).toBe(401);
+    expect((await split.app.request('/wallet/admin/assets')).status).toBe(401);
+    // Required only (ADR-0050): loaded for its ports, its routes served by another process.
+    expect((await split.app.request('/compliance/country-rules')).status).toBe(404);
     expect((await split.app.request('/cms/pages')).status).toBe(404);
   });
 
@@ -85,7 +87,7 @@ describe('a split service booted from the pnpm create:service example', () => {
     expect(refusal).toMatch(/- wallet requires PLAYER_TAGS \(bound by tag\)/);
     // KYC_WITHDRAWAL_POLICY is compliance's, a module this refusal already adds for identity.
     expect(SUGGESTED_MANIFEST.exec(refusal)?.[1]?.split(',')).toEqual(
-      expect.arrayContaining(['tag', 'compliance']),
+      expect.arrayContaining(['tag:no-routes', 'compliance:no-routes']),
     );
   });
 });
