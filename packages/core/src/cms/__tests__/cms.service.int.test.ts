@@ -239,12 +239,14 @@ describe('CmsService.createConfiguration reuseExisting (real PG)', () => {
   it('emits the created event once for concurrent reuse calls and not on reuse', async () => {
     const { svc, events } = makeService();
     const input = { placement: 'reuse-events', layout: 'single', reuseExisting: true } as const;
+    // warm the pool so the calls really overlap
+    await Promise.all(
+      Array.from({ length: 12 }, () => db.drizzle.db.execute(sql`select pg_sleep(0.05)`)),
+    );
 
-    const results = await Promise.all([
-      svc.createConfiguration(input, ADMIN_ID),
-      svc.createConfiguration(input, ADMIN_ID),
-      svc.createConfiguration(input, ADMIN_ID),
-    ]);
+    const results = await Promise.all(
+      Array.from({ length: 12 }, () => svc.createConfiguration(input, ADMIN_ID)),
+    );
 
     expect(new Set(results.map((result) => result.id)).size).toBe(1);
     expect(emittedTopics(events)).toEqual(['cms.banner.configuration.created']);

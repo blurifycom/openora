@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const BANNER_LAYOUTS = ['carousel', 'grid', 'single'] as const;
 export type BannerLayout = (typeof BANNER_LAYOUTS)[number];
+export const BannerLayoutSchema = z.enum(BANNER_LAYOUTS);
 
 /** Image-count bounds a banner configuration must satisfy before it can go live, per layout. */
 export const BANNER_IMAGE_COUNT_BOUNDS: Record<BannerLayout, { min: number; max: number }> = {
@@ -19,7 +20,7 @@ export const BannerImageCountBoundsOverridesSchema = z
   .record(
     z.string().min(1),
     z.partialRecord(
-      z.enum(BANNER_LAYOUTS),
+      BannerLayoutSchema,
       z.object({ min: z.number().int().min(1), max: z.number().int().min(1) }).strict(),
     ),
   )

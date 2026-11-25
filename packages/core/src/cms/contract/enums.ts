@@ -1,5 +1,3 @@
-import * as z from 'zod';
-import { BANNER_LAYOUTS, type BannerLayout } from '@openora/core/contracts';
+import { BANNER_LAYOUTS, BannerLayoutSchema, type BannerLayout } from '@openora/core/contracts';
 
-export { BANNER_LAYOUTS, type BannerLayout };
-export const BannerLayoutSchema = z.enum(BANNER_LAYOUTS);
+export { BANNER_LAYOUTS, BannerLayoutSchema, type BannerLayout };

@@ -44,13 +44,17 @@ does not repeat it.
   (placement -> layout -> `{ min, max }`): the check in `setDefaultConfiguration` and
   `createBannerSchedule` then uses that placement's bounds, and every other placement keeps the
   defaults. `min` is at least 1, `max` at most the layout's own maximum, and `min <= max`;
-  anything else fails at boot with the offending path.
+  anything else fails at boot with the offending path. Every banner configuration the admin
+  routes return carries the resolved bounds as `imageCountBounds: { min, max }` (the override
+  for its placement and layout, else the layout default), so a client can show how many
+  images it needs from the server instead of hard-coding them.
 - `createBannerConfiguration` with `reuseExisting: true` returns the placement's existing
   configuration (the default one, else the newest) instead of creating another, as it is and
   whatever its layout, and only inserts - and emits `cms.banner.configuration.created` - when
   the placement has none. A per-placement advisory lock makes that check-and-insert atomic, so
   concurrent first callers get the same configuration. Without the flag every call creates a
-  new row.
+  new row. Because a reused configuration comes back with its images, the flag also requires
+  `content:update` (what reading them takes) on top of `content:create`.
 - Deleting a configuration that is the current default is refused
   (`BannerConfigurationIsDefaultError`) - unset or replace the default first, then delete.
 

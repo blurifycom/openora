@@ -4,8 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { bannerConfiguration } from '@openora/core/cms/schema';
+import { adminRole, adminRoleAssignment, adminRolePermission } from '@openora/core/iam/schema';
+import { user } from '@openora/core/pam/schema/identity';
+import { CREATE_ONLY_CONTENT_ROLE } from './fixtures/test-cms-banner-config-plugin.js';
 import {
   asAdmin,
+  registerAndMaterializePlayer,
   type TestApp,
   type TestClient,
   type TestDb,
@@ -31,7 +35,29 @@ async function createConfiguration(
     ...(reuseExisting === undefined ? {} : { reuseExisting }),
   });
   expect(response.status).toBe(200);
-  return (await response.json()) as { id: string; isDefault: boolean; layout: string };
+  return (await response.json()) as {
+    id: string;
+    isDefault: boolean;
+    layout: string;
+    imageCountBounds: { min: number; max: number };
+  };
+}
+
+async function createOnlyContentAdmin() {
+  const drizzle = app.container.get(DRIZZLE).db;
+  const { client, userId } = await registerAndMaterializePlayer(app, {
+    email: `content-create-only-${randomUUID()}@example.test`,
+  });
+  await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
+  const [role] = await drizzle
+    .insert(adminRole)
+    .values({ name: CREATE_ONLY_CONTENT_ROLE })
+    .returning({ id: adminRole.id });
+  await drizzle
+    .insert(adminRolePermission)
+    .values({ roleId: role!.id, resource: 'content', level: 'read_write' });
+  await drizzle.insert(adminRoleAssignment).values({ userId, roleId: role!.id });
+  return client;
 }
 
 async function setImage(admin: TestClient, bannerConfigurationId: string, sortOrder = 0) {
@@ -104,6 +130,30 @@ describe('per-placement banner image-count bounds', () => {
   });
 });
 
+describe('effective image-count bounds on the configuration', () => {
+  it('reports the placement override, and the layout default elsewhere', async () => {
+    const admin = await asAdmin(app.app);
+    const overridden = await createConfiguration(admin, OVERRIDDEN_PLACEMENT, 'carousel');
+    const other = await createConfiguration(admin, `no-override-${randomUUID()}`, 'carousel');
+
+    expect(overridden.imageCountBounds).toEqual({ min: 1, max: 6 });
+    expect(other.imageCountBounds).toEqual({ min: 2, max: 6 });
+
+    const fetched = await admin.get(`/cms/banner-configurations/${overridden.id}`);
+    expect(((await fetched.json()) as { imageCountBounds: unknown }).imageCountBounds).toEqual({
+      min: 1,
+      max: 6,
+    });
+  });
+
+  it('keeps the default for a layout the override does not name', async () => {
+    const admin = await asAdmin(app.app);
+    const single = await createConfiguration(admin, OVERRIDDEN_PLACEMENT, 'single');
+
+    expect(single.imageCountBounds).toEqual({ min: 1, max: 1 });
+  });
+});
+
 describe('createBannerConfiguration reuseExisting', () => {
   it('returns one configuration and writes one row for concurrent first creates', async () => {
     const admin = await asAdmin(app.app);
@@ -147,5 +197,27 @@ describe('createBannerConfiguration reuseExisting', () => {
 
     expect(new Set(results.map((result) => result.id)).size).toBe(2);
     expect(await rowsFor(placement)).toHaveLength(2);
+  });
+
+  it('refuses reuse to a caller who may create but not read configurations, and still creates for them', async () => {
+    const admin = await asAdmin(app.app);
+    const placement = `reuse-authz-${randomUUID()}`;
+    const existing = await createConfiguration(admin, placement, 'single');
+    const creator = await createOnlyContentAdmin();
+
+    const reuse = await creator.post('/cms/banner-configurations', {
+      placement,
+      layout: 'single',
+      reuseExisting: true,
+    });
+    expect(reuse.status).toBe(403);
+    expect(await rowsFor(placement)).toHaveLength(1);
+
+    const create = await creator.post('/cms/banner-configurations', {
+      placement,
+      layout: 'single',
+    });
+    expect(create.status).toBe(200);
+    expect(((await create.json()) as { id: string }).id).not.toBe(existing.id);
   });
 });

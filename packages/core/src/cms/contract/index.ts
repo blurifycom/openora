@@ -57,6 +57,8 @@ export const BannerConfigurationSchema = z.object({
   isDefault: z.boolean(),
   createdBy: UuidSchema,
   createdAt: TimestampSchema,
+  /** Image count the configuration must have to go live: the placement's override, else the layout default. */
+  imageCountBounds: z.object({ min: z.number().int(), max: z.number().int() }),
   images: z.array(BannerImageSchema),
 });
 export type BannerConfiguration = z.infer<typeof BannerConfigurationSchema>;

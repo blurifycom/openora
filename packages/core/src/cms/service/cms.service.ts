@@ -181,6 +181,8 @@ function toBannerImage(record: {
   };
 }
 
+type ImageCountBounds = { min: number; max: number };
+
 function toBannerConfiguration(
   record: {
     id: string;
@@ -191,6 +193,7 @@ function toBannerConfiguration(
     createdAt: Date;
   },
   images: ReturnType<typeof toBannerImage>[],
+  imageCountBounds: ImageCountBounds,
 ) {
   return {
     id: record.id,
@@ -199,6 +202,7 @@ function toBannerConfiguration(
     isDefault: record.isDefault,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
+    imageCountBounds,
     images,
   };
 }
@@ -213,6 +217,7 @@ function toBannerConfigurationSummary(
     createdAt: Date;
   },
   imageCount: number,
+  imageCountBounds: ImageCountBounds,
 ) {
   return {
     id: record.id,
@@ -221,6 +226,7 @@ function toBannerConfigurationSummary(
     isDefault: record.isDefault,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
+    imageCountBounds,
     imageCount,
   };
 }
@@ -469,6 +475,7 @@ export class CmsService {
           defaultConfiguration: toBannerConfiguration(
             defaultRow,
             (imagesByConfig.get(defaultRow.id) ?? []).map(toBannerImage),
+            this.imageCountBounds(defaultRow),
           ),
           updatedAt: defaultRow.updatedAt.toISOString(),
         };
@@ -504,7 +511,11 @@ export class CmsService {
     const countByConfig = new Map(counts.map((c) => [c.bannerConfigurationId, c.count]));
 
     return configs.map((record) =>
-      toBannerConfigurationSummary(record, countByConfig.get(record.id) ?? 0),
+      toBannerConfigurationSummary(
+        record,
+        countByConfig.get(record.id) ?? 0,
+        this.imageCountBounds(record),
+      ),
     );
   }
 
@@ -521,7 +532,7 @@ export class CmsService {
       .from(bannerImageTable)
       .where(eq(bannerImageTable.bannerConfigurationId, id))
       .orderBy(asc(bannerImageTable.sortOrder));
-    return toBannerConfiguration(record, images.map(toBannerImage));
+    return toBannerConfiguration(record, images.map(toBannerImage), this.imageCountBounds(record));
   }
 
   async createConfiguration(
@@ -540,6 +551,7 @@ export class CmsService {
             .orderBy(
               desc(bannerConfigurationTable.isDefault),
               desc(bannerConfigurationTable.createdAt),
+              desc(bannerConfigurationTable.id),
             )
             .limit(1);
           if (existing) {
@@ -574,7 +586,7 @@ export class CmsService {
         userAgent: meta?.userAgent ?? null,
       });
     }
-    return toBannerConfiguration(record, images);
+    return toBannerConfiguration(record, images, this.imageCountBounds(record));
   }
 
   async deleteConfiguration(
@@ -1199,6 +1211,7 @@ export class CmsService {
       configuration: toBannerConfigurationSummary(
         r.configuration,
         countByConfig.get(r.configuration.id) ?? 0,
+        this.imageCountBounds(r.configuration),
       ),
     }));
   }
@@ -1233,6 +1246,14 @@ export class CmsService {
     }
   }
 
+  /** The placement's override for the layout, else the layout default. */
+  private imageCountBounds(configuration: { placement: string; layout: BannerLayout }) {
+    return (
+      this.bannerImageCountBounds[configuration.placement]?.[configuration.layout] ??
+      BANNER_IMAGE_COUNT_BOUNDS[configuration.layout]
+    );
+  }
+
   private async assertBannerConfigurationImageCount(
     tx: DrizzleTx,
     configuration: { id: Uuid; placement: string; layout: BannerLayout },
@@ -1249,9 +1270,7 @@ export class CmsService {
         ),
       );
     const slotCount = new Set(slotRows.map((row) => row.sortOrder)).size;
-    const bounds =
-      this.bannerImageCountBounds[configuration.placement]?.[configuration.layout] ??
-      BANNER_IMAGE_COUNT_BOUNDS[configuration.layout];
+    const bounds = this.imageCountBounds(configuration);
     if (slotCount < bounds.min || slotCount > bounds.max) {
       throw new BannerConfigurationImageCountError(
         configuration.layout,
@@ -1284,7 +1303,11 @@ export class CmsService {
       return {
         placement,
         defaultConfigurationId: defaultRow.id,
-        defaultConfiguration: toBannerConfiguration(defaultRow, images.map(toBannerImage)),
+        defaultConfiguration: toBannerConfiguration(
+          defaultRow,
+          images.map(toBannerImage),
+          this.imageCountBounds(defaultRow),
+        ),
         updatedAt: defaultRow.updatedAt.toISOString(),
       };
     }
