@@ -1802,7 +1802,6 @@ export class WalletService {
     idempotencyKey?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
-    await this.assertDepositPolicyAdmits(userId);
     await this.assertDepositable(currency, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
@@ -1822,6 +1821,7 @@ export class WalletService {
         .from(wallet)
         .where(eq(wallet.userId, userId));
     }
+    await this.assertDepositAdmitted(userId);
 
     // Reserve the RG headroom BEFORE charging the PSP: the check and the pending row that
     // consumes it commit together under the player's deposit lock, so a second concurrent

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import {
   DepositRefusedError,
+  type DepositAdmissionPolicy,
   LedgerProjectionStaleError,
   RgLimitExceededError,
   limitSlotKey,
@@ -52,7 +53,11 @@ const REFUSED = {
   currency: 'USD',
 };
 
-function makeService(rgLimits?: RgLimitsPort, playEligibility?: PlayEligibilityPort) {
+function makeService(
+  rgLimits?: RgLimitsPort,
+  playEligibility?: PlayEligibilityPort,
+  depositAdmission?: DepositAdmissionPolicy,
+) {
   const payment = mock<PaymentAdapter>({
     processDeposit: vi.fn(async () => ({ externalId: `psp-${randomUUID()}`, status: 'completed' })),
   });
@@ -67,6 +72,7 @@ function makeService(rgLimits?: RgLimitsPort, playEligibility?: PlayEligibilityP
     rates: makeExchangeRateReader(),
     ...(rgLimits ? { rgLimits } : {}),
     ...(playEligibility ? { playEligibility } : {}),
+    ...(depositAdmission ? { depositAdmission } : {}),
   });
   return { svc, payment };
 }
@@ -340,6 +346,23 @@ describe('the ledger projections (real PG)', () => {
     const { svc, payment } = makeService(undefined, projection);
     const first = await svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey });
     await projection.reconcile([{ ...eligible(userId, 1), rgBlocked: true }]);
+
+    const replay = await svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey });
+
+    expect(replay).toEqual(first);
+    expect(payment.processDeposit).toHaveBeenCalledTimes(1);
+    await expect(
+      svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey: randomUUID() }),
+    ).rejects.toBeInstanceOf(DepositRefusedError);
+  });
+
+  it('replays a completed deposit after the admission policy starts refusing', async () => {
+    const userId = randomUUID();
+    const idempotencyKey = randomUUID();
+    const refusalReason = vi.fn(async (): Promise<string | null> => null);
+    const { svc, payment } = makeService(undefined, undefined, { refusalReason });
+    const first = await svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey });
+    refusalReason.mockResolvedValue('kyc_required');
 
     const replay = await svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey });
 
