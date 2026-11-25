@@ -110,6 +110,17 @@ export type PlayEligibilityProjectionPort = {
    * that are missing, older, or at the same version but different, and returns how many it wrote.
    */
   reconcile(snapshots: readonly PlayEligibilitySnapshot[]): Promise<number>;
+  /**
+   * Marks the projection fresh at the ledger's clock. Identity calls it every
+   * `LEDGER_PROJECTION_HEARTBEAT_MS` where its module is selected (ADR-0062).
+   */
+  heartbeat(): Promise<void>;
+  /**
+   * True on a binding that reaches the ledger over the network, set by that binding. Its write
+   * is not part of the writer's transaction, so a lift skips it and reaches the ledger by its
+   * event; a restriction still writes first and fails the change when the write fails.
+   */
+  readonly remote?: boolean;
 };
 
 export const PLAY_ELIGIBILITY_PROJECTION: SealedToken<PlayEligibilityProjectionPort> =
@@ -130,7 +141,34 @@ export type PlayEligibilitySourcePort = {
    * the ones it could not, each logged.
    */
   repair(userIds: readonly string[]): Promise<string[]>;
+  /**
+   * True on a binding that reaches identity over the network, set by that binding. The ledger's
+   * writer is then remote, so a stake refuses once the projection's heartbeat is stale (ADR-0062).
+   */
+  readonly remote?: boolean;
 };
 
 export const PLAY_ELIGIBILITY_SOURCE: SealedToken<PlayEligibilitySourcePort> =
   createSealedToken<PlayEligibilitySourcePort>('PLAY_ELIGIBILITY_SOURCE');
+
+/** The ledger projections a heartbeat keeps fresh (ADR-0062). */
+export const LEDGER_PROJECTIONS = ['play_eligibility', 'rg_limits'] as const;
+export type LedgerProjection = (typeof LEDGER_PROJECTIONS)[number];
+
+/**
+ * A stake or deposit refused because the projection it reads has not heard from its remote
+ * writer within `LEDGER_PROJECTION_STALE_MS` (ADR-0062). Fail closed: the copy may be missing a
+ * restriction. `lastBeatAt` is null when no heartbeat was ever written.
+ */
+export class LedgerProjectionStaleError extends Error {
+  readonly code = 'ledger_projection_stale';
+  constructor(
+    readonly projection: LedgerProjection,
+    readonly lastBeatAt: Date | null,
+  ) {
+    super(
+      `the ledger's ${projection} projection is stale (last heartbeat ${lastBeatAt?.toISOString() ?? 'never'}); refused`,
+    );
+    this.name = 'LedgerProjectionStaleError';
+  }
+}

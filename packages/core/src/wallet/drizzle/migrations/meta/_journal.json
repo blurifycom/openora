@@ -365,6 +365,13 @@
       "when": 1795048888328,
       "tag": "0051_wallet_transaction_type_drop_tip",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795611770958,
+      "tag": "0052_ledger_projection_heartbeat",
+      "breakpoints": true
     }
   ]
 }

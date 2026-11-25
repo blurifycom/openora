@@ -144,6 +144,17 @@ export type RgLimitLedgerPort = {
    */
   drifted(snapshots: readonly RgLimitsSnapshot[]): Promise<string[]>;
   /**
+   * Marks the projection fresh at the ledger's clock. Compliance calls it every
+   * `LEDGER_PROJECTION_HEARTBEAT_MS` where its module is selected (ADR-0062).
+   */
+  heartbeat(): Promise<void>;
+  /**
+   * True on a binding that reaches the ledger over the network, set by that binding. A
+   * loosening (a confirmed raise or removal) then skips the write and reaches the ledger by its
+   * event; every other change still writes first and fails when the write fails (ADR-0062).
+   */
+  readonly remote?: boolean;
+  /**
    * Spend counted against one money limit since `from`, converted into `limitCurrency`, from the
    * wallet ledger. Throws `RgRateUnavailableError` when a source currency has no rate.
    */
@@ -175,6 +186,11 @@ export type RgLimitsSourcePort = {
    * the ones it could not, each logged.
    */
   repair(userIds: readonly string[]): Promise<string[]>;
+  /**
+   * True on a binding that reaches compliance over the network, set by that binding. The ledger's
+   * writer is then remote, so a deposit or wager refuses once the heartbeat is stale (ADR-0062).
+   */
+  readonly remote?: boolean;
 };
 
 export const RG_LIMITS_SOURCE: SealedToken<RgLimitsSourcePort> =

@@ -1,4 +1,4 @@
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, createLogger } from '@openora/core/server';
+import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, createLogger, envMs } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
@@ -156,14 +156,26 @@ export default {
     // One instance behind both play eligibility ports; the router factory constructs it, and runs
     // in every process before any event is delivered.
     let playEligibility: LedgerPlayEligibilityService | null = null;
+    // A projection goes stale only when its owner writes it from another service, which the
+    // remote binding of the owner's source port says (ADR-0062). Read lazily: the source is
+    // bound by the owner, which may resolve this module's ports while it builds.
+    const staleMs = envMs('LEDGER_PROJECTION_STALE_MS', 60_000);
     const sharedPlayEligibility = (c: TypedContainer<CoreTokenCatalog>) =>
-      (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE)));
+      (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE), {
+        remoteWriter: () =>
+          c.has(PLAY_ELIGIBILITY_SOURCE) && c.get(PLAY_ELIGIBILITY_SOURCE).remote === true,
+        staleMs,
+      }));
     // Same for the limits gate and its projection writer (ADR-0057).
     let rgLimitsRef: LedgerRgLimitsService | null = null;
     const sharedRgLimits = (c: TypedContainer<CoreTokenCatalog>) =>
       (rgLimitsRef ??= new LedgerRgLimitsService(
         c.get(DRIZZLE),
         c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        {
+          remoteWriter: () => c.has(RG_LIMITS_SOURCE) && c.get(RG_LIMITS_SOURCE).remote === true,
+          staleMs,
+        },
       ));
 
     // Publishes a change *signal*, never the balance itself - see the comment on

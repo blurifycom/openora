@@ -546,9 +546,12 @@ export type {
   PlayEligibilitySourcePort,
   PlayEligibilityState,
   PlayRefusal,
+  LedgerProjection,
 } from './play-eligibility.js';
 export {
   LEDGER_PLAY_ELIGIBILITY,
+  LEDGER_PROJECTIONS,
+  LedgerProjectionStaleError,
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
   PLAY_ELIGIBILITY_SOURCE,
