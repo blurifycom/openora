@@ -8,7 +8,7 @@ const REMOTE_DOMAINS = [
   { env: 'MONEY_SERVICE_URL', roots: MONEY_MODULE_IDS },
 ] as const;
 
-export type RemoteDomainEnv = (typeof REMOTE_DOMAINS)[number]['env'];
+type RemoteDomainEnv = (typeof REMOTE_DOMAINS)[number]['env'];
 
 export type RemoteModulesResult = {
   entries: PluginEntry[];

@@ -96,9 +96,15 @@ describe('a split service booted from the pnpm create:service example', () => {
 describe('the money split, booted from every installed module', () => {
   const MONEY: ReadonlySet<string> = new Set(MONEY_MODULE_IDS);
 
-  /** Every installed module, the ones `servedHere` rejects loaded only for their ports. */
+  /**
+   * Every installed module, the ones `servedHere` rejects loaded only for their ports. The
+   * `-remote` bindings stand in for a module this process leaves out, so a process loading
+   * every module names none of them.
+   */
   async function manifestServing(servedHere: (id: string) => boolean): Promise<string> {
-    const ids = (await loadExtensions()).map((entry) => entry.id);
+    const ids = (await loadExtensions())
+      .map((entry) => entry.id)
+      .filter((id) => !id.endsWith('-remote'));
     return ids.map((id) => (servedHere(id) ? id : `${id}:no-routes`)).join(',');
   }
 

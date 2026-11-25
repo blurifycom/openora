@@ -15,7 +15,11 @@ import {
 } from '@openora/core/contracts';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { ledgerPlayEligibility } from '../schema/index.js';
-import { assertFresh, beat, type ProjectionFreshness } from './ledger-projection-heartbeat.js';
+import {
+  assertFresh,
+  beat,
+  type ProjectionFreshness,
+} from './ledger-projection-heartbeat.service.js';
 
 const log = createLogger('wallet:play-eligibility');
 

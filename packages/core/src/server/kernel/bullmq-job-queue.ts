@@ -68,6 +68,8 @@ export class BullMqJobQueue implements JobQueueAdapter {
   private readonly connection: ConnectionOptions;
   private readonly queues = new Map<string, Queue<JobEnvelope>>();
   private readonly workers: Worker<JobEnvelope>[] = [];
+  /** Queue writes not yet answered: `close()` waits them out, since closing a queue under one rejects it unhandled. */
+  private readonly pending = new Set<Promise<unknown>>();
   private readonly orderingWarned = new Set<string>();
   // One window per process, not per queue or message: every queue shares one Redis, so an
   // outage logs once a minute per instance, and messages carrying job ids stay bounded.
@@ -106,9 +108,11 @@ export class BullMqJobQueue implements JobQueueAdapter {
       ...RETENTION,
     };
 
-    return this.getQueue(queue)
-      .add(queue, envelope, jobOpts)
-      .then((job) => ({ id: job.id ?? '' }));
+    return this.track(
+      this.getQueue(queue)
+        .add(queue, envelope, jobOpts)
+        .then((job) => ({ id: job.id ?? '' })),
+    );
   }
 
   registerWorker<T>(registration: WorkerRegistration<T>): void {
@@ -156,27 +160,44 @@ export class BullMqJobQueue implements JobQueueAdapter {
     repeat: RepeatOptions,
   ): Promise<void> {
     const envelope: JobEnvelope = { payload, meta: {} };
-    return this.getQueue(queue)
-      .upsertJobScheduler(
-        scheduleId,
-        { pattern: repeat.cron, every: repeat.everyMs, tz: repeat.timezone },
-        // Without opts every cron run stays in Redis forever (~1 KB per run).
-        { name: queue, data: envelope, opts: RETENTION },
-      )
-      .then(() => undefined);
+    return this.track(
+      this.getQueue(queue)
+        .upsertJobScheduler(
+          scheduleId,
+          { pattern: repeat.cron, every: repeat.everyMs, tz: repeat.timezone },
+          // Without opts every cron run stays in Redis forever (~1 KB per run).
+          { name: queue, data: envelope, opts: RETENTION },
+        )
+        .then(() => undefined),
+    );
   }
 
   unschedule(queue: QueueName, scheduleId: string): Promise<void> {
-    return this.getQueue(queue)
-      .removeJobScheduler(scheduleId)
-      .then(() => undefined);
+    return this.track(
+      this.getQueue(queue)
+        .removeJobScheduler(scheduleId)
+        .then(() => undefined),
+    );
   }
 
   async close(): Promise<void> {
     // Workers first (drain in-flight), then queues; each close() tears down its own
     // BullMQ-owned connection.
+    // A worker or queue closed while BullMQ still sets up its connection rejects that setup
+    // unhandled, so let every setup settle first (a dead Redis fails it, so this never hangs).
+    await Promise.allSettled(
+      [...this.workers, ...this.queues.values()].map((q) => q.waitUntilReady()),
+    );
     await Promise.allSettled(this.workers.map((w) => w.close()));
+    await Promise.allSettled(this.pending);
     await Promise.allSettled([...this.queues.values()].map((q) => q.close()));
+  }
+
+  private track<T>(write: Promise<T>): Promise<T> {
+    this.pending.add(write);
+    const settle = () => this.pending.delete(write);
+    write.then(settle, settle);
+    return write;
   }
 
   private getQueue(queue: QueueName): Queue<JobEnvelope> {

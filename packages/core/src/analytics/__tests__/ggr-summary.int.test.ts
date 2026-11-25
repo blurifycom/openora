@@ -7,6 +7,7 @@ import {
   type RunContext,
   type WalletTransactionStatus,
   type WalletTransactionType,
+  MONEY_REPORTING,
 } from '@openora/core/contracts';
 import {
   Container,
@@ -31,6 +32,7 @@ const LAST_DAY = '2026-03-15';
 function bootKernel() {
   const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => db.drizzle);
+  container.register(MONEY_REPORTING, () => new MoneyReportingService(db.drizzle));
   container.register(CACHE, () => makeCache());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('analytics');

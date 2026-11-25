@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { IdentityReaderService } from '@openora/core/pam/server';
 import { sql } from 'drizzle-orm';
 import {
   Container,
@@ -8,7 +9,11 @@ import {
   findOneOrThrow,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import type { BonusGrantEntryType, RunContext } from '@openora/core/contracts';
+import {
+  IDENTITY_READER,
+  type BonusGrantEntryType,
+  type RunContext,
+} from '@openora/core/contracts';
 import { createMcpKernel, createTestDb, type TestDb } from '@openora/core/testing';
 import { makeAuditWriter } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -26,6 +31,7 @@ const amount = (value: number) => expect.stringMatching(new RegExp(`^${value}(\\
 function bootKernel() {
   const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => db.drizzle);
+  container.register(IDENTITY_READER, () => new IdentityReaderService(db.drizzle));
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('bonus');
   bonusPlugin.register(registry);

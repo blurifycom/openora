@@ -7,7 +7,7 @@ import type {
 import type { RankRewardClaimBlocker } from '../contract/index.js';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 
-export const CLAIM_BLOCKED_STATUSES = ['suspended', 'closed'] as const;
+const CLAIM_BLOCKED_STATUSES = ['suspended', 'closed'] as const;
 
 export type CashClaimBlocker = RankRewardClaimBlocker;
 

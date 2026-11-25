@@ -9,8 +9,8 @@
     "mail:no-routes",
     "iam:no-routes",
     "player-management:no-routes",
-    "gaming:no-routes",
     "exchange-rate:no-routes",
-    "chat:no-routes"
+    "chat:no-routes",
+    "gaming:no-routes"
   ]
 }

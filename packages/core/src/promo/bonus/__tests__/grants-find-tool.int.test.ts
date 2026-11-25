@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { IdentityReaderService } from '@openora/core/pam/server';
+import { IDENTITY_READER } from '@openora/core/contracts';
 import { sql } from 'drizzle-orm';
 import {
   Container,
@@ -28,6 +30,7 @@ const FORFEIT_NOTE = 'player admitted to multi-accounting on a call';
 function bootKernel() {
   const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => db.drizzle);
+  container.register(IDENTITY_READER, () => new IdentityReaderService(db.drizzle));
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   registry.setOwner('bonus');
   bonusPlugin.register(registry);

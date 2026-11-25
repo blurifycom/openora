@@ -26,7 +26,11 @@ import {
   type User,
 } from '@openora/core/contracts';
 import { and, asc, desc, eq, gte, inArray, lt, lte, notInArray, sql } from 'drizzle-orm';
-import { assertFresh, beat, type ProjectionFreshness } from './ledger-projection-heartbeat.js';
+import {
+  assertFresh,
+  beat,
+  type ProjectionFreshness,
+} from './ledger-projection-heartbeat.service.js';
 import {
   LOSS_LEGS,
   WAGER_LEGS,

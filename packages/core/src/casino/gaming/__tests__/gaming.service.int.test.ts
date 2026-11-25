@@ -10,10 +10,11 @@ import { GameSortRankingService } from '../service/game-sort-ranking.service.js'
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { moneyEquals, setErrorReporter } from '@openora/core/server';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type {
   GameAdapter,
   GameGeoCheckPort,
+  GameGeoRules,
   PlayEligibilityPort,
   RgLimitsPort,
   WalletCommands,
@@ -765,13 +766,33 @@ describe('GamingService admin list filters (real PG)', () => {
     expect(ids(result)).toEqual([original.id, casino.id].sort());
   });
 
+  /** The rule pairs compliance answers `listGeoRulePairs` with, read from the seeded tables. */
+  async function geoRulePairs(countries?: readonly string[]): Promise<GameGeoRules> {
+    const [games, providers] = await Promise.all([
+      db.drizzle.db
+        .selectDistinct({ gameId: gameGeoRule.gameId, countryCode: gameGeoRule.countryCode })
+        .from(gameGeoRule)
+        .where(countries ? inArray(gameGeoRule.countryCode, [...countries]) : undefined),
+      db.drizzle.db
+        .selectDistinct({
+          providerId: providerGeoRule.providerId,
+          countryCode: providerGeoRule.countryCode,
+        })
+        .from(providerGeoRule)
+        .where(countries ? inArray(providerGeoRule.countryCode, [...countries]) : undefined),
+    ]);
+    return { games, providers };
+  }
+
   it('geoBlocked and geoBlockedCountries filter on per-game geo rules', async () => {
     const deFr = await seedGame();
     const de = await seedGame();
     const open = await seedGame();
     await blockGame(deFr.id, ['DE', 'FR']);
     await blockGame(de.id, ['DE']);
-    const svc = makeService({ gameGeoCheck: mock<GameGeoCheckPort>({}) });
+    const svc = makeService({
+      gameGeoCheck: mock<GameGeoCheckPort>({ listGeoRulePairs: geoRulePairs }),
+    });
 
     expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlocked: true }))).toEqual(
       [deFr.id, de.id].sort(),
@@ -795,7 +816,9 @@ describe('GamingService admin list filters (real PG)', () => {
       .values({ providerId: blockedStudio.id, countryCode: 'DE', reason: 'licence' });
     await blockGame(viaBoth.id, ['DE', 'FR']);
     await blockGame(viaGame.id, ['FR']);
-    const svc = makeService({ gameGeoCheck: mock<GameGeoCheckPort>({}) });
+    const svc = makeService({
+      gameGeoCheck: mock<GameGeoCheckPort>({ listGeoRulePairs: geoRulePairs }),
+    });
 
     expect(ids(await svc.listGamesAdmin({ page: 1, limit: 10, geoBlocked: true }))).toEqual(
       [viaProvider.id, viaBoth.id, viaGame.id].sort(),
@@ -828,6 +851,7 @@ describe('GamingService admin list filters (real PG)', () => {
 
   function geoCheckMock(globallyBlocked: string[] = []) {
     return mock<GameGeoCheckPort>({
+      listGeoRulePairs: geoRulePairs,
       listGloballyBlockedCountries: vi.fn().mockResolvedValue(globallyBlocked),
     });
   }
