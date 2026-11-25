@@ -42,7 +42,7 @@ like any queue the process does not register.
 
 **Router factories stay boot hooks that every module runs** (ADR-0038). A required module's
 factory receives `{ mounted: false }`, as before, and skips its `jobQueue.schedule` calls, so only
-the selecting process upserts the schedules. This guard in each scheduling factory (compliance,
+the selecting process upserts the schedules. This guard in each scheduling factory (compliance, chat, gaming,
 wallet, tag, exchange-rate, bonus, gamification, sportsbook, notifications) is the minimum; a
 declarative, owned `ctx.jobs.schedule` remains the cleaner shape once a schedule needs no
 container read.
