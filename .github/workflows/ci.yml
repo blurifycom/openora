@@ -124,11 +124,48 @@ jobs:
           retention-days: ${{ github.event_name == 'merge_group' && 30 || 7 }}
           if-no-files-found: ignore
 
+  # Decides whether a PR needs the integration tiers. They run unless every changed file is
+  # one no integration test reads: markdown, agent rules, lint tools, the other
+  # workflows. A rename counts both names, an unknown path runs them, and so does a PR past the
+  # 3000 files the API lists. Merge-queue and stage runs always do, so a miss here reaches dev
+  # only through an admin bypass merge. Per test file (`vitest --changed`) was measured and rejected: the
+  # `@openora/core/server` barrel pulls ~95% of core suites into any core change, and the e2e
+  # tier imports core as a package, so vitest misses most of its affected suites.
+  changes:
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      integration: ${{ steps.diff.outputs.integration }}
+    steps:
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          CHANGED: ${{ github.event.pull_request.changed_files }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          run=true
+          # The file list is the PR's current one: a push since this run started could differ.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "${CHANGED:-3000}" -lt 3000 ] &&
+            [ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)" = "$HEAD_SHA" ] &&
+            files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+              --jq '.[] | .filename, (.previous_filename // empty)') &&
+            [ -n "$files" ] &&
+            ! printf '%s\n' "$files" | grep -vE '\.md$|^(\.rulesync|\.claude|\.agents|\.github/ISSUE_TEMPLATE|tools/lint)/|^\.github/workflows/(mutation|pipeline|release)\.yml$|^(CODEOWNERS|NOTICE|LICENSE[^/]*|knip\.json|commitlint\.config\.cjs)$' >/dev/null
+          then
+            run=false
+          fi
+          echo "integration=$run" | tee -a "$GITHUB_OUTPUT"
+
   # Both integration tiers (packages/core `vitest.integration.config.ts` and packages/testing),
   # 4 shards. Each job has its own postgres + redis, so per-suite databases and redis
   # partitions are isolated; within a job the two tiers share them as in `pnpm verify`.
   integration:
-    if: github.event.action != 'edited'
+    needs: changes
+    if: needs.changes.outputs.integration == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -201,12 +238,16 @@ jobs:
   # Stable required-check name; aggregates the jobs above.
   verify:
     if: always() && github.event.action != 'edited'
-    needs: [checks, integration, consumer]
+    needs: [changes, checks, integration, consumer]
     runs-on: ubuntu-latest
     steps:
+      # `integration` may be skipped only when `changes` succeeded and said so.
       - name: Require all verify jobs green
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          RESULTS: ${{ needs.changes.result }} ${{ needs.checks.result }} ${{ needs.consumer.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          NEEDED: ${{ needs.changes.outputs.integration }}
         run: |
-          echo "$RESULTS"
-          case " $RESULTS " in *" failure "*|*" cancelled "*|*" skipped "*) exit 1;; esac
+          echo "changes checks consumer: $RESULTS, integration: $INTEGRATION (needed: $NEEDED)"
+          [ "$RESULTS" = "success success success" ] || exit 1
+          [ "$INTEGRATION" = success ] || [ "$INTEGRATION-$NEEDED" = skipped-false ] || exit 1
