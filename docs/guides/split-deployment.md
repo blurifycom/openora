@@ -136,6 +136,44 @@ Any realtime endpoint your frontend uses for chat must be routed to the chat ser
 
 A main API that does not load chat runs none of chat's handlers or jobs. The chat service runs them all.
 
+## Worked example: money apart from the platform
+
+The money modules (`wallet`, `bonus`, `gamification`, `gaming`, `betting`, `exchange-rate`) can run in a `money` service while a `platform` service runs the rest (ADR-0063). Set `MONEY_SERVICE_URL` on the platform and `createApp` drops the money modules and every plugin that `dependsOn` one, directly or through another dropped one, before it applies any manifest, as `CHAT_SERVICE_URL` does for chat. A platform module that should stay must require money ports, not `dependsOn` a money module. The `money-remote` plugin, part of `corePlugins()`, then binds these ports to the money service's internal API:
+
+| Port                                             | Remote methods                                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `WALLET_READER`                                  | every read                                                                          |
+| `EXCHANGE_RATE_READER`                           | `getRate`, `convert`                                                                |
+| `ADMIN_WALLET_REPORTING`, `ADMIN_GAME_REPORTING` | every report                                                                        |
+| `LEDGER_API_V1`                                  | `bet`, `win`, `reverse`, `closeRound`, `balance` (not the sportsbook ops)           |
+| `PLAY_ELIGIBILITY_PROJECTION`                    | `write`, `reconcile`, `heartbeat`, bound with `remote: true`                        |
+| `RG_LIMIT_LEDGER`                                | `write`, `reconcile`, `drifted`, `heartbeat`, `spendFor`, bound with `remote: true` |
+
+`remote: true` turns on ADR-0062: a lift or a loosened limit reaches the ledger by its event, a restriction still writes first and fails the change when the write fails, and the ledger refuses stakes and deposits once the heartbeat is stale.
+
+Ports that take the caller's transaction cannot cross the network: `WALLET_COMMANDS`, `WAGER_TRACKING`, `BONUS_LIFECYCLE`, `BONUS_WAGERING`, `BONUS_GRANTS`, `BONUS_GRANT_LEDGER`, `GAMING_COMMANDS`, `RG_LIMITS` and `LEDGER_PLAY_ELIGIBILITY`. With `MONEY_SERVICE_URL` set, a kept module whose `requiresPorts` names one fails the boot with the module and the port in the message.
+
+Platform service:
+
+```
+SERVICE_NAME=platform
+MONEY_SERVICE_URL=https://money.internal   # the money service's private origin
+MONEY_SERVICE_NAME=money                   # its SERVICE_NAME, default money
+INTERNAL_API_SECRETS=<shared secret>
+```
+
+Money service:
+
+```
+SERVICE_NAME=money
+MONEY_PORTS_CALLERS=platform   # POST /internal/v1/money/ports/call
+INTERNAL_API_SECRETS=<shared secret>
+```
+
+`MONEY_PORTS_CALLERS` is a comma list of `SERVICE_NAME`s; unset refuses every caller. Every call goes through one route, naming the port and method; the money service answers from its own binding and refuses a port or method outside the table above. A required `tx` argument is never sent: the money service runs a write in a transaction of its own and a read on its own connection.
+
+Failures close. Nothing is cached, and each call times out at 2s. A read that cannot be answered (timeout, network, 5xx) throws a 503 `SERVICE_UNAVAILABLE`, never a zero balance; a refused call (4xx) stays a 500. A write carries an idempotency key in its signed body and is retried once with the same body after a timeout, network failure or 5xx, then throws. Every remote write is idempotent at its owner (a keyed ledger op, a versioned projection write, a heartbeat), so a retry of a write that was applied applies nothing. In production the URL must be https unless `MONEY_SERVICE_ALLOW_HTTP=true`. Rollback is redeploying the platform with `MONEY_SERVICE_URL` unset.
+
 ## A module on a database of its own
 
 Every step above works on one shared database. Giving the chat service a database of its own adds three jobs: migrate each database, ship audit from each, and make sure every queue still has a consumer.

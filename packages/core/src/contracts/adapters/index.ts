@@ -741,3 +741,14 @@ export type {
   SportsbookProviderSessionArgs,
 } from './sportsbook-provider.js';
 export { SPORTSBOOK_PROVIDER, SportsbookProviderSessionSchema } from './sportsbook-provider.js';
+export type { MoneyMethodSpec, MoneyRemotePortName } from './money-remote.js';
+export {
+  MONEY_MODULE_IDS,
+  MONEY_PORTS_ROUTE,
+  MONEY_REMOTE_PORTS,
+  MONEY_TX_BOUND_PORTS,
+  MoneyPortCallWire,
+  decodeMoneyWire,
+  encodeMoneyWire,
+  isMoneyRemotePortName,
+} from './money-remote.js';

@@ -18,6 +18,8 @@ const CORE_PLUGIN_MODULES = [
   { id: 'social', path: '@openora/core/engagement/plugins/social' },
   // Binds the chat ports to the chat service when CHAT_SERVICE_URL is set; nothing otherwise.
   { id: 'chat-remote', path: '@openora/core/engagement/plugins/chat-remote' },
+  // Binds the money ports to the money service when MONEY_SERVICE_URL is set; nothing otherwise.
+  { id: 'money-remote', path: '@openora/core/money-remote/plugin' },
   { id: 'profile', path: '@openora/core/pam/plugins/profile' },
   { id: 'tag', path: '@openora/core/pam/plugins/tag' },
   { id: 'player-management', path: '@openora/core/pam/plugins/player-management' },

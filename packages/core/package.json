@@ -326,6 +326,11 @@
       "import": "./dist/engagement/chat-remote/plugin.js",
       "default": "./dist/engagement/chat-remote/plugin.js"
     },
+    "./money-remote/plugin": {
+      "types": "./dist/money-remote/plugin.d.ts",
+      "import": "./dist/money-remote/plugin.js",
+      "default": "./dist/money-remote/plugin.js"
+    },
     "./engagement/plugins/notifications": {
       "types": "./dist/engagement/notifications/plugin.d.ts",
       "import": "./dist/engagement/notifications/plugin.js",
