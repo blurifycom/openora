@@ -41,7 +41,7 @@ describe('player deposit address and crediting', () => {
     'an admin refunding a below-minimum deposit finding leaves the balance unchanged and records the refund once',
   );
   it.todo(
-    'a player or an admin without the wallet permission calling the deposit finding credit or refund route is refused as forbidden',
+    'a player or an admin without the wallet reconciliation resolve permission calling the deposit finding credit or refund route is refused as forbidden',
   );
   it.todo(
     'an on-chain deposit webhook over the responsible-gambling deposit limit is credited and files one limit breach finding',

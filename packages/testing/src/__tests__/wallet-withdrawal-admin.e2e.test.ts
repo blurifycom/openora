@@ -40,6 +40,7 @@ describe('auto-withdrawal rules and config', () => {
   it.todo(
     'an admin deleting a per-player rule returns that player to the global threshold and writes an audit row',
   );
+  it.todo('with no global threshold or a zero threshold every withdrawal waits in the admin queue');
   it.todo('a threshold value that is not a valid decimal amount is refused');
   it.todo('a non-admin changing auto-withdrawal config or rules is refused with 403');
 });

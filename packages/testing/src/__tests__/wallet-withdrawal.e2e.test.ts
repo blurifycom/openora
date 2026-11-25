@@ -28,6 +28,9 @@ describe('player withdrawal request', () => {
   );
   it.todo('a withdrawal with no fresh exchange rate is refused and nothing is debited');
   it.todo('a withdrawal for a currency or network with withdrawals switched off is refused');
+  it.todo(
+    'a player with a withdrawal hold from another module is refused a withdrawal and cannot have a pending one approved until the hold is released',
+  );
   it.todo('an unauthenticated caller requesting a withdrawal is refused with 401');
   it.todo("a player cannot see or act on another player's withdrawal");
 });
