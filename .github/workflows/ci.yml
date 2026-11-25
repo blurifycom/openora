@@ -154,7 +154,7 @@ jobs:
             files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
               --jq '.[] | .filename, (.previous_filename // empty)') &&
             [ -n "$files" ] &&
-            ! printf '%s\n' "$files" | grep -qvE '\.md$|^(\.rulesync|\.claude|\.agents|\.github/ISSUE_TEMPLATE|tools/lint)/|^\.github/workflows/(mutation|pipeline|release)\.yml$|^(CODEOWNERS|NOTICE|LICENSE[^/]*|knip\.json|commitlint\.config\.cjs)$'
+            ! printf '%s\n' "$files" | grep -vE '\.md$|^(\.rulesync|\.claude|\.agents|\.github/ISSUE_TEMPLATE|tools/lint)/|^\.github/workflows/(mutation|pipeline|release)\.yml$|^(CODEOWNERS|NOTICE|LICENSE[^/]*|knip\.json|commitlint\.config\.cjs)$' >/dev/null
           then
             run=false
           fi
