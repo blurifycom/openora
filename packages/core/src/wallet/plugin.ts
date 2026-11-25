@@ -166,14 +166,16 @@ export default {
     // One instance behind both play eligibility ports; the router factory constructs it, and runs
     // in every process before any event is delivered.
     let playEligibility: LedgerPlayEligibilityService | null = null;
-    // A projection goes stale only when its owner writes it from another service, which the
-    // remote binding of the owner's source port says (ADR-0062). Read lazily: the source is
-    // bound by the owner, which may resolve this module's ports while it builds.
+    // The services allowed to call the money ports over the internal API (ADR-0063). Unset
+    // refuses every caller.
+    const moneyPortsCallers = parseInternalCallers(process.env['MONEY_PORTS_CALLERS']);
+    // A projection goes stale only when its owner writes it from another service, so the gate
+    // checks the heartbeat once another service may call the money ports (ADR-0062).
+    const remoteWriter = () => moneyPortsCallers.size > 0;
     const staleMs = envMs('LEDGER_PROJECTION_STALE_MS', 60_000);
     const sharedPlayEligibility = (c: TypedContainer<CoreTokenCatalog>) =>
       (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE), {
-        remoteWriter: () =>
-          c.has(PLAY_ELIGIBILITY_SOURCE) && c.get(PLAY_ELIGIBILITY_SOURCE).remote === true,
+        remoteWriter,
         staleMs,
       }));
     // Same for the limits gate and its projection writer (ADR-0057).
@@ -182,10 +184,7 @@ export default {
       (rgLimitsRef ??= new LedgerRgLimitsService(
         c.get(DRIZZLE),
         c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
-        {
-          remoteWriter: () => c.has(RG_LIMITS_SOURCE) && c.get(RG_LIMITS_SOURCE).remote === true,
-          staleMs,
-        },
+        { remoteWriter, staleMs },
       ));
 
     // Publishes a change *signal*, never the balance itself - see the comment on
@@ -583,8 +582,7 @@ export default {
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
     // The money ports for a platform service that runs without the money modules (ADR-0063),
-    // answered from this process's own bindings. Unset MONEY_PORTS_CALLERS refuses every caller.
-    const moneyPortsCallers = parseInternalCallers(process.env['MONEY_PORTS_CALLERS']);
+    // answered from this process's own bindings.
     ctx.routers.addInternal('money', (c) =>
       createInternalMoneyPortsRouter(
         (token) => c.get(token as CoreTokenCatalog[keyof CoreTokenCatalog]),

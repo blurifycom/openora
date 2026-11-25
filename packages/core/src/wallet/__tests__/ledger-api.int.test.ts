@@ -8,8 +8,10 @@ import {
   GamingInvalidRtpError,
   IDENTITY_READER,
   LEDGER_API_V1,
+  LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
-  PLAY_ELIGIBILITY_SOURCE,
+  PLAY_ELIGIBILITY_PROJECTION,
+  RG_LIMIT_LEDGER,
   WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
   WALLET_REVERSAL_UNMATCHED,
@@ -39,7 +41,13 @@ import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import gamingPlugin from '@openora/core/casino/plugins/gaming';
 import { mock, makeAuditWriter, makeEventBus, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { ledgerApiRequest, wallet, walletBalance, walletTransaction } from '../schema/index.js';
+import {
+  ledgerApiRequest,
+  ledgerProjectionHeartbeat,
+  wallet,
+  walletBalance,
+  walletTransaction,
+} from '../schema/index.js';
 import walletPlugin from '../plugin.js';
 import { ledgerPlayEligibilityProjection } from '../service/ledger-play-eligibility.service.js';
 import { ledgerRgLimits } from '../service/ledger-rg-limits.service.js';
@@ -325,18 +333,27 @@ describe('Ledger API v1 bet (real PG)', () => {
         (userId) => project(standing(userId, true, 1)),
       ));
 
-    it('a stake on a projection whose remote writer stopped beating as player_blocked', () =>
-      refusedBy(
-        (c) =>
-          c.register(PLAY_ELIGIBILITY_SOURCE, () => ({
-            page: async () => [],
-            snapshots: async () => [],
-            repair: async () => [],
-            remote: true,
-          })),
-        'player_blocked',
-        (userId) => project(standing(userId, false, 1)),
-      ));
+    it('a stake while the remote writer stopped beating as player_blocked, taken once it beats', async () => {
+      // Another service may write the projections once MONEY_PORTS_CALLERS names one.
+      vi.stubEnv('MONEY_PORTS_CALLERS', 'platform');
+      const guarded = boot();
+      vi.unstubAllEnvs();
+      const ledger = guarded.get(LEDGER_API_V1);
+      const { userId, betArgs } = await setup();
+      await project(standing(userId, false, 1));
+      await db.drizzle.db.delete(ledgerProjectionHeartbeat);
+
+      const gate = guarded.get(LEDGER_PLAY_ELIGIBILITY);
+      const stale = { code: 'ledger_projection_stale' };
+      await expect(gate.checkPlay(userId)).rejects.toMatchObject(stale);
+      await expect(gate.statesOf([userId])).rejects.toMatchObject(stale);
+      expect(await ledger.bet(betArgs())).toEqual({ status: 'refused', reason: 'player_blocked' });
+
+      await guarded.get(PLAY_ELIGIBILITY_PROJECTION).heartbeat();
+      await guarded.get(RG_LIMIT_LEDGER).heartbeat();
+      expect(await gate.checkPlay(userId)).toBeNull();
+      expect(await ledger.bet(betArgs())).toMatchObject({ status: 'applied' });
+    });
 
     it('a reached wager limit as limit', () =>
       refusedBy(

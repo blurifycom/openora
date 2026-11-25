@@ -154,11 +154,6 @@ export type PlayEligibilitySourcePort = {
    * the ones it could not, each logged.
    */
   repair(userIds: readonly string[]): Promise<string[]>;
-  /**
-   * True on a binding that reaches identity over the network, set by that binding. The ledger's
-   * writer is then remote, so a stake refuses once the projection's heartbeat is stale (ADR-0062).
-   */
-  readonly remote?: boolean;
 };
 
 export const PLAY_ELIGIBILITY_SOURCE: SealedToken<PlayEligibilitySourcePort> =

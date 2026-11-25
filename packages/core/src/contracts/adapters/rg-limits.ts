@@ -186,11 +186,6 @@ export type RgLimitsSourcePort = {
    * the ones it could not, each logged.
    */
   repair(userIds: readonly string[]): Promise<string[]>;
-  /**
-   * True on a binding that reaches compliance over the network, set by that binding. The ledger's
-   * writer is then remote, so a deposit or wager refuses once the heartbeat is stale (ADR-0062).
-   */
-  readonly remote?: boolean;
 };
 
 export const RG_LIMITS_SOURCE: SealedToken<RgLimitsSourcePort> =

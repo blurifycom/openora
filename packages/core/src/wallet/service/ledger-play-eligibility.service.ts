@@ -129,7 +129,9 @@ export class LedgerPlayEligibilityService
     if (userIds.length === 0) {
       return new Map();
     }
-    const query = ((tx as DrizzleTx | undefined) ?? this.drizzle.db)
+    const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
+    await assertFresh(db, 'play_eligibility', this.freshness);
+    const query = db
       .select()
       .from(ledgerPlayEligibility)
       .where(
