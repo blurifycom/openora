@@ -365,6 +365,13 @@
       "when": 1795048888328,
       "tag": "0051_wallet_transaction_type_drop_tip",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795602043040,
+      "tag": "0052_lame_anthem",
+      "breakpoints": true
     }
   ]
 }

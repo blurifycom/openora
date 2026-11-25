@@ -14,7 +14,7 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
     'provider_ref_id',
     'tx_hash',
   ],
-  setOnceColumns: ['balance_after', 'real_share'],
+  setOnceColumns: ['balance_after', 'real_share', 'reversed_transaction_id'],
   // A finished row cannot be reopened: a rejected withdrawal put back to `pending` would be
   // rejected and refunded a second time.
   terminal: {

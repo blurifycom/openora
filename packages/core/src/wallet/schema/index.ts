@@ -225,14 +225,15 @@ export const walletTransaction = pgTable(
     // gone to the grant; NULL when all of `amount` was real. On a bet, the part of the stake the
     // real balance paid, written on every bet (NULL only on bets older than that).
     realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
-    // A `bet_reversal` that named the bet it returns: that bet's row. Unique, so one bet is
-    // reversed at most once. NULL on every other row and on a reversal that named no bet.
+    // The original debit for a hold refund or a bet reversal that names its bet.
+    // Unique, so each original debit is returned at most once.
     reversedTransactionId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('wallet_transaction_wallet_id_idx').on(t.walletId),
     index('wallet_transaction_created_at_idx').on(t.createdAt),
+    index('wallet_transaction_wallet_id_created_at_id_idx').on(t.walletId, t.createdAt, t.id),
     index('wallet_transaction_type_idx').on(t.type),
     index('wallet_transaction_status_idx').on(t.status),
     index('wallet_transaction_rail_idx').on(t.rail),

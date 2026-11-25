@@ -17,6 +17,8 @@ import type { Wallet, WalletJobRun, WalletReconciliationFinding } from '../schem
  *   finding resolved that way), which returns nothing because the manual credit row carries the
  *   money.
  * - swap_out: -amount from the request on; `failed` puts it back.
+ * - a debit with a linked hold refund keeps its original effect; the refund carries the credit.
+ *   Failed or rejected debits without a refund keep the historical net-zero treatment.
  * - anything else: only when `completed`, signed by `direction`, by `real_share` when set (a
  *   bonus-split bet, win or reversal moves the real balance by that part only) else `amount`.
  */
@@ -37,11 +39,15 @@ const settledByHand = sql`exists (
     and f.provider_name = coalesce(t.provider_name, ${DEFAULT_PAYMENT_PROVIDER})
     and f.external_id in (t.provider_ref_id, t.id::text))`;
 
+const hasHoldRefund = sql`exists (
+  select 1 from wallet_transaction refund
+  where refund.reversed_transaction_id = t.id and refund.type = 'hold_refund')`;
+
 const moves = sql`case
   when t.type = 'deposit' then t.status = 'completed'
   when t.type = 'withdrawal' then t.status not in ('failed', 'rejected', 'cancelled', 'refunded')
-    or ${settledByHand}
-  when t.type = 'swap_out' then t.status <> 'failed'
+    or ${hasHoldRefund} or ${settledByHand}
+  when t.type = 'swap_out' then t.status <> 'failed' or ${hasHoldRefund}
   else t.status = 'completed'
 end`;
 

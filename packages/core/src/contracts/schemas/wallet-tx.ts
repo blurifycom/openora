@@ -29,6 +29,7 @@ export const WALLET_TRANSACTION_TYPES = [
   'donation',
   /** An operator-funded real-money credit with no wagering requirement, such as a referral commission payout. */
   'referral_reward',
+  'hold_refund',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [

@@ -269,9 +269,12 @@ describe('SwapService (real PG)', () => {
     ).rejects.toThrow('desk unavailable');
 
     expect(await balancesOf(w.id)).toEqual({ USD: 100 });
-    expect(await legs(w.id)).toEqual([
-      expect.objectContaining({ type: 'swap_out', status: 'failed' }),
-    ]);
+    expect(await legs(w.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'swap_out', status: 'failed' }),
+        expect.objectContaining({ type: 'hold_refund', direction: 'credit' }),
+      ]),
+    );
   });
 
   it('refuses a swap the balance cannot cover, without writing a hold', async () => {
@@ -504,7 +507,7 @@ describe('SwapService (real PG)', () => {
       execute: vi.fn().mockResolvedValue({ externalId: 'ext-4', status: 'processing' }),
     });
     const svc = makeService(adapter);
-    await svc.swap({
+    const swap = await svc.swap({
       userId: w.userId,
       fromCurrency: 'USD',
       toCurrency: 'BTC',
@@ -512,12 +515,29 @@ describe('SwapService (real PG)', () => {
       idempotencyKey: randomUUID(),
     });
 
-    await svc.reconcileSwapStatus({ kind: 'swap', externalId: 'ext-4', status: 'failed' });
+    const failure = { kind: 'swap', externalId: 'ext-4', status: 'failed' } as const;
+    await Promise.all([svc.reconcileSwapStatus(failure), svc.reconcileSwapStatus(failure)]);
 
     expect(await balancesOf(w.id)).toEqual({ USD: 100 });
-    expect(await legs(w.id)).toEqual([
-      expect.objectContaining({ type: 'swap_out', status: 'failed' }),
-    ]);
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.walletId, w.id));
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: swap.transactionId, type: 'swap_out', status: 'failed' }),
+        expect.objectContaining({
+          type: 'hold_refund',
+          status: 'completed',
+          direction: 'credit',
+          reversedTransactionId: swap.transactionId,
+          currency: 'USD',
+          amount: '100.000000000000000000',
+          balanceAfter: '100.000000000000000000',
+        }),
+      ]),
+    );
   });
 
   it('refuses a pair the vendor does not make and a swap into the same currency', async () => {

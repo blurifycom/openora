@@ -269,6 +269,52 @@ describe('ledger invariant scan (real PG)', () => {
     expect(await breaches()).toHaveLength(0);
   });
 
+  it('counts both legs of a returned hold without double-crediting the ledger', async () => {
+    const withdrawalId = randomUUID();
+    const swapId = randomUUID();
+    await seedWallet('100', [
+      { type: 'deposit', amount: '100', status: 'completed', balanceAfter: '100' },
+      {
+        id: withdrawalId,
+        type: 'withdrawal',
+        amount: '20',
+        status: 'rejected',
+        balanceAfter: '80',
+      },
+      {
+        type: 'hold_refund',
+        amount: '20',
+        status: 'completed',
+        direction: 'credit',
+        balanceAfter: '100',
+        reversedTransactionId: withdrawalId,
+      },
+      {
+        id: swapId,
+        type: 'swap_out',
+        amount: '10',
+        status: 'failed',
+        balanceAfter: '90',
+      },
+      {
+        type: 'hold_refund',
+        amount: '10',
+        status: 'completed',
+        direction: 'credit',
+        balanceAfter: '100',
+        reversedTransactionId: swapId,
+      },
+    ]);
+
+    const summary = await run(makeReconciliation());
+
+    expect(summary?.summary).toMatchObject({
+      pairsChecked: 1,
+      needsBaseline: 0,
+      balanceBreaches: 0,
+    });
+  });
+
   it('refuses negative and zero stakes and wins at the command, leaving the ledger whole', async () => {
     const w = await fundedWallet('100');
     await expect(

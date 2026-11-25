@@ -513,6 +513,11 @@ describe('ReconciliationService.runCycle - stuck withdrawals', () => {
       .from(walletTransaction)
       .where(eq(walletTransaction.id, tx.id));
     expect(row?.status).toBe('failed');
+    const linkedCredits = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.reversedTransactionId, tx.id));
+    expect(linkedCredits).toMatchObject([{ id: credit.transactionId, type: 'manual_credit' }]);
     expect(await balanceOf(w.id)).toBe('6.000000000000000000');
   });
 

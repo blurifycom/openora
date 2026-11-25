@@ -1790,10 +1790,27 @@ describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
       providerRefId: externalId,
     });
 
-    await svc.reconcileWithdrawalStatus({ kind: 'withdrawal', externalId, status: 'failed' });
+    const failure = { kind: 'withdrawal', externalId, status: 'failed' } as const;
+    await Promise.all([
+      svc.reconcileWithdrawalStatus(failure),
+      svc.reconcileWithdrawalStatus(failure),
+    ]);
 
     expect(await txById(tx.id)).toMatchObject({ status: 'failed' });
     expect(await balanceOf(w.userId)).toBe(40);
+    const refunds = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.reversedTransactionId, tx.id));
+    expect(refunds).toMatchObject([
+      {
+        type: 'hold_refund',
+        status: 'completed',
+        direction: 'credit',
+        amount: '40.000000000000000000',
+        balanceAfter: '40.000000000000000000',
+      },
+    ]);
     expect(events.emitInTransaction).toHaveBeenCalledWith(
       expect.anything(),
       'wallet.withdrawal.failed',

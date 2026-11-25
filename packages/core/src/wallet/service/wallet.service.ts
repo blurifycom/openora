@@ -698,6 +698,27 @@ async function creditAndStampBalance(
   }
 }
 
+export async function recordHoldRefund(
+  txn: DrizzleTx,
+  debit: Pick<WalletTransaction, 'id' | 'walletId' | 'currency' | 'amount'>,
+): Promise<void> {
+  const { walletId, currency, amount } = debit;
+  const balance = findOneOrThrow(
+    await creditWalletBalance(txn, walletId, currency, amount),
+    new Error('Wallet credit returned no balance'),
+  );
+  await txn.insert(walletTransaction).values({
+    walletId,
+    type: 'hold_refund',
+    status: 'completed',
+    direction: 'credit',
+    amount,
+    currency,
+    balanceAfter: balance.amount,
+    reversedTransactionId: debit.id,
+  });
+}
+
 /**
  * Takes min(balance, amount) in one statement and never overdraws. The CTE's row lock makes a
  * concurrent collection wait and then read the balance the first one left.
@@ -3055,7 +3076,7 @@ export class WalletService {
     } catch (err) {
       if (err instanceof PaymentRejectedError) {
         // The vendor refused it, so no payout exists - mark failed and return the held funds.
-        await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId, amount });
+        await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId });
         throw err;
       }
       // A timeout or dropped connection looks exactly like a lost response to a payout the
@@ -3080,7 +3101,7 @@ export class WalletService {
     }
 
     if (result.status === 'failed') {
-      await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId, amount });
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId });
       return { transactionId: tx.id, status: 'failed' };
     }
 
@@ -3139,14 +3160,13 @@ export class WalletService {
     adminId,
     userId,
     playerId,
-    amount,
   }: {
     tx: WalletTransaction;
     adminId: User['id'] | null;
     userId: User['id'];
     playerId: Player['id'] | null;
-    amount: string;
   }): Promise<void> {
+    const { amount } = tx;
     await this.drizzle.db.transaction(async (txn) => {
       const updated = await txn
         .update(walletTransaction)
@@ -3156,7 +3176,7 @@ export class WalletService {
       if (updated.length === 0) {
         return;
       }
-      await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
+      await recordHoldRefund(txn, tx);
       // In the same transaction as the credit, not left to the `wallet.withdrawal.failed`
       // subscriber below: that fires only after commit, so a crash or a dead subscriber
       // between the two would return the funds with no audit row behind the movement.
@@ -3234,7 +3254,6 @@ export class WalletService {
         adminId: null,
         userId,
         playerId,
-        amount: tx.amount,
       });
     }
   }
@@ -4004,7 +4023,7 @@ export class WalletService {
         new WithdrawalNotFoundError(withdrawalId),
       );
 
-      await creditWalletBalance(txn, updated.walletId, updated.currency, updated.amount);
+      await recordHoldRefund(txn, updated);
 
       const userId = await this.userIdForWallet(updated.walletId, txn);
       await this.events.emitInTransaction(txn, 'wallet.withdrawal.rejected', {

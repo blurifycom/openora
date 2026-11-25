@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { WALLET_TRANSACTION_TYPES, type WalletTransactionType } from '@openora/core/contracts';
 
-// Mirrors the CASE mapping hand-appended to
-// drizzle/migrations/0014_abandoned_madripoor.sql. Kept in lockstep here so a future type
-// added to WALLET_TRANSACTION_TYPES fails this test instead of silently backfilling as
-// NULL (or, worse, someone guessing a direction for it).
+// The credit/debit vocabulary starts with the historical CASE mapping in
+// drizzle/migrations/0014_abandoned_madripoor.sql. New types set direction at insert time.
 const BACKFILL_CREDIT_TYPES: WalletTransactionType[] = [
   'deposit',
   'win',
@@ -14,6 +12,7 @@ const BACKFILL_CREDIT_TYPES: WalletTransactionType[] = [
   'bet_reversal',
   'cashback',
   'referral_reward',
+  'hold_refund',
 ];
 const BACKFILL_DEBIT_TYPES: WalletTransactionType[] = [
   'withdrawal',

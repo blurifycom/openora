@@ -1,0 +1,2 @@
+ALTER TYPE "public"."wallet_transaction_type" ADD VALUE 'hold_refund';--> statement-breakpoint
+CREATE INDEX "wallet_transaction_wallet_id_created_at_id_idx" ON "wallet_transaction" USING btree ("wallet_id","created_at","id");

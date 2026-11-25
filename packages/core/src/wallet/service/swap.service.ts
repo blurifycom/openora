@@ -33,6 +33,7 @@ import {
   balanceKey,
   creditWalletBalance,
   railFor,
+  recordHoldRefund,
   debitWalletBalance,
   readWalletBalance,
   stampBalanceAfter,
@@ -376,7 +377,7 @@ export class SwapService {
       // failure path, so a throw before the hold is returned would leave the player down
       // the money and replace the vendor's error with a wallet-lookup one.
       const userId = await this.userIdForWallet(txn, out.walletId);
-      await creditWalletBalance(txn, out.walletId, out.currency, out.amount);
+      await recordHoldRefund(txn, out);
       await this.audit.recordInTransaction(txn, {
         actorType: 'system',
         action: 'wallet.swap.refunded',

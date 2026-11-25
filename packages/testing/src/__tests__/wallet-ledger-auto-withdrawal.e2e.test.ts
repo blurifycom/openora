@@ -554,7 +554,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
 describe('Manual withdrawal approve/reject regression (appDefault - autoWithdrawal off)', () => {
   it('approve settles the payout; reject returns the held funds', async () => {
     const email = `manual-flow-${randomUUID()}@e2e.test`;
-    const { client } = await registerAndMaterializePlayer(appDefault, { email: email });
+    const { client, userId } = await registerAndMaterializePlayer(appDefault, { email: email });
     const admin = await asAdmin(appDefault.app);
 
     await client.post('/wallet/deposit', {
@@ -618,5 +618,33 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
 
     const balanceAfterReject = (await readJson(await client.get('/wallet/balance'))).balance;
     expect(balanceAfterReject).toBe('2.400000000000000000');
+
+    const repeated = await admin.post(`/wallet/withdrawals/${w2.transactionId}/reject`, {
+      withdrawalId: w2.transactionId,
+      reason: 'replay',
+    });
+    expect(repeated.status).toBe(409);
+    const transactions = await admin.get(`/wallet/transactions/${userId}`);
+    expect(transactions.status).toBe(200);
+    const { items } = await readJson(transactions);
+    expect(items).toHaveLength(4);
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: w2.transactionId,
+          status: 'rejected',
+          direction: 'debit',
+          balanceAfter: '2.000000000000000000',
+        }),
+        expect.objectContaining({
+          type: 'hold_refund',
+          status: 'completed',
+          direction: 'credit',
+          currency: 'USD',
+          amount: '0.400000000000000000',
+          balanceAfter: '2.400000000000000000',
+        }),
+      ]),
+    );
   });
 });
