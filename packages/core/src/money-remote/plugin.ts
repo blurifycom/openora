@@ -4,7 +4,6 @@ import {
   ADMIN_GAME_REPORTING,
   ADMIN_WALLET_REPORTING,
   EXCHANGE_RATE_READER,
-  LEDGER_API_V1,
   MONEY_REPORTING,
   PLAYER_RANK_READER,
   PLAY_ELIGIBILITY_PROJECTION,
@@ -13,7 +12,6 @@ import {
   type AdminGameReporting,
   type AdminWalletReporting,
   type ExchangeRateReader,
-  type LedgerApiV1,
   type MoneyReportingPort,
   type PlayerRankReader,
   type PlayEligibilityProjectionPort,
@@ -92,7 +90,6 @@ export default {
     ctx.provide(PLAYER_RANK_READER, () =>
       remoteMoneyPort<PlayerRankReader>(client, 'PLAYER_RANK_READER'),
     );
-    ctx.provide(LEDGER_API_V1, () => remoteMoneyPort<LedgerApiV1>(client, 'LEDGER_API_V1'));
     ctx.provideSealed(PLAY_ELIGIBILITY_PROJECTION, () =>
       remoteMoneyPort<PlayEligibilityProjectionPort>(client, 'PLAY_ELIGIBILITY_PROJECTION'),
     );

@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import {
   MONEY_PORTS_ROUTE,
+  LedgerProjectionStaleError,
+  RgRateUnavailableError,
   decodeMoneyWire,
   encodeMoneyWire,
+  moneyPortErrorWireOf,
   type PlayEligibilityProjectionPort,
+  type RgLimitLedgerPort,
   type WalletReader,
 } from '@openora/core/contracts';
 import { createInternalClient, InternalApiError, type InternalClient } from '@openora/core/server';
@@ -13,7 +17,7 @@ import { remoteMoneyPort } from '../service/remote-money-port.service.js';
 type Sent = {
   method: string;
   path: string;
-  body: { method: string; args: string; idempotencyKey?: string };
+  body: { method: string; args: string };
 };
 
 /** A client that records each request and answers it from `replies` in order. */
@@ -77,7 +81,6 @@ describe('remoteMoneyPort', () => {
       [MONEY_PORTS_ROUTE, 'getLifetimeDeposit', ['u1']],
       [MONEY_PORTS_ROUTE, 'hasWallet', ['u1']],
     ]);
-    expect(sent.every((s) => s.body.idempotencyKey === undefined)).toBe(true);
   });
 
   it('marks the projection writers remote, so ADR-0062 applies', () => {
@@ -88,7 +91,7 @@ describe('remoteMoneyPort', () => {
     expect(remoteMoneyPort<WalletReader>(client, 'WALLET_READER')).not.toHaveProperty('remote');
   });
 
-  it('retries a write once, with the same idempotency key, after a timeout', async () => {
+  it('retries a write once, with the same body, after a timeout', async () => {
     const { client, sent } = scripted([fail('timeout'), answer(undefined)]);
     const projection = remoteMoneyPort<PlayEligibilityProjectionPort>(
       client,
@@ -98,7 +101,6 @@ describe('remoteMoneyPort', () => {
     await projection.write(snapshot, { a: 'caller tx' });
 
     expect(sent).toHaveLength(2);
-    expect(sent[0]?.body.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
     expect(sent[1]?.body).toEqual(sent[0]?.body);
     expect(decodeMoneyWire(sent[0]?.body.args ?? '')).toEqual([snapshot]);
   });
@@ -130,6 +132,40 @@ describe('remoteMoneyPort', () => {
     const reader = remoteMoneyPort<WalletReader>(read.client, 'WALLET_READER');
     expect(await settle(reader.getLifetimeDeposit('u1'))).toBeInstanceOf(ORPCError);
     expect(read.sent).toHaveLength(1);
+  });
+
+  it('rethrows a typed port error as its own class, and never retries it', async () => {
+    const typed = (err: Error) => () => {
+      throw new InternalApiError('client', '422', {
+        status: 422,
+        body: { code: 'UNPROCESSABLE_CONTENT', data: moneyPortErrorWireOf(err) },
+      });
+    };
+    const lastBeatAt = new Date('2026-11-25T10:00:00.000Z');
+    const { client, sent } = scripted([
+      typed(new RgRateUnavailableError('deposit', 'daily', 'EUR', 'USD')),
+      typed(new LedgerProjectionStaleError('rg_limits', lastBeatAt)),
+      answer(undefined),
+    ]);
+    const ledger = remoteMoneyPort<RgLimitLedgerPort>(client, 'RG_LIMIT_LEDGER');
+
+    const rate = await settle(ledger.spendFor({}, 'u1', 'deposit', 'daily', lastBeatAt, 'USD'));
+    expect(rate).toBeInstanceOf(RgRateUnavailableError);
+    expect(rate).toMatchObject({ limitType: 'deposit', period: 'daily', missingCurrency: 'EUR' });
+    const stale = await settle(ledger.heartbeat());
+    expect(stale).toBeInstanceOf(LedgerProjectionStaleError);
+    expect(stale).toMatchObject({ projection: 'rg_limits', lastBeatAt });
+    expect(sent).toHaveLength(2);
+  });
+
+  it('reads a 422 that carries no typed error as a refused call', async () => {
+    const { client } = scripted([
+      () => {
+        throw new InternalApiError('client', '422', { status: 422, body: { data: { code: 'x' } } });
+      },
+    ]);
+    const reader = remoteMoneyPort<WalletReader>(client, 'WALLET_READER');
+    expect(await settle(reader.getBalances('u1'))).toBeInstanceOf(InternalApiError);
   });
 
   it('throws on a reply that does not parse rather than reading it as an answer', async () => {

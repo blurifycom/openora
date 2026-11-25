@@ -8,7 +8,6 @@ import {
   PLAYER_STATUSES,
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
-  PLAY_ELIGIBILITY_SOURCE,
   WALLET_COMMANDS,
   definePlatformConfig,
   domainEventSchemas,
@@ -17,7 +16,6 @@ import {
   type PlayEligibilityPort,
   type PlayEligibilityProjectionPort,
   type PlayEligibilitySnapshot,
-  type PlayEligibilitySourcePort,
   type SmsAdapter,
 } from '@openora/core/contracts';
 import {
@@ -356,32 +354,11 @@ describe('a new registration reaches the ledger (real PG)', () => {
 });
 
 describe('a play eligibility projection written from another service (real PG, ADR-0062)', () => {
-  // Whether identity's source binding says it reaches the ledger over the network.
-  let sourceRemote: boolean | undefined;
-  const source: PlayEligibilitySourcePort = {
-    page: async () => [],
-    snapshots: async () => [],
-    repair: async () => [],
-    get remote() {
-      return sourceRemote;
-    },
-  };
-  const stale = { code: 'ledger_projection_stale', projection: 'play_eligibility' };
-  const beatAgo = (seconds: number) =>
-    db.drizzle.db
-      .update(ledgerProjectionHeartbeat)
-      .set({ beatAt: sql`now() - make_interval(secs => ${seconds})` })
-      .where(eq(ledgerProjectionHeartbeat.projection, 'play_eligibility'));
   /** The real ledger behind a remote binding: `write` as given, `remote: true`. */
   const remote = (write: PlayEligibilityProjectionPort['write']) => () =>
     mock<PlayEligibilityProjectionPort>({ write: vi.fn(write), remote: true });
 
-  beforeAll(() => {
-    container.register(PLAY_ELIGIBILITY_SOURCE, () => source);
-  });
-
   beforeEach(async () => {
-    sourceRemote = undefined;
     await db.drizzle.db.delete(ledgerProjectionHeartbeat);
   });
 
@@ -389,19 +366,6 @@ describe('a play eligibility projection written from another service (real PG, A
     const { userId } = await fundedPlayer();
 
     await expect(bet(userId)).resolves.toMatchObject(allowed);
-  });
-
-  it('refuses a stake once a remote writer stops beating, and allows it on a fresh beat', async () => {
-    const { userId } = await fundedPlayer();
-    sourceRemote = true;
-
-    await expect(bet(userId)).rejects.toMatchObject({ ...stale, lastBeatAt: null });
-
-    await ledger()!.heartbeat();
-    await expect(bet(userId)).resolves.toMatchObject(allowed);
-
-    await beatAgo(120);
-    await expect(bet(userId)).rejects.toMatchObject(stale);
   });
 
   it('fails a block on a remote ledger whose write throws, and commits nothing', async () => {

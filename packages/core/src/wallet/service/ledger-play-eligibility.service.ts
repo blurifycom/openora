@@ -163,6 +163,21 @@ export class LedgerPlayEligibilityService
       .onConflictDoUpdate({ target: ledgerPlayEligibility.userId, set: fromExcluded });
   }
 
+  /**
+   * `write` for a call over the internal API (ADR-0063). It runs in a transaction of its own and
+   * may arrive late or twice, so a held newer version is kept; an equal one is rewritten.
+   */
+  async writeFromRemote(snapshot: PlayEligibilitySnapshot, tx: unknown): Promise<void> {
+    await (tx as DrizzleTx)
+      .insert(ledgerPlayEligibility)
+      .values(rowOf(snapshot))
+      .onConflictDoUpdate({
+        target: ledgerPlayEligibility.userId,
+        set: fromExcluded,
+        setWhere: sql`${ledgerPlayEligibility.version} <= excluded.version`,
+      });
+  }
+
   heartbeat(): Promise<void> {
     return beat(this.drizzle.db, 'play_eligibility');
   }

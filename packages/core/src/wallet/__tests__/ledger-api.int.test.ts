@@ -12,6 +12,7 @@ import {
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
   RG_LIMIT_LEDGER,
+  RG_LIMITS,
   WALLET_BET_ALREADY_REVERSED,
   WALLET_COMMANDS,
   WALLET_REVERSAL_UNMATCHED,
@@ -350,8 +351,13 @@ describe('Ledger API v1 bet (real PG)', () => {
       expect(await ledger.bet(betArgs())).toEqual({ status: 'refused', reason: 'player_blocked' });
 
       await guarded.get(PLAY_ELIGIBILITY_PROJECTION).heartbeat();
-      await guarded.get(RG_LIMIT_LEDGER).heartbeat();
       expect(await gate.checkPlay(userId)).toBeNull();
+      await expect(
+        guarded.get(RG_LIMITS).checkDeposit(db.drizzle.db, userId, '1', 'USD'),
+      ).rejects.toMatchObject({ ...stale, projection: 'rg_limits' });
+      expect(await ledger.bet(betArgs())).toEqual({ status: 'refused', reason: 'player_blocked' });
+
+      await guarded.get(RG_LIMIT_LEDGER).heartbeat();
       expect(await ledger.bet(betArgs())).toMatchObject({ status: 'applied' });
     });
 

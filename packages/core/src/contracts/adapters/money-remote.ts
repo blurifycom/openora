@@ -5,7 +5,7 @@
  * the port to a client of it (`money-remote`).
  */
 import * as z from 'zod';
-import { UuidSchema } from '../schemas/common.js';
+import { LimitPeriodSchema, LimitTypeSchema } from '../schemas/compliance.js';
 import type { AdminGameReporting } from './admin-game-reporting.js';
 import { ADMIN_GAME_REPORTING } from './admin-game-reporting.js';
 import type { AdminWalletReporting } from './admin-wallet-reporting.js';
@@ -17,14 +17,17 @@ import { BONUS_WAGERING } from './bonus-wagering.js';
 import type { ExchangeRateReader } from './exchange-rate-reader.js';
 import { EXCHANGE_RATE_READER } from './exchange-rate-reader.js';
 import { GAMING_COMMANDS } from './gaming-commands.js';
-import type { LedgerApiV1 } from './ledger-api.js';
-import { LEDGER_API_V1 } from './ledger-api.js';
 import type { MoneyReportingPort, PlayerRankReader } from './money-reporting.js';
 import { MONEY_REPORTING, PLAYER_RANK_READER } from './money-reporting.js';
 import type { PlayEligibilityProjectionPort } from './play-eligibility.js';
-import { LEDGER_PLAY_ELIGIBILITY, PLAY_ELIGIBILITY_PROJECTION } from './play-eligibility.js';
+import {
+  LEDGER_PLAY_ELIGIBILITY,
+  LEDGER_PROJECTIONS,
+  LedgerProjectionStaleError,
+  PLAY_ELIGIBILITY_PROJECTION,
+} from './play-eligibility.js';
 import type { RgLimitLedgerPort } from './rg-limits.js';
-import { RG_LIMIT_LEDGER, RG_LIMITS } from './rg-limits.js';
+import { RG_LIMIT_LEDGER, RG_LIMITS, RgRateUnavailableError } from './rg-limits.js';
 import type { AnyToken } from './token.js';
 import { WAGER_TRACKING } from './wager-tracking.js';
 import { WALLET_COMMANDS } from './wallet-commands.js';
@@ -39,9 +42,6 @@ export const MoneyPortCallWire = {
     port: z.string().min(1),
     method: z.string().min(1),
     args: z.string(),
-    // Set on a write and kept on its one retry. Every remote write is idempotent at its owner
-    // (a keyed ledger op, a versioned projection write, a heartbeat), so a retry applies once.
-    idempotencyKey: UuidSchema.optional(),
   }),
   output: z.object({ result: z.string() }),
 } as const;
@@ -51,12 +51,15 @@ export const MoneyPortCallWire = {
  * call carries (a trailing optional `tx` is left out, so the money service reads on its own
  * connection). `tx` is the position of a required transaction or db argument: never sent, the
  * money service fills it with its own (a transaction on a write, its db on a read). `write`
- * marks a call that changes state: it carries an idempotency key and is retried once.
+ * marks a call that changes state: it is retried once with the same body, so it must be
+ * idempotent at the money service. `served` names the method of the money service's binding
+ * that answers the call, when that is not the method called.
  */
 export type MoneyMethodSpec = {
   readonly arity: number;
   readonly tx?: number;
   readonly write?: true;
+  readonly served?: string;
 };
 
 type Methods<T> = { readonly [K in keyof T]-?: MoneyMethodSpec };
@@ -68,6 +71,15 @@ function port<T>(token: AnyToken<unknown>, methods: Methods<T>, remoteFlag = fal
 const READ_1 = { arity: 1 } as const;
 const READ_2 = { arity: 2 } as const;
 const WRITE_1 = { arity: 1, write: true } as const;
+// A remote projection write runs in a transaction of its own and may arrive late or twice (a
+// retry, a replayed body), so the money service answers it with the variant that keeps a held
+// newer version instead of the in-transaction writer's overwrite.
+const REMOTE_PROJECTION_WRITE = {
+  arity: 2,
+  tx: 1,
+  write: true,
+  served: 'writeFromRemote',
+} as const;
 
 /**
  * Every money port a platform module reads, by name. `remoteFlag` sets `remote: true` on the
@@ -122,17 +134,10 @@ export const MONEY_REMOTE_PORTS = {
   PLAYER_RANK_READER: port<PlayerRankReader>(PLAYER_RANK_READER, {
     getRankName: READ_1,
   }),
-  LEDGER_API_V1: port<Omit<LedgerApiV1, 'sportsbook'>>(LEDGER_API_V1, {
-    bet: WRITE_1,
-    win: WRITE_1,
-    reverse: WRITE_1,
-    closeRound: WRITE_1,
-    balance: READ_1,
-  }),
   PLAY_ELIGIBILITY_PROJECTION: port<Omit<PlayEligibilityProjectionPort, 'remote'>>(
     PLAY_ELIGIBILITY_PROJECTION,
     {
-      write: { arity: 2, tx: 1, write: true },
+      write: REMOTE_PROJECTION_WRITE,
       reconcile: WRITE_1,
       heartbeat: { arity: 0, write: true },
     },
@@ -141,7 +146,7 @@ export const MONEY_REMOTE_PORTS = {
   RG_LIMIT_LEDGER: port<Omit<RgLimitLedgerPort, 'remote'>>(
     RG_LIMIT_LEDGER,
     {
-      write: { arity: 2, tx: 1, write: true },
+      write: REMOTE_PROJECTION_WRITE,
       reconcile: WRITE_1,
       drifted: READ_1,
       heartbeat: { arity: 0, write: true },
@@ -152,6 +157,61 @@ export const MONEY_REMOTE_PORTS = {
 } as const;
 
 export type MoneyRemotePortName = keyof typeof MONEY_REMOTE_PORTS;
+
+/**
+ * The typed errors a remote money port method throws that its callers branch on. The money
+ * service answers one as a 422 carrying this shape, and the client rethrows the same class and
+ * never retries it. Any other error stays a 5xx, which the client reads as the money service down.
+ */
+export const MoneyPortErrorWire = z.discriminatedUnion('code', [
+  z.object({
+    code: z.literal('rg_rate_unavailable'),
+    limitType: LimitTypeSchema,
+    period: LimitPeriodSchema,
+    missingCurrency: z.string(),
+    limitCurrency: z.string(),
+  }),
+  z.object({
+    code: z.literal('ledger_projection_stale'),
+    projection: z.enum(LEDGER_PROJECTIONS),
+    lastBeatAt: z.string().nullable(),
+  }),
+]);
+export type MoneyPortErrorWire = z.infer<typeof MoneyPortErrorWire>;
+
+/** `err` as {@link MoneyPortErrorWire}, or null when it is not one of those errors. */
+export function moneyPortErrorWireOf(err: unknown): MoneyPortErrorWire | null {
+  if (err instanceof RgRateUnavailableError) {
+    const { limitType, period, missingCurrency, limitCurrency } = err;
+    return { code: 'rg_rate_unavailable', limitType, period, missingCurrency, limitCurrency };
+  }
+  if (err instanceof LedgerProjectionStaleError) {
+    return {
+      code: 'ledger_projection_stale',
+      projection: err.projection,
+      lastBeatAt: err.lastBeatAt?.toISOString() ?? null,
+    };
+  }
+  return null;
+}
+
+/** The error {@link moneyPortErrorWireOf} sent. */
+export function moneyPortErrorFromWire(wire: MoneyPortErrorWire): Error {
+  switch (wire.code) {
+    case 'rg_rate_unavailable':
+      return new RgRateUnavailableError(
+        wire.limitType,
+        wire.period,
+        wire.missingCurrency,
+        wire.limitCurrency,
+      );
+    case 'ledger_projection_stale':
+      return new LedgerProjectionStaleError(
+        wire.projection,
+        wire.lastBeatAt === null ? null : new Date(wire.lastBeatAt),
+      );
+  }
+}
 
 export function isMoneyRemotePortName(name: string): name is MoneyRemotePortName {
   return Object.hasOwn(MONEY_REMOTE_PORTS, name);

@@ -263,6 +263,29 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     await replaceRows(db, parsed.userId, rowsOf(parsed));
   }
 
+  /**
+   * `write` for a call over the internal API (ADR-0063). It runs in a transaction of its own and
+   * may arrive late or twice, so a held newer version is kept; an equal one is rewritten. The
+   * upsert holds the version row lock until commit, so the rows follow the version written.
+   */
+  async writeFromRemote(snapshot: RgLimitsSnapshot, tx: unknown): Promise<void> {
+    const db = tx as DrizzleTx;
+    const parsed = RgLimitsSnapshotSchema.parse(snapshot);
+    const written = await db
+      .insert(ledgerUserLimitVersion)
+      .values({ userId: parsed.userId, version: parsed.version })
+      .onConflictDoUpdate({
+        target: ledgerUserLimitVersion.userId,
+        set: { version: sql`excluded.version`, updatedAt: sql`now()` },
+        setWhere: sql`${ledgerUserLimitVersion.version} <= excluded.version`,
+      })
+      .returning({ version: ledgerUserLimitVersion.version });
+    if (written.length === 0) {
+      return;
+    }
+    await replaceRows(db, parsed.userId, rowsOf(parsed));
+  }
+
   /** The newest valid snapshot per user; a snapshot the contract rejects is logged and skipped. */
   private newestPerUser(snapshots: readonly RgLimitsSnapshot[]): Map<User['id'], RgLimitsSnapshot> {
     const newest = new Map<User['id'], RgLimitsSnapshot>();

@@ -9,13 +9,11 @@ import {
   PLAY_ELIGIBILITY_PROJECTION,
   RG_LIMITS,
   RG_LIMIT_LEDGER,
-  RG_LIMITS_SOURCE,
   WALLET_COMMANDS,
   defaultResponsibleGamingConfig,
   type ExchangeRateReader,
   type RgLimitLedgerPort,
   type RgLimitsSnapshot,
-  type RgLimitsSourcePort,
 } from '@openora/core/contracts';
 import {
   Container,
@@ -518,36 +516,15 @@ describe('the projection outside a limit write (real PG)', () => {
 });
 
 describe('a limits projection written from another service (real PG, ADR-0062)', () => {
-  // Whether compliance's source binding says it reaches the ledger over the network.
-  let sourceRemote: boolean | undefined;
-  const source: RgLimitsSourcePort = {
-    page: async () => [],
-    snapshots: async () => [],
-    repair: async () => [],
-    get remote() {
-      return sourceRemote;
-    },
-  };
   const deposit = (userId: string) =>
     container.get(RG_LIMITS).checkDeposit(db.drizzle.db, userId, '1', 'USD');
-  const stale = { code: 'ledger_projection_stale', projection: 'rg_limits' };
-  const beatAgo = (seconds: number) =>
-    db.drizzle.db
-      .update(ledgerProjectionHeartbeat)
-      .set({ beatAt: sql`now() - make_interval(secs => ${seconds})` })
-      .where(eq(ledgerProjectionHeartbeat.projection, 'rg_limits'));
   /** The real ledger behind a remote binding: same writes, `remote: true`. */
   const remoteLedger = (
     write = vi.fn((s: RgLimitsSnapshot, tx: unknown) => ledger().write(s, tx)),
   ) => ({ write, remote: true }) satisfies Pick<RgLimitLedgerPort, 'write' | 'remote'>;
   const ledger = () => container.get(RG_LIMIT_LEDGER);
 
-  beforeAll(() => {
-    container.register(RG_LIMITS_SOURCE, () => source);
-  });
-
   beforeEach(async () => {
-    sourceRemote = undefined;
     await db.drizzle.db.delete(ledgerProjectionHeartbeat);
   });
 
@@ -556,21 +533,6 @@ describe('a limits projection written from another service (real PG, ADR-0062)',
 
     await expect(deposit(userId)).resolves.toMatchObject({ allowed: true });
     await expect(bet(userId)).resolves.toMatchObject({ ok: true });
-  });
-
-  it('refuses a deposit and a wager once a remote writer stops beating, and allows them on a fresh beat', async () => {
-    const userId = await fundedPlayer();
-    sourceRemote = true;
-
-    await expect(deposit(userId)).rejects.toMatchObject({ ...stale, lastBeatAt: null });
-
-    await ledger().heartbeat();
-    await expect(deposit(userId)).resolves.toMatchObject({ allowed: true });
-    await expect(bet(userId)).resolves.toMatchObject({ ok: true });
-
-    await beatAgo(120);
-    await expect(deposit(userId)).rejects.toMatchObject(stale);
-    await expect(bet(userId)).rejects.toMatchObject(stale);
   });
 
   it('fails a lowered limit on a remote ledger whose write throws, and commits nothing', async () => {

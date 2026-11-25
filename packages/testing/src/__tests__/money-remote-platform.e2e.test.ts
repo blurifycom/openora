@@ -8,6 +8,8 @@ import {
   MONEY_REPORTING,
   PLAYER_RANK_READER,
   PLAY_ELIGIBILITY_PROJECTION,
+  RG_LIMIT_LEDGER,
+  RgRateUnavailableError,
   WALLET_COMMANDS,
   WALLET_READER,
 } from '@openora/core/contracts';
@@ -136,7 +138,7 @@ describe('a platform service with money-remote', () => {
     ]);
   });
 
-  it('retries a write whose reply was lost with the same key, and it applies once', async () => {
+  it('retries a write whose reply was lost with the same body, and it applies once', async () => {
     const player = await newPlayer(money, 'money-remote-retry');
     const version = 1_000_000_000;
     moneyCalls.length = 0;
@@ -159,13 +161,84 @@ describe('a platform service with money-remote', () => {
     expect(written).toBe(0);
     expect(moneyCalls).toHaveLength(2);
     expect(moneyCalls[1]?.body).toBe(moneyCalls[0]?.body);
-    expect(JSON.parse(moneyCalls[0]?.body ?? '{}')).toHaveProperty('idempotencyKey');
     const rows = await money.container
       .get(DRIZZLE)
       .db.execute<{ version: number; rg_blocked: boolean }>(
         sql`select version, rg_blocked from ledger_play_eligibility where user_id = ${player.userId}`,
       );
     expect(rows.rows).toEqual([{ version, rg_blocked: true }]);
+  });
+
+  it('keeps a newer projection version when an older remote write arrives late', async () => {
+    const player = await newPlayer(money, 'money-remote-late-write');
+    const eligibility = platform.container.get(PLAY_ELIGIBILITY_PROJECTION);
+    const standing = (version: number, rgBlocked: boolean) => ({
+      userId: player.userId,
+      rgBlocked,
+      rgBlockedUntil: null,
+      isActive: true,
+      banned: false,
+      banExpires: null,
+      status: null,
+      version,
+    });
+    const limits = platform.container.get(RG_LIMIT_LEDGER);
+    const limited = (version: number, amount: string) => ({
+      userId: player.userId,
+      version,
+      limits: [
+        {
+          limitId: '00000000-0000-4000-8000-0000000000a1',
+          type: 'deposit' as const,
+          period: 'daily' as const,
+          amount,
+          currency: 'USD',
+          changedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    // v6 is a self-exclusion and a lower limit; the late v5 would undo both.
+    await eligibility.write(standing(6, true), undefined);
+    await eligibility.write(standing(5, false), undefined);
+    await limits.write(limited(6, '10'), undefined);
+    await limits.write(limited(5, '500'), undefined);
+
+    const read = <T extends Record<string, unknown>>(query: ReturnType<typeof sql>) =>
+      money.container.get(DRIZZLE).db.execute<T>(query);
+    expect(
+      (
+        await read(
+          sql`select version, rg_blocked from ledger_play_eligibility where user_id = ${player.userId}`,
+        )
+      ).rows,
+    ).toEqual([{ version: 6, rg_blocked: true }]);
+    expect(
+      (
+        await read(
+          sql`select v.version, l.amount::text as amount from ledger_user_limit_version v
+            join ledger_user_limit l on l.user_id = v.user_id where v.user_id = ${player.userId}`,
+        )
+      ).rows,
+    ).toEqual([{ version: 6, amount: expect.stringMatching(/^10(\.0+)?$/) }]);
+  });
+
+  it('rethrows a typed port error on the caller as its own class', async () => {
+    const spendFor = vi
+      .spyOn(money.container.get(RG_LIMIT_LEDGER), 'spendFor')
+      .mockRejectedValueOnce(new RgRateUnavailableError('deposit', 'daily', 'EUR', 'USD'));
+    try {
+      moneyCalls.length = 0;
+      const err = await platform.container
+        .get(RG_LIMIT_LEDGER)
+        .spendFor(undefined, randomUUID(), 'deposit', 'daily', new Date(), 'USD')
+        .catch((caught: unknown) => caught);
+      expect(err).toBeInstanceOf(RgRateUnavailableError);
+      expect(err).toMatchObject({ missingCurrency: 'EUR', limitCurrency: 'USD' });
+      expect(moneyCalls).toHaveLength(1);
+    } finally {
+      spendFor.mockRestore();
+    }
   });
 
   it('fails closed with a 503 while the money service is down', async () => {

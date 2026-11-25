@@ -756,7 +756,10 @@ export {
   MONEY_REMOTE_PORTS,
   MONEY_TX_BOUND_PORTS,
   MoneyPortCallWire,
+  MoneyPortErrorWire,
   decodeMoneyWire,
   encodeMoneyWire,
   isMoneyRemotePortName,
+  moneyPortErrorFromWire,
+  moneyPortErrorWireOf,
 } from './money-remote.js';

@@ -1,4 +1,5 @@
 import { ORPCError } from '@orpc/server';
+import { sql } from 'drizzle-orm';
 import { internalProcedureFor, type DrizzleDb } from '@openora/core/server';
 import {
   MONEY_PORTS_ROUTE,
@@ -7,7 +8,12 @@ import {
   decodeMoneyWire,
   encodeMoneyWire,
   isMoneyRemotePortName,
+  moneyPortErrorWireOf,
 } from '@openora/core/contracts';
+
+// Below the client's 2s timeout: a write blocked on a row lock fails fast, so the client's one
+// retry still has time, instead of both attempts timing out behind the same holder.
+const REMOTE_WRITE_LOCK_TIMEOUT = '1500ms';
 
 /**
  * The internal API behind every port in `MONEY_REMOTE_PORTS`, for a platform service that does
@@ -15,7 +21,8 @@ import {
  * the named port, so `resolve` must read the container of the money service, never a remote
  * binding. A method with a `tx` position gets a fresh transaction on a write and this db on a
  * read. Only services named in `callers` (`MONEY_PORTS_CALLERS`) may call; any other signed
- * caller is refused.
+ * caller is refused. A typed error in `MoneyPortErrorWire` answers 422 with its fields, so the
+ * caller rethrows it; any other error stays a 5xx.
  */
 export function createInternalMoneyPortsRouter(
   resolve: (token: symbol) => unknown,
@@ -38,8 +45,8 @@ export function createInternalMoneyPortsRouter(
           : undefined;
         const impl = resolve(port.token);
         const fn: unknown =
-          typeof impl === 'object' && impl !== null
-            ? (impl as Record<string, unknown>)[input.method]
+          typeof impl === 'object' && impl !== null && spec
+            ? (impl as Record<string, unknown>)[spec.served ?? input.method]
             : undefined;
         if (!spec || typeof fn !== 'function') {
           throw new ORPCError('NOT_FOUND', {
@@ -59,13 +66,30 @@ export function createInternalMoneyPortsRouter(
           }
           return Promise.resolve(fn.apply(impl, full));
         };
-        const result =
-          spec.tx === undefined
-            ? await invoke()
-            : spec.write
-              ? await db.transaction((tx) => invoke(tx))
-              : await invoke(db);
-        return { result: encodeMoneyWire(result) };
+        try {
+          const result =
+            spec.tx === undefined
+              ? await invoke()
+              : spec.write
+                ? await db.transaction(async (tx) => {
+                    await tx.execute(
+                      sql.raw(`SET LOCAL lock_timeout = '${REMOTE_WRITE_LOCK_TIMEOUT}'`),
+                    );
+                    return invoke(tx);
+                  })
+                : await invoke(db);
+          return { result: encodeMoneyWire(result) };
+        } catch (err) {
+          const typed = moneyPortErrorWireOf(err);
+          if (!typed) {
+            throw err;
+          }
+          throw new ORPCError('UNPROCESSABLE_CONTENT', {
+            status: 422,
+            message: typed.code,
+            data: typed,
+          });
+        }
       }),
   };
 }
