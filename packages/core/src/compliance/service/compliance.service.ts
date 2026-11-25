@@ -52,8 +52,8 @@ import {
   type ReplaceGameGeoRulesResult,
   type MirrorTargetPolicy,
   type User,
+  type GameGeoRules,
 } from '@openora/core/contracts';
-import type { GameGeoRules } from '@openora/core/contracts';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');

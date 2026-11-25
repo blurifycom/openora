@@ -30,7 +30,7 @@ import { DEFAULT_PAYOUT_ANCHORS, type SetRankConfigInput } from '../contract/ind
 import { seedRankLadder } from '../seed/index.js';
 import { RankPayoutService } from '../service/rank-payout.service.js';
 import { RankAdminService } from '../service/rank-admin.service.js';
-import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
+import { ledgerEligibilityOver } from './support/ledger-eligibility-shim.js';
 
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();

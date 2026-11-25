@@ -7,7 +7,8 @@ import type {
   PlayEligibilityState,
 } from '@openora/core/contracts';
 import type { DrizzleService, DrizzleTx } from '@openora/core/server';
-import { IdentityReaderService } from '../../../pam/identity/adapters/identity-reader.service.js';
+// oxlint-disable-next-line oss-boundaries/no-cross-core-domain -- test-only helper, wires the real reader like the suites do
+import { IdentityReaderService } from '@openora/core/pam/server';
 
 // The gamification suites seed the profile and identity tables and stub the RG answer; this
 // LEDGER_PLAY_ELIGIBILITY reads those, so the suites keep their fixtures. The real projection is

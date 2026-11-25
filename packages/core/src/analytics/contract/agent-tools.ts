@@ -6,19 +6,34 @@ import {
   SignedMoneyAmountSchema,
   WALLET_TRANSACTION_STATUSES,
   WalletTransactionStatusSchema,
-  WalletTransactionTypeSchema,
   checkDayRange,
   defineMcpTool,
   resolveDayRange,
   type DayRangeInput,
+  GgrSeriesSchema,
+  PAYMENT_FLOW_TYPES,
+  PAYMENTS_FLOW_MAX_ROWS,
+  PaymentFlowGranularitySchema,
+  PaymentFlowRowSchema,
+  PaymentFlowTypeSchema,
+  ProductRevenueSchema,
 } from '@openora/core/contracts';
-import { GgrSeriesSchema, ProductRevenueSchema } from './financial.js';
+
+export {
+  PAYMENT_FLOW_TYPES,
+  PAYMENTS_FLOW_MAX_ROWS,
+  PaymentFlowGranularitySchema,
+  type PaymentFlowGranularity,
+  PaymentFlowRowSchema,
+  type PaymentFlowRow,
+  PaymentFlowTypeSchema,
+  type PaymentFlowType,
+} from '@openora/core/contracts';
 
 const GGR_SUMMARY_DEFAULT_DAYS = 30;
 export const GGR_SUMMARY_MAX_DAYS = 366;
 const PAYMENTS_FLOW_DEFAULT_DAYS = 14;
 export const PAYMENTS_FLOW_MAX_DAYS = 92;
-export const PAYMENTS_FLOW_MAX_ROWS = 1000;
 const FINANCIAL_SUMMARY_DEFAULT_DAYS = 30;
 export const FINANCIAL_SUMMARY_MAX_DAYS = 366;
 export const FINANCIAL_SUMMARY_MAX_CURRENCIES = 100;
@@ -77,13 +92,6 @@ export const ggrSummaryTool = defineMcpTool({
   errors: [],
 });
 
-export const PaymentFlowTypeSchema = WalletTransactionTypeSchema.extract(['deposit', 'withdrawal']);
-export const PAYMENT_FLOW_TYPES = PaymentFlowTypeSchema.options;
-export type PaymentFlowType = z.infer<typeof PaymentFlowTypeSchema>;
-
-export const PaymentFlowGranularitySchema = GranularitySchema.extract(['day', 'week']);
-export type PaymentFlowGranularity = z.infer<typeof PaymentFlowGranularitySchema>;
-
 export const PaymentsFlowInputSchema = z
   .object({
     dateFrom: z.iso.date().optional(),
@@ -101,16 +109,6 @@ export const PaymentsFlowInputSchema = z
     checkDayRange(resolvePaymentsFlowRange(input), PAYMENTS_FLOW_MAX_DAYS, ctx),
   );
 export type PaymentsFlowInput = z.infer<typeof PaymentsFlowInputSchema>;
-
-export const PaymentFlowRowSchema = z.object({
-  bucket: z.iso.date(),
-  type: PaymentFlowTypeSchema,
-  status: WalletTransactionStatusSchema,
-  currency: CurrencyTickerSchema,
-  count: z.number().int().nonnegative(),
-  amount: MoneyAmountSchema,
-});
-export type PaymentFlowRow = z.infer<typeof PaymentFlowRowSchema>;
 
 export const PaymentsFlowOutputSchema = z.object({
   dateFrom: z.iso.date(),

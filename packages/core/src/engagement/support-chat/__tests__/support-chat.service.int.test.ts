@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { PlayerRankReaderService } from '@openora/core/promo/server';
 import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
 import {
@@ -87,6 +88,7 @@ const service = (
       getPlayerIdByUserId: vi.fn().mockResolvedValue(playerId),
     },
     walletReader: mock<WalletReader>({ getBalances: async () => ({ activeCurrency: 'EUR' }) }),
+    rankReader: new PlayerRankReaderService(db.drizzle),
     rgExclusionReader: mock<RgExclusionReader>({
       getExclusionState: async () => ({ isSelfExcluded: false, isCoolingOff: false }),
     }),

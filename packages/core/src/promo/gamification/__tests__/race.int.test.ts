@@ -11,7 +11,7 @@ import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
 import { promoRace, promoRaceRoundWager, promoRaceWager } from '../schema/index.js';
 import { RaceService } from '../service/race.service.js';
 import type { RacePosition } from '../contract/index.js';
-import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
+import { identityOver } from './support/ledger-eligibility-shim.js';
 
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();

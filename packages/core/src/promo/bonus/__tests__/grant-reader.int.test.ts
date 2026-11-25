@@ -10,7 +10,7 @@ import { promoOffer, promoWeight, promoWeightProfile } from '../schema/index.js'
 import { GrantLifecycleService } from '../service/grant-lifecycle.service.js';
 import { GrantReaderService } from '../service/grant-reader.service.js';
 import { GrantService } from '../service/grant.service.js';
-import { IdentityReaderService } from '../../../pam/identity/adapters/identity-reader.service.js';
+import { IdentityReaderService } from '@openora/core/pam/server';
 
 let db: TestDb;
 let weightProfileId: string;

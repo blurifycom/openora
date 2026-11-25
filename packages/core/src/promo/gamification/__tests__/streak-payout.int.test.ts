@@ -25,7 +25,7 @@ import {
   type StreakMilestoneReached,
 } from '../service/streak-payout.service.js';
 import { PayoutRateUnavailableError } from '../shared/payout-currency.js';
-import { identityOver } from './ledger-eligibility-shim.js';
+import { identityOver } from './support/ledger-eligibility-shim.js';
 
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
@@ -205,7 +205,7 @@ describe('claiming a streak reward', () => {
       rates: mock<ExchangeRateReader>({ convert }),
       logger,
       audit,
-    identity: identityOver(db.drizzle),
+      identity: identityOver(db.drizzle),
     });
     await db.drizzle.db
       .insert(promoPlayerStreak)

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { MoneyReportingService } from '@openora/core/wallet/server';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import type { WalletRail, WalletTransactionType } from '@openora/core/contracts';
@@ -52,7 +53,10 @@ describe('FinancialAnalyticsService.summary (real PG)', () => {
     await seedTransaction('bonus', '30', 'USD');
     await seedTransaction('bet', '200', 'USD');
     await seedTransaction('win', '110', 'USD');
-    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+    const service = new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    );
 
     const result = await service.summary({});
 
@@ -84,12 +88,18 @@ describe('FinancialAnalyticsService.summary (real PG)', () => {
 
   it('serves a repeat query from cache, not the database, until a fresh cache is used', async () => {
     await seedTransaction('deposit', '10', 'USD', 'fiat');
-    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+    const service = new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    );
     const first = await service.summary({});
     await seedTransaction('deposit', '90', 'USD', 'fiat');
 
     expect(await service.summary({})).toEqual(first);
-    const fresh = await new FinancialAnalyticsService(db.drizzle, makeCache()).summary({});
+    const fresh = await new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    ).summary({});
     expect(fresh.deposits).toEqual([
       { currency: 'USD', rail: 'fiat', total: expect.stringMatching(/^100(\.0+)?$/) },
     ]);
@@ -105,7 +115,10 @@ describe('FinancialAnalyticsService.ggr (real PG)', () => {
     await seedTransaction('bet', '50', 'EUR', null, day('03'));
     await seedTransaction('win', '20', 'EUR', null, day('03'));
     await seedTransaction('bet', '5', 'EUR', null, day('05'));
-    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+    const service = new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    );
 
     const series = await service.ggr({
       dateFrom: '2026-03-03T00:00:00.000Z',

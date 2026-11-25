@@ -6,6 +6,7 @@ import {
   JOB_QUEUE,
   PLATFORM_CONFIG,
   IDENTITY_READER,
+  PLAYER_RANK_READER,
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
   RATE_LIMITER,
@@ -38,6 +39,7 @@ import {
   type TypedContainer,
 } from '@openora/core/server';
 import { RakebackService } from './service/rakeback.service.js';
+import { PlayerRankReaderService } from './service/player-rank-reader.service.js';
 import {
   RakebackClaimConflictError,
   RakebackClaimService,
@@ -200,7 +202,7 @@ const rankChallengeService = (c: TypedContainer<CoreTokenCatalog>) =>
 export default {
   id: 'gamification',
   dependsOn: ['exchange-rate', 'audit'],
-  // Player names, player ids and nothing else of identity's: through its reader (BF-826).
+  // Player names, player ids and nothing else of identity's: through its reader.
   requiresPorts: [IDENTITY_READER],
   register(ctx) {
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
@@ -208,6 +210,8 @@ export default {
       const liability = new RakebackLiabilityService(c.get(DRIZZLE));
       return (input) => liability.report(input);
     });
+
+    ctx.provide(PLAYER_RANK_READER, (c) => new PlayerRankReaderService(c.get(DRIZZLE)));
 
     ctx.provide(
       WAGER_TRACKING,

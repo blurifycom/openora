@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { MoneyReportingService } from '@openora/core/wallet/server';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { CacheAdapter, GameType } from '@openora/core/contracts';
 import { findOneOrThrow } from '@openora/core/server';
@@ -130,7 +131,7 @@ beforeAll(async () => {
   db = await createTestDb([migrateWallet, migrateGaming]);
   casinoGame = await seedRound('casino', '5', '2');
   await seedRound('sportsbook', '4', '1');
-  service = new FinancialAnalyticsService(db.drizzle, uncached());
+  service = new FinancialAnalyticsService(new MoneyReportingService(db.drizzle), uncached());
 });
 
 afterAll(() => db.drop());

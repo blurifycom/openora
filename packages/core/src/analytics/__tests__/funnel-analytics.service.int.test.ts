@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { MoneyReportingService } from '@openora/core/wallet/server';
 import { sql } from 'drizzle-orm';
 import type { WalletTransactionStatus, WalletTransactionType } from '@openora/core/contracts';
 import { findOneOrThrow } from '@openora/core/server';
@@ -45,7 +46,8 @@ async function seedMember(
   return account;
 }
 
-const service = () => new FunnelAnalyticsService(db.drizzle, makeCache());
+const service = () =>
+  new FunnelAnalyticsService(db.drizzle, makeCache(), new MoneyReportingService(db.drizzle));
 
 describe('FunnelAnalyticsService.conversion (real PG)', () => {
   it('returns nested stages with drop-off rates computed from the previous stage', async () => {
