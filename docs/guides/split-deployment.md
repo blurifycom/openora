@@ -21,16 +21,16 @@ The manifest must be closed: every module a listed module `dependsOn`, and every
 You do not have to work the closure out by hand. Boot once with the short manifest. The failure lists every missing module and why, and ends with a line to paste:
 
 ```
-Add them: SERVICE_MANIFEST=chat,identity:no-routes,audit:no-routes,iam,...
+Add them: SERVICE_MANIFEST=chat,identity:no-routes,audit:no-routes,iam:no-routes,...
 ```
 
-It keeps your flags. An unknown id, an unknown flag, or `:no-routes` on an infra overlay also fails the boot, with the known ids in the message.
+It keeps your flags and adds each missing module as `:no-routes`, so another process keeps consuming it. An unknown id, an unknown flag, or `:no-routes` on an infra overlay also fails the boot, with the known ids in the message.
 
 ### Loading a module for its ports only
 
 `id:no-routes` loads a module this service only requires, for what it provides (ADR-0050). It binds the module's ports and discards its router, so it serves no HTTP route, and it consumes nothing: none of the module's event handlers, agent trigger listeners, job workers or schedules are wired. Use it for every dependency. In the chat service above, `identity:no-routes` gives chat its session resolver without serving sign-in, phone-login or 2FA, and without handling identity's events a second time. A module named without the flag is selected, and the service consumes for it. Infra overlays are always selected.
 
-Every module must be selected in some process of the install, or its handlers, jobs and schedules run nowhere. A process with no manifest selects every module it loads, so the template's `api` covers everything chat loads `:no-routes`. The boot logs, under `SERVICE_MANIFEST active`, how many handlers and workers each required module left to another service (`notConsumed`).
+Every module must be selected in some process of the install, or its handlers, jobs and schedules run nowhere. A process with no manifest selects every module it loads, so the template's `api` covers everything chat loads `:no-routes`. After loading, the boot logs how many handlers and workers each required module left to another service (`notConsumed`).
 
 The router factory still runs, because several modules build their service inside it. A factory receives `options.mounted`, `false` for a `:no-routes` module: it skips what guards its HTTP surface and upserts no schedule. Identity refuses to build its router when the geo check is unbound, unless it is loaded `:no-routes`, so a process that serves auth routes without the compliance module fails closed instead of skipping the country gate.
 

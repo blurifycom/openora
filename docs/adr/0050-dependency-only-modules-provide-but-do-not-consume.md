@@ -36,7 +36,7 @@ routers for empty ones. Registration runs under `setOwner` (as for MCP tools and
 `events.on`, `triggers.listen` and `jobs.worker` from a required module are recorded in
 `registry.withheld()` with their owner and never reach `events.getAll()`, `triggers.getAll()` or
 `jobs.getAll()`. `createApp` wires what is left, unchanged, and logs the withheld counts per
-module (`notConsumed`) with `SERVICE_MANIFEST active`. `JOB_WORKERS` (ADR-0049) then picks among
+module (`notConsumed`) once the plugins are loaded. `JOB_WORKERS` (ADR-0049) then picks among
 the selected modules' queues; a pattern that names only a required module's queue fails the boot
 like any queue the process does not register.
 

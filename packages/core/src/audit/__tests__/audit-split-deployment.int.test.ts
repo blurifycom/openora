@@ -89,7 +89,13 @@ describe('audit trail with two services of one deployment up', () => {
 
     const selecting = await bootService(`svc-b-${randomUUID()}`, namespace);
     await vi.waitFor(async () => expect(await groupNames()).toContain(group), { timeout: 10_000 });
+    // Booted first, the dependent would be reading by now if it had subscribed: the group holds
+    // the selecting service's consumer only.
+    const consumers = async () =>
+      (await redis.client.xInfoConsumers('oss:evt:tag.created', group)).length;
+    await vi.waitFor(async () => expect(await consumers()).toBeGreaterThan(0), { timeout: 10_000 });
     await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await consumers()).toBe(1);
 
     const marker = randomUUID();
     dependent.container

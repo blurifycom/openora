@@ -1019,12 +1019,16 @@ export default {
       // Off-peak, one hour after tag's daily-evaluation (0 2 * * *), so the in-process
       // driver doesn't run both sweeps at once in dev/test.
       if (options?.mounted !== false) {
-        void jobQueueRef.schedule(
-          NOTIFICATIONS_RETENTION_PURGE_QUEUE,
-          'notifications.retention-purge.daily',
-          {},
-          { cron: purgeCron },
-        );
+        void jobQueueRef
+          .schedule(
+            NOTIFICATIONS_RETENTION_PURGE_QUEUE,
+            'notifications.retention-purge.daily',
+            {},
+            { cron: purgeCron },
+          )
+          .catch((err: unknown) =>
+            logger.error({ err }, 'notifications retention-purge schedule failed'),
+          );
       }
       return createNotificationsRouter({ notifications: svc, realtime: realtimeRef });
     });

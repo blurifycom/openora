@@ -703,6 +703,13 @@ async function bootApp(
           isBound: (port) => container.has(port),
         };
   const plugins = manifestCheck ? await selectServiceEntries(manifestCheck) : registryEntries;
+  if (manifestCheck) {
+    // Logged before loading, so a boot that fails in a plugin still shows what was selected.
+    bootLogger.info(
+      { modules: plugins.map((e) => (e.noRoutes ? `${e.id} (required only)` : e.id)) },
+      'SERVICE_MANIFEST active',
+    );
+  }
 
   const registry = await loadPlugins(plugins, container, {
     requiredPorts: manifestCheck ? 'defer' : 'assert',
@@ -715,13 +722,13 @@ async function bootApp(
       const counts = (notConsumed[owner] ??= {});
       counts[kind] = (counts[kind] ?? 0) + 1;
     }
-    bootLogger.info(
-      {
-        modules: plugins.map((e) => (e.noRoutes ? `${e.id} (required only)` : e.id)),
-        notConsumed,
-      },
-      'SERVICE_MANIFEST active',
-    );
+    if (Object.keys(notConsumed).length > 0) {
+      // Warn, not info: a module no process selects runs none of these, audit and RG included.
+      bootLogger.warn(
+        { notConsumed },
+        'SERVICE_MANIFEST: these handlers run only where another process selects their module',
+      );
+    }
   }
   await configure?.(container);
 

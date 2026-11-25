@@ -54,7 +54,7 @@ describe('notifications on a split service - the audit writer is a control it ma
       'SERVICE_MANIFEST=notifications leaves out what this service needs:\n' +
         '  - notifications runs without sealed:AUDIT_WRITER (bound by audit): a KYC resubmission ' +
         'notice that never reaches the mail queue goes unaudited\n' +
-        'Add them: SERVICE_MANIFEST=notifications,audit\n' +
+        'Add them: SERVICE_MANIFEST=notifications,audit:no-routes\n' +
         'A split service may not skip a control the rest of its install enforces',
     );
   });

@@ -521,7 +521,7 @@ describe('createApp - SERVICE_MANIFEST and JOB_WORKERS on the plugin list it is 
 
   it('names every module the manifest leaves out in one boot error', async () => {
     await expect(bootQueues({ SERVICE_MANIFEST: 'fixture-leaf' })).rejects.toThrow(
-      /fixture-feature \(required by fixture-leaf\)[\s\S]*fixture-base \(required by fixture-feature\)[\s\S]*SERVICE_MANIFEST=fixture-leaf,fixture-feature,fixture-base/,
+      /fixture-feature \(required by fixture-leaf\)[\s\S]*fixture-base \(required by fixture-feature\)[\s\S]*SERVICE_MANIFEST=fixture-leaf,fixture-feature:no-routes,fixture-base:no-routes/,
     );
   });
 
@@ -604,7 +604,7 @@ describe('createApp - a split service fails closed on a control it would skip', 
 
   it("refuses a module's unbound control port, naming the module that binds it", async () => {
     await expect(boot([limited, limits], 'fixture-limited')).rejects.toThrow(
-      /- fixture-limited runs without FIXTURE_LIMITS \(bound by fixture-limits\): fixture limits go unenforced\nAdd them: SERVICE_MANIFEST=fixture-limited,fixture-limits/,
+      /- fixture-limited runs without FIXTURE_LIMITS \(bound by fixture-limits\): fixture limits go unenforced\nAdd them: SERVICE_MANIFEST=fixture-limited,fixture-limits:no-routes/,
     );
   });
 
@@ -638,7 +638,7 @@ describe('createApp - a split service fails closed on a control it would skip', 
 
   it('refuses admin routes without the ports AdminGuard checks them with', async () => {
     await expect(boot([admin, iam, identity], 'fixture-admin')).rejects.toThrow(
-      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*- AdminGuard runs without ADMIN_SECURITY_POLICY \(bound by identity\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-admin,iam,identity/,
+      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*- AdminGuard runs without ADMIN_SECURITY_POLICY \(bound by identity\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-admin,iam:no-routes,identity:no-routes/,
     );
   });
 
@@ -650,7 +650,7 @@ describe('createApp - a split service fails closed on a control it would skip', 
 
   it('refuses a split that serves no admin routes without them too', async () => {
     await expect(boot([base, iam, identity], 'fixture-base')).rejects.toThrow(
-      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-base,iam,identity/,
+      /- AdminGuard runs without ADMIN_PERMISSION_RESOLVER \(bound by iam\)[\s\S]*Add them: SERVICE_MANIFEST=fixture-base,iam:no-routes,identity:no-routes/,
     );
   });
 
@@ -694,7 +694,8 @@ describe('createApp - a split service fails closed on a control it would skip', 
     expect(refused.message).toMatch(/- fixture-leaf \(required by fixture-dispatch\)/);
     const suggested = /^Add them: SERVICE_MANIFEST=(\S+)$/m.exec(refused.message)?.[1];
     expect(suggested).toBe(
-      'fixture-split,fixture-feature,fixture-base,fixture-dispatch,fixture-limits,iam,identity,fixture-leaf',
+      'fixture-split,' +
+        'fixture-feature:no-routes,fixture-base:no-routes,fixture-dispatch:no-routes,fixture-limits:no-routes,iam:no-routes,identity:no-routes,fixture-leaf:no-routes',
     );
     await expect(boot(plugins, suggested)).resolves.toBeUndefined();
   });

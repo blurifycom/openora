@@ -179,7 +179,7 @@ describe('selectServiceEntries', () => {
     const { check } = checkOf(graph, ['gaming']);
 
     await expect(selectServiceEntries(check)).rejects.toThrow(
-      /SERVICE_MANIFEST=gaming leaves out[\s\S]*- wallet \(required by gaming\)[\s\S]*- identity \(required by wallet\)[\s\S]*- audit \(required by wallet, identity\)[\s\S]*Add them: SERVICE_MANIFEST=gaming,wallet,identity,audit$/m,
+      /SERVICE_MANIFEST=gaming leaves out[\s\S]*- wallet \(required by gaming\)[\s\S]*- identity \(required by wallet\)[\s\S]*- audit \(required by wallet, identity\)[\s\S]*Add them: SERVICE_MANIFEST=gaming,wallet:no-routes,identity:no-routes,audit:no-routes$/m,
     );
   });
 
@@ -206,7 +206,7 @@ describe('selectServiceEntries', () => {
     ];
 
     await expect(selectServiceEntries(checkOf(cyclic, ['gaming']).check)).rejects.toThrow(
-      /Add them: SERVICE_MANIFEST=gaming,wallet,identity$/m,
+      /Add them: SERVICE_MANIFEST=gaming,wallet:no-routes,identity:no-routes$/m,
     );
   });
 
@@ -244,7 +244,7 @@ describe('the one error a manifest boot fails with', () => {
         '  - AdminGuard runs without PERMISSIONS (bound by iam): grants come from the static role table\n' +
         '  - gaming (required by compliance)\n' +
         '  - audit (required by mail)\n' +
-        'Add them: SERVICE_MANIFEST=wallet,identity,compliance,mail,iam,gaming,audit\n' +
+        'Add them: SERVICE_MANIFEST=wallet,identity:no-routes,compliance:no-routes,mail:no-routes,iam:no-routes,gaming:no-routes,audit:no-routes\n' +
         'A split service may not skip a control the rest of its install enforces',
     );
   });
@@ -253,7 +253,7 @@ describe('the one error a manifest boot fails with', () => {
     const { check } = checkOf(install, ['identity']);
 
     await expect(assertServiceComplete(check)).rejects.toThrow(
-      /- identity requires MAIL \(bound by mail\)\n {2}- audit \(required by mail\)\nAdd them: SERVICE_MANIFEST=identity,mail,audit\nA split service loads every module/,
+      /- identity requires MAIL \(bound by mail\)\n {2}- audit \(required by mail\)\nAdd them: SERVICE_MANIFEST=identity,mail:no-routes,audit:no-routes\nA split service loads every module/,
     );
   });
 
@@ -261,7 +261,7 @@ describe('the one error a manifest boot fails with', () => {
     const { check } = checkOf(install, ['wallet', 'identity', 'mail', 'audit'], { bound: [MAIL] });
 
     await expect(assertServiceComplete(check)).rejects.toThrow(
-      /- wallet runs without RG_LIMITS \(bound by compliance\): limits go unenforced\n {2}- gaming \(required by compliance\)\nAdd them: SERVICE_MANIFEST=wallet,identity,mail,audit,compliance,gaming\n/,
+      /- wallet runs without RG_LIMITS \(bound by compliance\): limits go unenforced\n {2}- gaming \(required by compliance\)\nAdd them: SERVICE_MANIFEST=wallet,identity,mail,audit,compliance:no-routes,gaming:no-routes\n/,
     );
   });
 
@@ -269,7 +269,7 @@ describe('the one error a manifest boot fails with', () => {
     const { check } = checkOf(install, ['audit'], { hostControls: [ADMIN_GUARD_CONTROL] });
 
     await expect(assertServiceComplete(check)).rejects.toThrow(
-      /- AdminGuard runs without PERMISSIONS \(bound by iam\)[\s\S]*Add them: SERVICE_MANIFEST=audit,iam,identity,mail\n/,
+      /- AdminGuard runs without PERMISSIONS \(bound by iam\)[\s\S]*Add them: SERVICE_MANIFEST=audit,iam:no-routes,identity:no-routes,mail:no-routes\n/,
     );
   });
 
@@ -347,7 +347,7 @@ describe('the one error a manifest boot fails with', () => {
       const { check } = checkOf(routed, ['wallet', 'identity', 'mail', 'audit'], { bound: [MAIL] });
 
       await expect(assertServiceComplete(check)).rejects.toThrow(
-        /- wallet runs without RG_LIMITS \(bound by compliance\): limits go unenforced\n[\s\S]*Add them: SERVICE_MANIFEST=wallet,identity,mail,audit,compliance,gaming\n/,
+        /- wallet runs without RG_LIMITS \(bound by compliance\): limits go unenforced\n[\s\S]*Add them: SERVICE_MANIFEST=wallet,identity,mail,audit,compliance:no-routes,gaming:no-routes\n/,
       );
     });
   });

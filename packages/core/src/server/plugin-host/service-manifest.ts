@@ -268,7 +268,8 @@ async function shortfallError<C extends TokenCatalog>(check: ServiceManifestChec
   const unregistered = [...plugins.values()].filter(({ id }) => !check.registered?.has(id));
   const { binders, failed } = await portBinders(unregistered, ports);
   const { findings, added } = shortfall(check, plugins, binders);
-  // As the operator wrote it, flags included, so the suggested line keeps them.
+  // As the operator wrote it, flags included, so the suggested line keeps them. What it adds is
+  // required only: selecting it here would consume its events in this service too (ADR-0050).
   const manifest = check.manifest
     .map((m) => (m.noRoutes ? `${m.id}:${NO_ROUTES_FLAG}` : m.id))
     .join(',');
@@ -276,7 +277,9 @@ async function shortfallError<C extends TokenCatalog>(check: ServiceManifestChec
   return new Error(
     `SERVICE_MANIFEST=${manifest} leaves out what this service needs:\n` +
       `${findings.map(findingLine).join('\n')}\n` +
-      (added.length > 0 ? `Add them: SERVICE_MANIFEST=${[manifest, ...added].join(',')}\n` : '') +
+      (added.length > 0
+        ? `Add them: SERVICE_MANIFEST=${[manifest, ...added.map((id) => `${id}:${NO_ROUTES_FLAG}`)].join(',')}\n`
+        : '') +
       (findings.some(({ kind }) => kind === 'control')
         ? 'A split service may not skip a control the rest of its install enforces: load the ' +
           'module that binds each port, or bind the port in an overlay.'
