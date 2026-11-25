@@ -1,5 +1,6 @@
 import { and, eq, isNull, lte } from 'drizzle-orm';
 import type {
+  IdentityReader,
   AuditWritePort,
   ExchangeRateReader,
   PlayEligibilityPort,
@@ -64,6 +65,7 @@ export type RacePayoutDeps = {
   audit: AuditWritePort;
   events: EventBus;
   logger: Logger;
+  identity: IdentityReader;
 };
 
 /**
@@ -247,7 +249,7 @@ export class RacePayoutService {
     await this.deps.audit.recordManyInTransaction(tx, audits);
     for (const win of won) {
       await this.deps.events.emitInTransaction(tx, 'promo.race.won', win);
-      await announceCashCredit(tx, this.deps.events, win);
+      await announceCashCredit(tx, this.deps, win);
     }
     // Frozen standings ignore a rollback, so what each round counted here is no longer needed.
     await tx.delete(promoRaceRoundWager).where(eq(promoRaceRoundWager.raceId, raceId));

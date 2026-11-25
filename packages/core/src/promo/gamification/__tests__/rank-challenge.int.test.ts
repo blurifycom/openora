@@ -46,6 +46,7 @@ import {
   RankChallengeLadderCurrencyHeldError,
 } from '../service/rank-challenge-admin.service.js';
 import { RankChallengePayoutService } from '../service/rank-challenge-payout.service.js';
+import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
 
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();
@@ -138,6 +139,7 @@ const payoutService = (
     audit,
     events,
     logger,
+    identityOver(db.drizzle),
   );
 
 // The wallet plugin's own WALLET_COMMANDS binding, so a payout writes a real ledger row.
@@ -165,8 +167,13 @@ const outboxed = (topic: string) =>
 
 beforeAll(async () => {
   db = await createTestDb([serverMigrate, migrate, identityMigrate, profileMigrate, walletMigrate]);
-  service = new RankChallengeService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
-  adminService = new RankChallengeAdminService(db.drizzle, audit);
+  service = new RankChallengeService(
+    db.drizzle,
+    mock<ExchangeRateReader>({ convert }),
+    logger,
+    identityOver(db.drizzle),
+  );
+  adminService = new RankChallengeAdminService(db.drizzle, audit, identityOver(db.drizzle));
 });
 
 afterAll(() => db.drop());

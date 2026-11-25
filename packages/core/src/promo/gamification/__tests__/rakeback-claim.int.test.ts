@@ -41,6 +41,7 @@ import {
   RakebackAccrualNotVoidableError,
   RakebackAdminService,
 } from '../service/rakeback-admin.service.js';
+import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
 
 let db: TestDb;
 const credit = vi.fn<WalletCommands['credit']>();
@@ -58,7 +59,7 @@ const claimsWith = (claimMinimum = '1') =>
   new RakebackClaimService({
     drizzle: db.drizzle,
     wallet: mock<WalletCommands>({ credit }),
-    eligibility: mock<PlayEligibilityPort>({ isRestricted }),
+    eligibility: ledgerEligibilityOver(db.drizzle, isRestricted),
     exclusions: mock<RgExclusionReader>({ getExclusionState }),
     rates,
     referenceCurrency: 'USDT',
@@ -66,6 +67,7 @@ const claimsWith = (claimMinimum = '1') =>
     audit: mock<AuditWritePort>({ recordInTransaction: claimAudit }),
     events: mock<EventBus>({ emitInTransaction }),
     logger: { info: vi.fn() },
+    identity: identityOver(db.drizzle),
   });
 
 const admin = () =>

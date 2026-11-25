@@ -390,7 +390,7 @@ export default {
 
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(transactionsFindTool, (c) => {
-      const transactions = new TransactionsFindService(c.get(DRIZZLE));
+      const transactions = new TransactionsFindService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => transactions.find(input);
     });
 

@@ -10,6 +10,7 @@ import { promoOffer, promoWeight, promoWeightProfile } from '../schema/index.js'
 import { GrantLifecycleService } from '../service/grant-lifecycle.service.js';
 import { GrantReaderService } from '../service/grant-reader.service.js';
 import { GrantService } from '../service/grant.service.js';
+import { IdentityReaderService } from '../../../pam/identity/adapters/identity-reader.service.js';
 
 let db: TestDb;
 let weightProfileId: string;
@@ -38,7 +39,7 @@ afterAll(async () => {
 describe('GrantReaderService', () => {
   it('shows the player what a grant was issued for, and only their own grants', async () => {
     const service = new GrantService(makeAuditWriter());
-    const reader = new GrantReaderService(db.drizzle);
+    const reader = new GrantReaderService(db.drizzle, new IdentityReaderService(db.drizzle));
     const [mine, theirs] = [randomUUID(), randomUUID()];
     const issue = (userId: string, sourceRef: string) =>
       db.drizzle.db.transaction((tx) =>
@@ -62,7 +63,7 @@ describe('GrantReaderService', () => {
 
   it('names the offer a grant came from, even once that offer has closed', async () => {
     const service = new GrantService(makeAuditWriter());
-    const reader = new GrantReaderService(db.drizzle);
+    const reader = new GrantReaderService(db.drizzle, new IdentityReaderService(db.drizzle));
     const userId = randomUUID();
     const terms = { wageringMultiplier: '3', expiryDays: 14, weightProfileId };
     const offer = findOneOrThrow(
@@ -125,7 +126,7 @@ describe('GrantReaderService', () => {
     const lifecycle = new GrantLifecycleService(db.drizzle, audit, makeEventBus(), {
       isRestricted: async () => false,
     } satisfies PlayEligibilityPort);
-    const reader = new GrantReaderService(db.drizzle);
+    const reader = new GrantReaderService(db.drizzle, new IdentityReaderService(db.drizzle));
     const userId = randomUUID();
     const issue = async (amount: string) => {
       const outcome = await db.drizzle.db.transaction((tx) =>
@@ -183,7 +184,7 @@ describe('GrantReaderService', () => {
     };
 
     it('shows the max bet resolved at grant time on the grant, and null when it has none', async () => {
-      const reader = new GrantReaderService(db.drizzle);
+      const reader = new GrantReaderService(db.drizzle, new IdentityReaderService(db.drizzle));
       const userId = randomUUID();
       const limited = await issue(userId, '200', { maxBetRate: '0.05' });
       const unlimited = await issue(userId, '50', {});
@@ -197,7 +198,7 @@ describe('GrantReaderService', () => {
     });
 
     it('shows the balance the max bet of the grant a bet in that currency is attributed to', async () => {
-      const reader = new GrantReaderService(db.drizzle);
+      const reader = new GrantReaderService(db.drizzle, new IdentityReaderService(db.drizzle));
       const userId = randomUUID();
       await issue(userId, '100', { maxBet: '4' });
       await issue(userId, '100', { maxBet: '9', expiryDays: 90 });
@@ -210,7 +211,7 @@ describe('GrantReaderService', () => {
     });
 
     it('shows no max bet for a player with no active grant', async () => {
-      const reader = new GrantReaderService(db.drizzle);
+      const reader = new GrantReaderService(db.drizzle, new IdentityReaderService(db.drizzle));
 
       expect(await reader.balances(randomUUID())).toEqual([]);
     });

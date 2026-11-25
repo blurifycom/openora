@@ -90,8 +90,18 @@ export const PLAY_ELIGIBILITY: Token<PlayEligibilityPort> =
  * stake read it. A user the projection has no row for is refused `account_inactive`. Sealed: an
  * overlay can neither rebind the stake gate nor the writer that lifts a restriction.
  */
-export const LEDGER_PLAY_ELIGIBILITY: SealedToken<Required<PlayEligibilityPort>> =
-  createSealedToken<Required<PlayEligibilityPort>>('LEDGER_PLAY_ELIGIBILITY');
+export type LedgerPlayEligibilityPort = Required<PlayEligibilityPort> & {
+  /**
+   * The projected account facts, or null for a user the projection has no row for. Same `tx`
+   * rule as `isRestricted`: on a caller's transaction the row is held `FOR SHARE`.
+   */
+  stateOf(userId: string, tx?: unknown): Promise<PlayEligibilityState | null>;
+  /** {@link stateOf} for many users in one read on a pool connection; a user with no row is absent. */
+  statesOf(userIds: readonly string[]): Promise<Map<string, PlayEligibilityState>>;
+};
+
+export const LEDGER_PLAY_ELIGIBILITY: SealedToken<LedgerPlayEligibilityPort> =
+  createSealedToken<LedgerPlayEligibilityPort>('LEDGER_PLAY_ELIGIBILITY');
 
 /**
  * Writes to the ledger's `ledger_play_eligibility` projection. Wallet-internal: bound by wallet,

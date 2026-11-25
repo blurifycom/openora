@@ -1,7 +1,11 @@
 import { and, count, eq, gte, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleService } from '@openora/core/server';
-import { dayRangeInstants } from '@openora/core/contracts';
-import { player } from '@openora/core/pam/schema/profile';
+import {
+  dayRangeInstants,
+  userIdOfPlayer,
+  withPlayerIds,
+  type IdentityReader,
+} from '@openora/core/contracts';
 import {
   resolveBetsFindRange,
   type BetsFind,
@@ -20,7 +24,10 @@ const SORT_COLUMNS: Record<BetsFindSortBy, SQL> = {
 
 /** Finds sportsbook bets across all players, each by player id and without its selections. */
 export class BetsFindService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly identity: IdentityReader,
+  ) {}
 
   async find(
     {
@@ -39,17 +46,14 @@ export class BetsFindService {
     const range = resolveBetsFindRange(days, now);
     const { from, to } = dayRangeInstants(range);
     const db = this.drizzle.db;
+    // The player id names a user through IDENTITY_READER; an unknown one matches nothing.
+    const playerUserId = playerId ? await userIdOfPlayer(this.identity, playerId) : null;
     const where = and(
       gte(bet.createdAt, from),
       lte(bet.createdAt, to),
       status?.length ? inArray(bet.status, status) : undefined,
       result?.length ? inArray(bet.result, result) : undefined,
-      playerId
-        ? inArray(
-            bet.userId,
-            db.select({ userId: player.userId }).from(player).where(eq(player.id, playerId)),
-          )
-        : undefined,
+      playerId ? playerUserId === null ? sql`false` : eq(bet.userId, playerUserId) : undefined,
       currency ? eq(bet.currency, currency.toUpperCase()) : undefined,
       minStake ? gte(bet.stake, minStake) : undefined,
     );
@@ -58,7 +62,7 @@ export class BetsFindService {
       db
         .select({
           betId: bet.id,
-          playerId: player.id,
+          userId: bet.userId,
           status: bet.status,
           result: bet.result,
           currency: bet.currency,
@@ -70,7 +74,6 @@ export class BetsFindService {
           settledAt: bet.settledAt,
         })
         .from(bet)
-        .leftJoin(player, eq(player.userId, bet.userId))
         .where(where)
         // The bet id breaks ties, so equal figures always list in the same order.
         .orderBy(sql`${SORT_COLUMNS[sortBy]} ${direction}`, sql`${bet.id} ${direction}`)
@@ -82,7 +85,7 @@ export class BetsFindService {
       placedTo: range.dateTo,
       total: totals[0]?.total ?? 0,
       truncated: rows.length > limit,
-      bets: rows.slice(0, limit).map((row) => ({
+      bets: (await withPlayerIds(this.identity, rows.slice(0, limit))).map((row) => ({
         ...row,
         placedAt: row.placedAt.toISOString(),
         settledAt: row.settledAt?.toISOString() ?? null,

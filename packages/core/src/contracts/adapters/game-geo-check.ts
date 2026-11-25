@@ -37,6 +37,17 @@ export type GameGeoCheckPort = {
   checkGame(input: GameGeoCheckInput): Promise<GameGeoDecision>;
   /** Sorted, deduped country codes blocked platform-wide (config + a global block rule). */
   listGloballyBlockedCountries(): Promise<string[]>;
+  /**
+   * Every game and provider geo rule, each `(id, country)` pair once, only those of `countries`
+   * when given. The admin catalog filters read these instead of compliance's tables. Optional so
+   * an operator's own implementation keeps compiling; without it those filters are refused.
+   */
+  listGeoRulePairs?(countries?: readonly string[]): Promise<GameGeoRules>;
+};
+
+export type GameGeoRules = {
+  games: { gameId: string; countryCode: string }[];
+  providers: { providerId: string; countryCode: string }[];
 };
 
 export const GAME_GEO_CHECK: Token<GameGeoCheckPort> =

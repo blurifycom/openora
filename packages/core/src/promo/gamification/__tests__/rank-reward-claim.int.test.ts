@@ -24,6 +24,7 @@ import {
   RankRewardIdempotencyKeyReusedError,
   RankRewardNotFoundError,
 } from '../service/rank-reward-claim.service.js';
+import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
 
 let db: TestDb;
 const credit = vi.fn<WalletCommands['credit']>();
@@ -36,11 +37,12 @@ const claims = () =>
   new RankRewardClaimService({
     drizzle: db.drizzle,
     wallet: mock<WalletCommands>({ credit }),
-    eligibility: mock<PlayEligibilityPort>({ isRestricted }),
+    eligibility: ledgerEligibilityOver(db.drizzle, isRestricted),
     exclusions: mock<RgExclusionReader>({ getExclusionState }),
     audit: mock<AuditWritePort>({ recordInTransaction }),
     events: mock<EventBus>({ emitInTransaction }),
     logger: { info: vi.fn() },
+    identity: identityOver(db.drizzle),
   });
 
 const newPlayer = async (status: 'active' | 'self_excluded' | 'suspended' | 'closed' = 'active') =>

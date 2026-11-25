@@ -11,6 +11,7 @@ import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
 import { promoRace, promoRaceRoundWager, promoRaceWager } from '../schema/index.js';
 import { RaceService } from '../service/race.service.js';
 import type { RacePosition } from '../contract/index.js';
+import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
 
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();
@@ -117,7 +118,12 @@ const wageredOf = async (raceId: string, userId: string) => {
 
 beforeAll(async () => {
   db = await createTestDb([migrate, identityMigrate, profileMigrate]);
-  races = new RaceService(db.drizzle, mock<ExchangeRateReader>({ convert }), logger);
+  races = new RaceService(
+    db.drizzle,
+    mock<ExchangeRateReader>({ convert }),
+    logger,
+    identityOver(db.drizzle),
+  );
 });
 
 afterAll(() => db.drop());

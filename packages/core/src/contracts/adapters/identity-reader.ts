@@ -50,7 +50,27 @@ export type IdentityReader = {
    * goes undetected.
    */
   getPlayerDateOfBirthByUserId?(userId: User['id'], tx?: unknown): Promise<string | null>;
+  /**
+   * The player profile id of each of `userIds`; a user without a profile is absent. Unlike
+   * {@link getPlayerIdsByUserIdsSafe} a failed lookup rejects. Optional for the same reason as
+   * {@link getUserIdByPlayerId}; a caller fails closed through {@link playerIdsOfUsers}.
+   */
+  getPlayerIdsByUserIds?(userIds: readonly User['id'][]): Promise<Map<User['id'], Player['id']>>;
+  /**
+   * What a public leaderboard shows for each of `userIds`: the username and whether the player
+   * hides it (false for a user without a player profile). A user id that names no user is absent.
+   * Optional; a caller fails closed through {@link leaderboardNamesOf}.
+   */
+  getLeaderboardNames?(userIds: readonly User['id'][]): Promise<Map<User['id'], LeaderboardName>>;
+  /**
+   * Name and email of each of `userIds` (staff actors on an audit-style view); an unknown id is
+   * absent. Optional; a caller fails closed through {@link userContactsOf}.
+   */
+  getUserContacts?(userIds: readonly User['id'][]): Promise<Map<User['id'], UserContact>>;
 };
+
+export type LeaderboardName = { username: string; hideUsername: boolean };
+export type UserContact = { name: string | null; email: string };
 
 export const IDENTITY_READER = createToken<IdentityReader>('IDENTITY_READER');
 
@@ -77,4 +97,62 @@ export async function userIdsOfPlayers(
     throw new Error('the bound IDENTITY_READER cannot resolve player ids to user ids');
   }
   return reader.getUserIdsByPlayerIds(playerIds);
+}
+
+function required<K extends keyof IdentityReader>(
+  reader: IdentityReader,
+  method: K,
+): NonNullable<IdentityReader[K]> {
+  const fn = reader[method];
+  if (!fn) {
+    throw new Error(`the bound IDENTITY_READER does not implement ${method}`);
+  }
+  return fn.bind(reader) as NonNullable<IdentityReader[K]>;
+}
+
+const unique = (ids: readonly string[]): string[] => [...new Set(ids)];
+
+/** `getPlayerIdsByUserIds` for a caller that cannot work without it; throws like {@link userIdOfPlayer}. */
+export function playerIdsOfUsers(
+  reader: IdentityReader,
+  userIds: readonly User['id'][],
+): Promise<Map<User['id'], Player['id']>> {
+  return userIds.length === 0
+    ? Promise.resolve(new Map())
+    : required(reader, 'getPlayerIdsByUserIds')(unique(userIds));
+}
+
+/** `getLeaderboardNames` for a caller that cannot work without it; throws like {@link userIdOfPlayer}. */
+export function leaderboardNamesOf(
+  reader: IdentityReader,
+  userIds: readonly User['id'][],
+): Promise<Map<User['id'], LeaderboardName>> {
+  return userIds.length === 0
+    ? Promise.resolve(new Map())
+    : required(reader, 'getLeaderboardNames')(unique(userIds));
+}
+
+/** `getUserContacts` for a caller that cannot work without it; throws like {@link userIdOfPlayer}. */
+export function userContactsOf(
+  reader: IdentityReader,
+  userIds: readonly User['id'][],
+): Promise<Map<User['id'], UserContact>> {
+  return userIds.length === 0
+    ? Promise.resolve(new Map())
+    : required(reader, 'getUserContacts')(unique(userIds));
+}
+
+/**
+ * Swaps each row's `userId` for the player id it names (null for a user without a profile), the
+ * column a list read once took from a join on the player table.
+ */
+export async function withPlayerIds<T extends { userId: User['id'] }>(
+  reader: IdentityReader,
+  rows: readonly T[],
+): Promise<(Omit<T, 'userId'> & { playerId: Player['id'] | null })[]> {
+  const ids = await playerIdsOfUsers(
+    reader,
+    rows.map((row) => row.userId),
+  );
+  return rows.map(({ userId, ...row }) => ({ ...row, playerId: ids.get(userId) ?? null }));
 }
