@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { MoneyReportingService } from '@openora/core/wallet/server';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import {
@@ -301,7 +302,10 @@ describe('FinancialAnalyticsService.paymentsFlow at its row cap (real PG)', () =
   });
 
   it('returns the oldest 1000 groups and says more matched', async () => {
-    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+    const service = new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    );
 
     const flow = await service.paymentsFlow({
       dateFrom: '2026-01-01',

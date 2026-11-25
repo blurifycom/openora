@@ -54,6 +54,7 @@ import {
   runActorAdminId,
   userIdOfPlayer,
   type RealtimeTransport,
+  MONEY_REPORTING,
 } from '@openora/core/contracts';
 import {
   holdWithdrawalAction,
@@ -82,6 +83,7 @@ import {
 import { WalletReaderService } from './adapters/wallet-reader.service.js';
 import { WalletAssetCatalogService } from './adapters/wallet-asset-catalog.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
+import { MoneyReportingService } from './service/money-reporting.service.js';
 import { createWalletRouter, walletBalanceChannel } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
@@ -567,6 +569,8 @@ export default {
         }),
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
+    // Analytics' reads of the money tables.
+    ctx.provide(MONEY_REPORTING, (c) => new MoneyReportingService(c.get(DRIZZLE)));
     // Operator-editable currency/network config, readable by a payment adapter without
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));

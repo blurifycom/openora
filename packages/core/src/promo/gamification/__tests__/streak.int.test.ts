@@ -15,7 +15,7 @@ import {
   promoStreakRoundWager,
 } from '../schema/index.js';
 import { StreakService } from '../service/streak.service.js';
-import { identityOver } from './ledger-eligibility-shim.js';
+import { identityOver } from './support/ledger-eligibility-shim.js';
 
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();

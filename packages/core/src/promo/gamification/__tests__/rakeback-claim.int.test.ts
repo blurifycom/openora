@@ -41,7 +41,7 @@ import {
   RakebackAccrualNotVoidableError,
   RakebackAdminService,
 } from '../service/rakeback-admin.service.js';
-import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
+import { identityOver, ledgerEligibilityOver } from './support/ledger-eligibility-shim.js';
 
 let db: TestDb;
 const credit = vi.fn<WalletCommands['credit']>();

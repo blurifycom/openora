@@ -46,7 +46,7 @@ import {
   RankChallengeLadderCurrencyHeldError,
 } from '../service/rank-challenge-admin.service.js';
 import { RankChallengePayoutService } from '../service/rank-challenge-payout.service.js';
-import { identityOver, ledgerEligibilityOver } from './ledger-eligibility-shim.js';
+import { identityOver } from './support/ledger-eligibility-shim.js';
 
 let db: TestDb;
 const convert = vi.fn<ExchangeRateReader['convert']>();

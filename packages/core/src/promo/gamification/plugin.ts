@@ -6,6 +6,7 @@ import {
   JOB_QUEUE,
   PLATFORM_CONFIG,
   IDENTITY_READER,
+  PLAYER_RANK_READER,
   LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
   RATE_LIMITER,
@@ -38,6 +39,7 @@ import {
   type TypedContainer,
 } from '@openora/core/server';
 import { RakebackService } from './service/rakeback.service.js';
+import { PlayerRankReaderService } from './service/player-rank-reader.service.js';
 import {
   RakebackClaimConflictError,
   RakebackClaimService,
@@ -208,6 +210,8 @@ export default {
       const liability = new RakebackLiabilityService(c.get(DRIZZLE));
       return (input) => liability.report(input);
     });
+
+    ctx.provide(PLAYER_RANK_READER, (c) => new PlayerRankReaderService(c.get(DRIZZLE)));
 
     ctx.provide(
       WAGER_TRACKING,

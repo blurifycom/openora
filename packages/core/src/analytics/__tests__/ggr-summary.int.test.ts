@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { MoneyReportingService } from '@openora/core/wallet/server';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import {
@@ -161,7 +162,10 @@ describe('ggr.summary through the MCP kernel (real PG)', () => {
 
 describe('FinancialAnalyticsService.ggrSummary (real PG)', () => {
   it('defaults to the 30 days ending on the day of now', async () => {
-    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+    const service = new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    );
 
     const summary = await service.ggrSummary(
       { granularity: 'week' },
@@ -186,7 +190,10 @@ describe('a payout taken back after a reopen (real PG)', () => {
   });
 
   it('adds it back to the GGR series', async () => {
-    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+    const service = new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    );
 
     const summary = await service.ggrSummary({
       dateFrom: FIRST_WEEK,
@@ -199,7 +206,10 @@ describe('a payout taken back after a reopen (real PG)', () => {
   });
 
   it('adds it back to summary GGR and NGR', async () => {
-    const service = new FinancialAnalyticsService(db.drizzle, makeCache());
+    const service = new FinancialAnalyticsService(
+      new MoneyReportingService(db.drizzle),
+      makeCache(),
+    );
 
     const summary = await service.summary({
       dateFrom: `${FIRST_WEEK}T00:00:00.000Z`,

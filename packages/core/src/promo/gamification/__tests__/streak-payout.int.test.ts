@@ -25,7 +25,7 @@ import {
   type StreakMilestoneReached,
 } from '../service/streak-payout.service.js';
 import { PayoutRateUnavailableError } from '../shared/payout-currency.js';
-import { identityOver } from './ledger-eligibility-shim.js';
+import { identityOver } from './support/ledger-eligibility-shim.js';
 
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();

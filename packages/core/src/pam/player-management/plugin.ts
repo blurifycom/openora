@@ -46,9 +46,9 @@ const TotalDepositsJobSchema = z.object({ userId: UuidSchema });
 
 export default {
   id: 'player-management',
-  dependsOn: ['gaming', 'audit', 'identity'],
+  dependsOn: ['audit', 'identity'],
   // Chat's block read, bound by chat or by chat-remote when chat runs in another service.
-  requiresPorts: [WALLET_READER, CHAT_BLOCK_READER],
+  requiresPorts: [WALLET_READER, CHAT_BLOCK_READER, ADMIN_GAME_REPORTING],
   register(ctx) {
     // One memoized instance backs the tracker port, the router and the deposit job.
     let svc: PlayerService | null = null;
