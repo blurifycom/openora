@@ -153,13 +153,20 @@ export type {
 export { WALLET_READER } from './wallet-reader.js';
 
 export type { UserCommands } from './identity.js';
-export type { IdentityReader, LeaderboardName, UserContact } from './identity-reader.js';
+export type {
+  IdentityReader,
+  LeaderboardName,
+  PlayerFacts,
+  UserContact,
+} from './identity-reader.js';
 export {
   leaderboardNamesOf,
+  playerFactsOf,
   playerIdsOfUsers,
   userContactsOf,
   userIdOfPlayer,
   userIdsOfPlayers,
+  userIdsWithPlayerStatus,
   withPlayerIds,
 } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';

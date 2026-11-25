@@ -19,6 +19,8 @@ import { EXCHANGE_RATE_READER } from './exchange-rate-reader.js';
 import { GAMING_COMMANDS } from './gaming-commands.js';
 import type { LedgerApiV1 } from './ledger-api.js';
 import { LEDGER_API_V1 } from './ledger-api.js';
+import type { MoneyReportingPort, PlayerRankReader } from './money-reporting.js';
+import { MONEY_REPORTING, PLAYER_RANK_READER } from './money-reporting.js';
 import type { PlayEligibilityProjectionPort } from './play-eligibility.js';
 import { LEDGER_PLAY_ELIGIBILITY, PLAY_ELIGIBILITY_PROJECTION } from './play-eligibility.js';
 import type { RgLimitLedgerPort } from './rg-limits.js';
@@ -109,6 +111,16 @@ export const MONEY_REMOTE_PORTS = {
     rankAllGamesByRounds: READ_1,
     rankGamesPerCurrency: READ_1,
     rankProvidersPerCurrency: READ_1,
+  }),
+  MONEY_REPORTING: port<MoneyReportingPort>(MONEY_REPORTING, {
+    summary: READ_1,
+    ggr: READ_1,
+    products: READ_1,
+    paymentsFlow: READ_1,
+    funnelActivity: READ_1,
+  }),
+  PLAYER_RANK_READER: port<PlayerRankReader>(PLAYER_RANK_READER, {
+    getRankName: READ_1,
   }),
   LEDGER_API_V1: port<Omit<LedgerApiV1, 'sportsbook'>>(LEDGER_API_V1, {
     bet: WRITE_1,

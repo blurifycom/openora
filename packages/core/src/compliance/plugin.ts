@@ -162,8 +162,8 @@ function enhancedKycRefusalCode(err: unknown) {
 
 export default {
   id: 'compliance',
-  dependsOn: ['player-management', 'identity', 'audit', 'exchange-rate'],
-  requiresPorts: [LOGIN_ENFORCEMENT, RG_LIMIT_LEDGER, WALLET_READER],
+  dependsOn: ['player-management', 'identity', 'audit'],
+  requiresPorts: [LOGIN_ENFORCEMENT, RG_LIMIT_LEDGER, WALLET_READER, EXCHANGE_RATE_READER],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
     ctx.provide(GAME_GEO_CHECK, makeComplianceService);

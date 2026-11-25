@@ -46,6 +46,44 @@ async function seedMember(
   return account;
 }
 
+// The funnel query analytics ran on the wallet tables before MONEY_REPORTING, kept as the oracle.
+async function oldFunnelCounts(from: Date, to: Date): Promise<number[]> {
+  const result = await db.drizzle.db.execute<{
+    registered: string;
+    email_verified: string;
+    first_deposit: string;
+    first_bet: string;
+  }>(sql`
+    with deposited as (
+      select distinct ${wallet.userId} as user_id
+      from ${walletTransaction}
+      inner join ${wallet} on ${wallet.id} = ${walletTransaction.walletId}
+      where ${walletTransaction.type} = 'deposit' and ${walletTransaction.status} = 'completed'
+    ),
+    placed_bet as (
+      select distinct ${wallet.userId} as user_id
+      from ${walletTransaction}
+      inner join ${wallet} on ${wallet.id} = ${walletTransaction.walletId}
+      where ${walletTransaction.type} = 'bet' and ${walletTransaction.status} = 'completed'
+    )
+    select
+      count(*) as registered,
+      count(*) filter (where ${user.emailVerified}) as email_verified,
+      count(*) filter (where ${user.emailVerified} and deposited.user_id is not null) as first_deposit,
+      count(*) filter (
+        where ${user.emailVerified}
+          and deposited.user_id is not null
+          and placed_bet.user_id is not null
+      ) as first_bet
+    from ${user}
+    left join deposited on deposited.user_id = ${user.id}
+    left join placed_bet on placed_bet.user_id = ${user.id}
+    where ${user.createdAt} between ${from} and ${to}
+  `);
+  const row = result.rows[0];
+  return [row?.registered, row?.email_verified, row?.first_deposit, row?.first_bet].map(Number);
+}
+
 const service = () =>
   new FunnelAnalyticsService(db.drizzle, makeCache(), new MoneyReportingService(db.drizzle));
 
@@ -68,6 +106,25 @@ describe('FunnelAnalyticsService.conversion (real PG)', () => {
       { stage: 'first_deposit', count: 2, dropOffRate: 0.5 },
       { stage: 'first_bet', count: 1, dropOffRate: 0.5 },
     ]);
+  });
+
+  it('counts what the old wallet-table query counted', async () => {
+    await seedMember([{ type: 'deposit' }, { type: 'bet' }, { type: 'bet' }]);
+    await seedMember([{ type: 'bet' }]);
+    await seedMember([{ type: 'deposit' }, { type: 'bet', status: 'failed' }]);
+    await seedMember([{ type: 'deposit', status: 'pending' }, { type: 'bet' }]);
+    await seedMember([{ type: 'withdrawal' }]);
+    await seedMember([{ type: 'deposit' }, { type: 'bet' }], { emailVerified: false });
+    await seedMember([{ type: 'deposit' }], { createdAt: new Date(Date.now() - 60 * DAY_MS) });
+    const dateFrom = new Date(Date.now() - DAY_MS).toISOString();
+    const dateTo = new Date(Date.now() + DAY_MS).toISOString();
+
+    const result = await service().conversion({ dateFrom, dateTo });
+
+    expect(result.map((stage) => stage.count)).toEqual(
+      await oldFunnelCounts(new Date(dateFrom), new Date(dateTo)),
+    );
+    expect(result.map((stage) => stage.count)).toEqual([6, 5, 2, 1]);
   });
 
   it('never divides by zero when a stage has no members', async () => {

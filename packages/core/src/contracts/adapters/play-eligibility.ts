@@ -96,8 +96,11 @@ export type LedgerPlayEligibilityPort = Required<PlayEligibilityPort> & {
    * rule as `isRestricted`: on a caller's transaction the row is held `FOR SHARE`.
    */
   stateOf(userId: string, tx?: unknown): Promise<PlayEligibilityState | null>;
-  /** {@link stateOf} for many users in one read on a pool connection; a user with no row is absent. */
-  statesOf(userIds: readonly string[]): Promise<Map<string, PlayEligibilityState>>;
+  /**
+   * {@link stateOf} for many users in one read; a user with no row is absent. Same `tx` rule: on
+   * a caller's transaction every row read is held `FOR SHARE`, otherwise it reads on the pool.
+   */
+  statesOf(userIds: readonly string[], tx?: unknown): Promise<Map<string, PlayEligibilityState>>;
 };
 
 export const LEDGER_PLAY_ELIGIBILITY: SealedToken<LedgerPlayEligibilityPort> =

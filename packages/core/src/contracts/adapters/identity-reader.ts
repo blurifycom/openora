@@ -1,6 +1,6 @@
 import { createToken } from './token.js';
 import type { User } from '../schemas/identity.js';
-import type { KycStatus, Player } from '../schemas/player.js';
+import type { KycStatus, Player, PlayerStatus } from '../schemas/player.js';
 
 export type IdentityReader = {
   /** Timestamp of the player's most recent session, or null if they have never logged in. Used for inactive evaluation. */
@@ -67,10 +67,30 @@ export type IdentityReader = {
    * absent. Optional; a caller fails closed through {@link userContactsOf}.
    */
   getUserContacts?(userIds: readonly User['id'][]): Promise<Map<User['id'], UserContact>>;
+  /**
+   * Country, legal name and preferred language of each of `userIds`, for a money-side read that
+   * once joined the player and user tables; an unknown user id is absent, a user without a
+   * player profile has null player fields. Optional; a caller fails closed through
+   * {@link playerFactsOf}.
+   */
+  getPlayerFacts?(userIds: readonly User['id'][]): Promise<Map<User['id'], PlayerFacts>>;
+  /**
+   * The user id of every player whose status is one of `statuses` (eg `closed`,
+   * `self_excluded`), for a sweep that stops paying them. Optional; a caller fails closed
+   * through {@link userIdsWithPlayerStatus}.
+   */
+  getUserIdsByPlayerStatus?(statuses: readonly PlayerStatus[]): Promise<User['id'][]>;
 };
 
 export type LeaderboardName = { username: string; hideUsername: boolean };
 export type UserContact = { name: string | null; email: string };
+export type PlayerFacts = {
+  /** ISO 3166-1 alpha-2 as the player declared it, or null. */
+  country: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  preferredLanguage: string;
+};
 
 export const IDENTITY_READER = createToken<IdentityReader>('IDENTITY_READER');
 
@@ -140,6 +160,26 @@ export function userContactsOf(
   return userIds.length === 0
     ? Promise.resolve(new Map())
     : required(reader, 'getUserContacts')(unique(userIds));
+}
+
+/** `getPlayerFacts` for a caller that cannot work without it; throws like {@link userIdOfPlayer}. */
+export function playerFactsOf(
+  reader: IdentityReader,
+  userIds: readonly User['id'][],
+): Promise<Map<User['id'], PlayerFacts>> {
+  return userIds.length === 0
+    ? Promise.resolve(new Map())
+    : required(reader, 'getPlayerFacts')(unique(userIds));
+}
+
+/** `getUserIdsByPlayerStatus` for a caller that cannot work without it; throws like {@link userIdOfPlayer}. */
+export function userIdsWithPlayerStatus(
+  reader: IdentityReader,
+  statuses: readonly PlayerStatus[],
+): Promise<User['id'][]> {
+  return statuses.length === 0
+    ? Promise.resolve([])
+    : required(reader, 'getUserIdsByPlayerStatus')([...new Set(statuses)]);
 }
 
 /**

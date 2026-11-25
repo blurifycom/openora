@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as z from 'zod';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { MONEY_MODULE_IDS } from '@openora/core/contracts';
 import { loadExtensions } from '@openora/core/server';
 import { setupTestDb, bootTestApp, type TestDb, type TestApp } from '../index.js';
 
@@ -89,5 +90,38 @@ describe('a split service booted from the pnpm create:service example', () => {
     expect(SUGGESTED_MANIFEST.exec(refusal)?.[1]?.split(',')).toEqual(
       expect.arrayContaining(['tag:no-routes', 'compliance:no-routes']),
     );
+  });
+});
+
+describe('the money split, booted from every installed module', () => {
+  const MONEY: ReadonlySet<string> = new Set(MONEY_MODULE_IDS);
+
+  /** Every installed module, the ones `servedHere` rejects loaded only for their ports. */
+  async function manifestServing(servedHere: (id: string) => boolean): Promise<string> {
+    const ids = (await loadExtensions()).map((entry) => entry.id);
+    return ids.map((id) => (servedHere(id) ? id : `${id}:no-routes`)).join(',');
+  }
+
+  async function routesOf(manifest: string) {
+    const booted = await bootSplit(manifest);
+    try {
+      return {
+        health: (await booted.app.request('/health')).status,
+        wallet: (await booted.app.request('/wallet/balances')).status,
+        compliance: (await booted.app.request('/compliance/country-rules')).status,
+      };
+    } finally {
+      await booted.close();
+    }
+  }
+
+  it('boots a platform service that loads the money modules without their routes', async () => {
+    const routes = await routesOf(await manifestServing((id) => !MONEY.has(id)));
+    expect(routes).toEqual({ health: 200, wallet: 404, compliance: 401 });
+  });
+
+  it('boots a money service that loads the platform modules without their routes', async () => {
+    const routes = await routesOf(await manifestServing((id) => MONEY.has(id)));
+    expect(routes).toEqual({ health: 200, wallet: 401, compliance: 404 });
   });
 });

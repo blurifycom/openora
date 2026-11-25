@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ADMIN_GAME_REPORTING,
+  ADMIN_WALLET_REPORTING,
   CHAT_BLOCK_READER,
+  EXCHANGE_RATE_READER,
+  MONEY_REMOTE_PORTS,
+  MONEY_REPORTING,
+  PLAYER_RANK_READER,
+  RG_LIMIT_LEDGER,
   WALLET_COMMANDS,
   WALLET_READER,
   type TokenCatalog,
@@ -30,24 +37,44 @@ const chatGraph = registry({
   wallet: { dependsOn: ['identity'] },
 });
 
-// After A5 a platform module requires money ports instead of depending on a money module.
+// The platform modules as they declare themselves: they require money ports, never depend on a
+// money module, so a platform service keeps them and money-remote binds those ports.
+const PLATFORM_GRAPH: Record<string, Node> = {
+  profile: { dependsOn: ['identity'], requiresPorts: [WALLET_READER, EXCHANGE_RATE_READER] },
+  'player-management': {
+    dependsOn: ['identity'],
+    requiresPorts: [WALLET_READER, CHAT_BLOCK_READER, ADMIN_GAME_REPORTING],
+  },
+  compliance: {
+    dependsOn: ['player-management', 'identity'],
+    requiresPorts: [RG_LIMIT_LEDGER, WALLET_READER, EXCHANGE_RATE_READER],
+  },
+  'admin-console': {
+    dependsOn: ['identity'],
+    requiresPorts: [ADMIN_WALLET_REPORTING, ADMIN_GAME_REPORTING],
+  },
+  analytics: { dependsOn: ['identity', 'profile'], requiresPorts: [MONEY_REPORTING] },
+  'support-chat': {
+    dependsOn: ['identity', 'profile', 'compliance'],
+    requiresPorts: [WALLET_READER, PLAYER_RANK_READER],
+  },
+};
+
 const moneyGraph = registry({
   identity: { dependsOn: [] },
   'exchange-rate': { dependsOn: [] },
   wallet: { dependsOn: ['identity', 'exchange-rate'] },
   gaming: { dependsOn: ['wallet'] },
   bonus: { dependsOn: ['wallet'] },
-  gamification: { dependsOn: ['bonus'] },
+  gamification: { dependsOn: ['bonus', 'exchange-rate'] },
   betting: { dependsOn: ['wallet'] },
   'bf-provider-bridge': { dependsOn: ['gaming'] },
-  profile: { dependsOn: ['identity'], requiresPorts: [WALLET_READER] },
-  'player-management': {
-    dependsOn: ['identity'],
-    requiresPorts: [WALLET_READER, CHAT_BLOCK_READER],
-  },
+  ...PLATFORM_GRAPH,
   'money-remote': { dependsOn: [] },
   chat: { dependsOn: ['identity'] },
 });
+
+const PLATFORM_IDS = Object.keys(PLATFORM_GRAPH);
 
 describe('withoutRemoteModules: chat', () => {
   it('returns the registry whole while CHAT_SERVICE_URL is unset or empty', async () => {
@@ -76,13 +103,7 @@ describe('withoutRemoteModules: money', () => {
     const result = await withoutRemoteModules(entries, readPlugin, {
       MONEY_SERVICE_URL: 'http://money',
     });
-    expect(ids(result.entries)).toEqual([
-      'identity',
-      'profile',
-      'player-management',
-      'money-remote',
-      'chat',
-    ]);
+    expect(ids(result.entries)).toEqual(['identity', ...PLATFORM_IDS, 'money-remote', 'chat']);
     expect(result.dropped).toEqual([
       {
         env: 'MONEY_SERVICE_URL',
@@ -105,16 +126,18 @@ describe('withoutRemoteModules: money', () => {
       CHAT_SERVICE_URL: 'http://chat',
       MONEY_SERVICE_URL: 'http://money',
     });
-    expect(ids(result.entries)).toEqual([
-      'identity',
-      'profile',
-      'player-management',
-      'money-remote',
-    ]);
+    expect(ids(result.entries)).toEqual(['identity', ...PLATFORM_IDS, 'money-remote']);
     expect(result.dropped.map((d) => [d.env, d.modules.length])).toEqual([
       ['CHAT_SERVICE_URL', 1],
       ['MONEY_SERVICE_URL', 7],
     ]);
+  });
+
+  it('serves over the network every money port a kept platform module requires', () => {
+    const remote = new Set(Object.values(MONEY_REMOTE_PORTS).map((port) => port.token));
+    const required = Object.values(PLATFORM_GRAPH).flatMap((node) => node.requiresPorts ?? []);
+    const moneyBound = required.filter((token) => token !== CHAT_BLOCK_READER);
+    expect(moneyBound.filter((token) => !remote.has(token))).toEqual([]);
   });
 
   it('refuses to boot when a kept module requires a port that takes the caller transaction', async () => {

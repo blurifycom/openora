@@ -42,6 +42,23 @@ writeFileSync(
   }),
 );
 
+// The money service and the platform service each take their tables with them (ADR-0063), so
+// neither side reads the other's schema; they meet through ports.
+// Shared modules (audit, mail, fx) and chat (no-chat-schema-outside-chat) sit in neither list.
+const MONEY_MODULES = '^packages/core/src/(?:wallet|promo|casino/gaming|sportsbook)/';
+const MONEY_SCHEMA =
+  '^packages/core/src/(?:wallet|promo/bonus|promo/gamification|casino/gaming|sportsbook/betting)/schema/';
+const PLATFORM_MODULES =
+  '^packages/core/src/(?:pam|compliance|analytics|admin-console|engagement|iam|cms|casino/lobby)/';
+const PLATFORM_SCHEMA =
+  '^packages/core/src/(?:pam/identity|pam/profile|pam/tag|pam/player-note|compliance|engagement/notifications|engagement/support-chat|iam|cms|casino/lobby)/schema/';
+// Platform readers of the casino game catalog, which still lives in the gaming schema. They
+// leave this list when the catalog splits from the round ledger into a platform module.
+const CASINO_CATALOG_READERS = [
+  '^packages/core/src/casino/lobby/service/lobby[.]service[.]ts$',
+  '^packages/core/src/compliance/service/compliance[.]service[.]ts$',
+];
+
 module.exports = {
   forbidden: [
     {
@@ -102,6 +119,22 @@ module.exports = {
       to: { path: '^packages/core/src/engagement/(?:chat|chat-commands|social)/schema/' },
     },
     {
+      name: 'no-platform-schema-in-money',
+      severity: 'error',
+      comment:
+        'A money module (wallet, promo, casino/gaming, sportsbook) moves to the money database, so it reads no platform table, not even through the read-only /schema subpath: it asks a platform port (IDENTITY_READER, PLAYER_TAGS, ...). See ADR-0063.',
+      from: { path: MONEY_MODULES },
+      to: { path: PLATFORM_SCHEMA },
+    },
+    {
+      name: 'no-money-schema-in-platform',
+      severity: 'error',
+      comment:
+        'A platform module reads no money table, not even through the read-only /schema subpath: it asks a money port (WALLET_READER, MONEY_REPORTING, PLAYER_RANK_READER, ...), which money-remote binds over the network when MONEY_SERVICE_URL is set. See ADR-0063.',
+      from: { path: PLATFORM_MODULES, pathNot: CASINO_CATALOG_READERS },
+      to: { path: MONEY_SCHEMA },
+    },
+    {
       name: 'no-deep-package-import',
       severity: 'error',
       comment:
@@ -115,10 +148,10 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    // Scan first-party source only; skip compiled output and (test|spec) files -
-    // tests legitimately wire several domains together (the oxlint twin disables
-    // the cross-domain rule for *.test.ts / *.spec.ts for the same reason).
-    exclude: { path: '(/dist/|/node_modules/|[.](test|spec)[.]ts$)' },
+    // Scan first-party source only; skip compiled output, (test|spec) files and test
+    // support under __tests__/ - tests legitimately wire several domains together (the
+    // oxlint twin disables the cross-domain rule for *.test.ts / *.spec.ts for the same reason).
+    exclude: { path: '(/dist/|/node_modules/|/__tests__/|[.](test|spec)[.]ts$)' },
     includeOnly: '^(apps|packages)/',
     tsPreCompilationDeps: true,
     tsConfig: { fileName: generatedTsConfig },

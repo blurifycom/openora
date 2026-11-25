@@ -4,6 +4,8 @@ import type {
   KycStatus,
   LeaderboardName,
   Player,
+  PlayerFacts,
+  PlayerStatus,
   User,
   UserContact,
 } from '@openora/core/contracts';
@@ -140,6 +142,35 @@ export class IdentityReaderService implements IdentityReader {
       .from(user)
       .where(sql`${user.id} = ANY(${sql.param([...userIds])}::uuid[])`);
     return new Map(rows.map(({ userId, ...contact }) => [userId, contact]));
+  }
+
+  async getPlayerFacts(userIds: readonly User['id'][]): Promise<Map<User['id'], PlayerFacts>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.drizzle.db
+      .select({
+        userId: user.id,
+        country: player.country,
+        firstName: player.firstName,
+        lastName: player.lastName,
+        preferredLanguage: user.language,
+      })
+      .from(user)
+      .leftJoin(player, eq(player.userId, user.id))
+      .where(sql`${user.id} = ANY(${sql.param([...userIds])}::uuid[])`);
+    return new Map(rows.map(({ userId, ...facts }) => [userId, facts]));
+  }
+
+  async getUserIdsByPlayerStatus(statuses: readonly PlayerStatus[]): Promise<User['id'][]> {
+    if (statuses.length === 0) {
+      return [];
+    }
+    const rows = await this.drizzle.db
+      .select({ userId: player.userId })
+      .from(player)
+      .where(inArray(player.status, [...statuses]));
+    return rows.map((row) => row.userId);
   }
 
   async getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null> {

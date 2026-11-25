@@ -118,16 +118,20 @@ export class LedgerPlayEligibilityService
     return row ? stateOf(row) : null;
   }
 
-  async statesOf(userIds: readonly User['id'][]): Promise<Map<User['id'], PlayEligibilityState>> {
+  async statesOf(
+    userIds: readonly User['id'][],
+    tx?: unknown,
+  ): Promise<Map<User['id'], PlayEligibilityState>> {
     if (userIds.length === 0) {
       return new Map();
     }
-    const rows = await this.drizzle.db
+    const query = ((tx as DrizzleTx | undefined) ?? this.drizzle.db)
       .select()
       .from(ledgerPlayEligibility)
       .where(
         sql`${ledgerPlayEligibility.userId} = ANY(${sql.param([...new Set(userIds)])}::uuid[])`,
       );
+    const rows = tx ? await query.for('share') : await query;
     return new Map(rows.map((row) => [row.userId, stateOf(row)]));
   }
 
@@ -231,9 +235,9 @@ export class LedgerPlayEligibilityService
   }
 }
 
-/** The projection over a bare database handle, for a seed script that boots no container. */
+/** The projection over a bare database handle, for a seed script or test that boots no container. */
 export function ledgerPlayEligibilityProjection(
   db: DrizzleService['db'],
-): PlayEligibilityProjectionPort {
+): PlayEligibilityProjectionPort & LedgerPlayEligibilityPort {
   return new LedgerPlayEligibilityService({ db });
 }

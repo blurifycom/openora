@@ -5,6 +5,8 @@ import { ORPCError } from '@orpc/server';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import {
   MONEY_PORTS_ROUTE,
+  MONEY_REPORTING,
+  PLAYER_RANK_READER,
   PLAY_ELIGIBILITY_PROJECTION,
   WALLET_COMMANDS,
   WALLET_READER,
@@ -114,6 +116,23 @@ describe('a platform service with money-remote', () => {
     });
     expect(moneyCalls).toEqual([
       expect.objectContaining({ path: `/internal/v1${MONEY_PORTS_ROUTE}`, caller: 'platform' }),
+    ]);
+  });
+
+  it('keeps the platform modules that require money ports, served by the money service', async () => {
+    // Required ports are checked at boot, so these resolving at all means money-remote binds them.
+    expect((await platform.app.request('/compliance/country-rules')).status).not.toBe(404);
+    const player = await newPlayer(money, 'money-remote-reporting');
+    moneyCalls.length = 0;
+
+    const activity = await platform.container.get(MONEY_REPORTING).funnelActivity([player.userId]);
+    const rank = await platform.container.get(PLAYER_RANK_READER).getRankName(player.userId);
+
+    expect(activity).toEqual({ deposited: [], placedBet: [] });
+    expect(rank).toBe(await money.container.get(PLAYER_RANK_READER).getRankName(player.userId));
+    expect(moneyCalls.map((call) => JSON.parse(call.body).port)).toEqual([
+      'MONEY_REPORTING',
+      'PLAYER_RANK_READER',
     ]);
   });
 
