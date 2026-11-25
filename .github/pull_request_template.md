@@ -1,7 +1,7 @@
 <!--
 A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. Plain words and diagrams, no code, paths or symbol names; generated from the diff, the schema diff and real spans, never invented. This repo is public: bare ticket keys only, no internal URLs, hosts, operator names or personal data.
-Keep a section only when its trigger fires; delete the rest. "How it was checked" and the three artifacts a reviewer looks at instead of the code ("Request path", "Data model", "Trace") stay open as headings, in that order; every other section stays collapsed, its summary line carrying the gist. Budget: the words that show before anything is expanded fit one screen (about 1500 characters, the open diagrams aside), and each collapsed section fits one screen (about 1500 characters plus its diagram); the detail lives in the diagram or table, not in paragraphs. Mermaid: horizontal, no theme or `style` lines; what the change adds, changes or removes is filled: `classDef added fill:#3fb95033,stroke:#3fb950,stroke-width:2px`, `classDef changed fill:#d2992233,stroke:#d29922,stroke-width:2px`, `classDef removed fill:#f8514933,stroke:#f85149,stroke-width:2px,stroke-dasharray:4`.
-First line: the bare ticket key, or `Closes #<issue>`. Sections 7 (e2e steps) and 11 (video) are left out: this repo is headless, so the trace is its walkthrough.
+Keep a section only when its trigger fires; delete the rest. "How it was checked" and the three artifacts a reviewer looks at instead of the code ("Request path", "Data model", "Trace") stay open as headings, in that order; every other section stays collapsed, its summary line carrying the gist. Budget: the words that show before anything is expanded fit one screen (about 1500 characters, the open diagrams aside), and each collapsed section fits one screen (about 1500 characters plus its diagram); the detail lives in the diagram or table, not in paragraphs. Mermaid: always horizontal (`flowchart LR`, an erDiagram with `direction LR`; a row too wide to read is split in two diagrams, never turned vertical), no theme or `style` lines; what the change adds, changes or removes is filled: `classDef added fill:#3fb95033,stroke:#3fb950,stroke-width:2px`, `classDef changed fill:#d2992233,stroke:#d29922,stroke-width:2px`, `classDef removed fill:#f8514933,stroke:#f85149,stroke-width:2px,stroke-dasharray:4`.
+First line: the bare ticket key, or `Closes #<issue>`. The collapsed sections keep their numbers: 2 and 6 are the open "Request path" and "Data model", 7 (e2e steps) and 11 (video) are left out because this repo is headless, so the trace is its walkthrough.
 -->
 
 ## How it was checked
@@ -10,11 +10,11 @@ First line: the bare ticket key, or `Closes #<issue>`. Sections 7 (e2e steps) an
 
 ## Request path
 
-<!-- Trigger: a route, procedure, middleware, service or query on a request path changes. A flowchart LR of the whole path of the main changed request, nothing cut: the caller, every middleware and gate in the order it runs, the handler, each service and port it calls, then the database, cache, queue and adapters it reaches. Take the hops from the procedure's real middleware chain and the spans of its trace, not from memory. Numbered edges say what each hop carries. Every hop the change adds, changes or removes carries the added / changed / removed class. One diagram per changed entry point, at most three, the rest named in a list. -->
+<!-- Trigger: a route, procedure, middleware, service or query on a request path changes. A flowchart LR of the whole path of the main changed request, nothing cut, each hop named by its role (no hosts or URLs): the caller, every middleware and gate in the order it runs, the handler, each service and port it calls, then the database, cache, queue and adapters it reaches. Take the hops from the procedure's real middleware chain and the spans of its trace, not from memory. Numbered edges say what each hop carries. Every hop the change adds, changes or removes carries the added / changed / removed class. One diagram per changed entry point, at most three, the rest named in a list. -->
 
 ## Data model
 
-<!-- Trigger: a route, procedure, service or query on a request path changes, or a migration or schema change. An erDiagram of the tables the changed flow reads and writes plus every table one foreign key away, with their relations, keys and the columns the flow touches. A new, changed or removed table carries the added / changed / removed class (`ledger_entries:::added`), a new or changed column says "new" or "changed" in its comment. No schema change: one line under the diagram saying so. With a migration: locks, backfill, safety under traffic, config fields added or removed, as a list. -->
+<!-- Trigger: a route, procedure, service or query on a request path changes, or a migration or schema change. An erDiagram, `direction LR` on its first line, of the tables the changed flow reads and writes plus every table one foreign key away, with their relations, keys and the columns the flow touches. A new, changed or removed table carries the added / changed / removed class (`ledger_entries:::added`), a new or changed column says "new" or "changed" in its comment. No schema change: one line under the diagram saying so. With a migration: locks, backfill, safety under traffic, config fields added or removed, as a list. -->
 
 ## Trace
 
@@ -28,7 +28,7 @@ First line: the bare ticket key, or `Closes #<issue>`. Sections 7 (e2e steps) an
 
 <details><summary><b>3. Business logic</b>: </summary>
 
-<!-- Trigger: 3+ new branches or a changed error outcome. Decision flowchart, exact status and reason per caller. -->
+<!-- Trigger: 3+ new branches or a changed error outcome. Decision flowchart LR, exact status and reason per caller. -->
 
 </details>
 
