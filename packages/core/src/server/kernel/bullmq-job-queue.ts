@@ -38,9 +38,6 @@ const RETENTION = { removeOnComplete: RETAIN_COMPLETED, removeOnFail: RETAIN_FAI
 // every 100ms retry of its worker loop - millions of lines while Redis is down or OOM.
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
-// How long close() waits for worker connections still being set up and queue writes still in
-// flight. A worker or queue closed under either rejects BullMQ's own setup unhandled; on a dead
-// Redis neither ever answers, so the wait is bounded instead of hanging shutdown.
 const CLOSE_SETTLE_MS = 2_000;
 
 // The wire shape stored on every BullMQ job: the caller payload plus carried meta.
@@ -169,7 +166,6 @@ export class BullMqJobQueue implements JobQueueAdapter {
         .upsertJobScheduler(
           scheduleId,
           { pattern: repeat.cron, every: repeat.everyMs, tz: repeat.timezone },
-          // Without opts every cron run stays in Redis forever (~1 KB per run).
           { name: queue, data: envelope, opts: RETENTION },
         )
         .then(() => undefined),

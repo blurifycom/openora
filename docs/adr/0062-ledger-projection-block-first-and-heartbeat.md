@@ -31,7 +31,26 @@ a stake (eligibility) and a deposit or wager (limits) refuse with `LedgerProject
 (`ledger_projection_stale`: 503 on the deposit and casino start-round routes, a `player_blocked`
 refusal on the Ledger API and the sportsbook ledger) once the last beat is older than
 `LEDGER_PROJECTION_STALE_MS` (default 60000), or missing. Without `MONEY_PORTS_CALLERS` nothing is checked;
-with it set the check runs even for a writer in the same process.
+with it set the check runs even for a writer in the same process. The age is read at the database
+clock, and so are a cooling-off end and a limit window, so a replica clock that drifts never moves a
+refusal. Once the beat is older than `LEDGER_PROJECTION_ALERT_MS` (default 30000) a check logs an
+error the error tracker receives, at most once per that interval per projection, so a stalled owner
+is seen before stakes refuse.
+
+**Rollout order.** A missing beat refuses, so the owners beat before the money service names a
+caller: deploy identity and compliance with their heartbeat jobs, confirm a row per projection in
+`ledger_projection_heartbeat` younger than `LEDGER_PROJECTION_STALE_MS`, and only then set
+`MONEY_PORTS_CALLERS` on the money service. Set in the other order, every stake, deposit and wager
+refuses until the first beat lands. A missing row never passes: it is indistinguishable from an
+owner that never started.
+
+**Limit writes.** Every write of the limits projection that does not run inside compliance's own
+transaction (`writeFromRemote`, `reconcile`) takes the slot locks of the limits it writes before
+the version row, the same locks a deposit or wager check takes, so a lowered limit waits for an
+in-flight check and the next check reads it.
+
+**Deposits.** The eligibility gate of a player deposit runs inside the transaction that reserves it,
+reading the projection `FOR SHARE` like a stake, so a block that commits meanwhile is seen or waits.
 
 **Drift.** The wallet reconciliation cycle (hourly by default) already compares each projection with
 its owner, repairs through `reconcile` or the owner's `repair`, and files `play_eligibility_drift` /
@@ -42,3 +61,6 @@ its owner, repairs through `reconcile` or the owner's `repair`, and files `play_
 - A restriction rolled back after a remote write leaves the ledger stricter until the drift repair.
 - A lift on a remote projection is visible to stakes only after its event is delivered.
 - Thresholds need compliance sign-off before production.
+- A late loosening event surfaces through the reconciliation cycle's existing `outbox_relay_lag`,
+  `event_dead_letters` and drift `behind` findings; no separate lag check is added, as a late
+  loosening only keeps the ledger stricter.

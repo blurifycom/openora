@@ -93,7 +93,6 @@ export class RankPayoutService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly grants: BonusGrantCommands | undefined,
-    /** LEDGER_PLAY_ELIGIBILITY: the ledger's projection, never the identity tables. */
     private readonly eligibility: LedgerPlayEligibilityPort | undefined,
     private readonly rates: ExchangeRateReader,
     private readonly wallet: WalletReader,

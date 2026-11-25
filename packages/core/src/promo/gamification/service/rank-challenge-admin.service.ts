@@ -136,7 +136,6 @@ export class RankChallengeAdminService {
     );
   }
 
-  /** Winner names from identity, read once the ladder's transaction is over. */
   private async named(ladder: UnnamedLadder): Promise<RankChallengeAdminLadder> {
     return { ...ladder, tiers: await nameWinners(this.identity, ladder.tiers) };
   }

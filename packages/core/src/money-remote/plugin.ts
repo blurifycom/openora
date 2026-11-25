@@ -20,13 +20,8 @@ import {
 } from '@openora/core/contracts';
 import { remoteMoneyPort } from './service/remote-money-port.service.js';
 
-// A money call slower than this fails closed.
 const MONEY_CALL_TIMEOUT_MS = 2_000;
 
-/**
- * A platform service that does not load the money modules reaches them through the money
- * service: set `MONEY_SERVICE_URL`. Unset, nothing is bound.
- */
 function moneyClient(): InternalClient | null {
   const url = process.env['MONEY_SERVICE_URL'];
   if (!url) {
@@ -61,12 +56,6 @@ function moneyClient(): InternalClient | null {
   });
 }
 
-/**
- * Binds the money ports platform modules read to the money service's internal API (ADR-0063),
- * for a process that drops the money modules because `MONEY_SERVICE_URL` is set. The two
- * projection writers carry `remote: true`, so ADR-0062's rules apply: a lift or loosening
- * reaches the ledger by its event, and the ledger refuses on a stale heartbeat.
- */
 export default {
   id: 'money-remote',
   register(ctx) {

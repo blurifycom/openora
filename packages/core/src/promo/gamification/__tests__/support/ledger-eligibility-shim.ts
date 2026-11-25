@@ -10,9 +10,6 @@ import type { DrizzleService, DrizzleTx } from '@openora/core/server';
 // oxlint-disable-next-line oss-boundaries/no-cross-core-domain -- test-only helper, wires the real reader like the suites do
 import { IdentityReaderService } from '@openora/core/pam/server';
 
-// The gamification suites seed the profile and identity tables and stub the RG answer; this
-// LEDGER_PLAY_ELIGIBILITY reads those, so the suites keep their fixtures. The real projection is
-// held to the same answers by `ledger-play-eligibility-parity.int.test.ts`.
 export function ledgerEligibilityOver(
   drizzle: DrizzleService,
   isRestricted: PlayEligibilityPort['isRestricted'],

@@ -12,11 +12,6 @@ const CLAIM_BLOCKED_STATUSES = ['suspended', 'closed'] as const;
 export type CashClaimBlocker = RankRewardClaimBlocker;
 
 /**
- * Why the player may not claim real cash right now, or null, from the ledger's play eligibility
- * projection (ADR-0056), never the identity or profile tables. Inside a claim, pass the claim's
- * transaction: the projection row is then share-locked so a restriction waits for the claim.
- * Only that row is locked: identity writes its user row before the projection, so taking the user
- * row here as well would deadlock against it.
  */
 export async function cashClaimBlocker(
   db: DrizzleDb | DrizzleTx,
@@ -30,7 +25,6 @@ export async function cashClaimBlocker(
   return claimBlockerOf(await ledger.stateOf(userId, lock ? db : undefined));
 }
 
-/** The decision of {@link cashClaimBlocker} on a projected state; null state is no player. */
 export function claimBlockerOf(
   state: PlayEligibilityState | null,
   now = new Date(),
@@ -46,10 +40,6 @@ export function claimBlockerOf(
   return null;
 }
 
-/**
- * The prefilter of an auto-payout sweep: the users among `userIds` whose account is closed or
- * self-excluded, or who carry an RG block, each then confirmed by {@link isDueForAutoPayout}.
- */
 export async function autoPayoutCandidates(
   ledger: LedgerPlayEligibilityPort | undefined,
   userIds: readonly Uuid[],
@@ -82,11 +72,6 @@ export async function isDueForAutoPayout(
   return state?.isSelfExcluded === true;
 }
 
-/**
- * `isDueForAutoPayout` with the exclusion rows and the projection row share-locked for the
- * payout's transaction, in that order: a lift updates its exclusion row and then writes the
- * projection, so taking the projection first deadlocks against it.
- */
 export async function isDueForAutoPayoutLocked(
   tx: DrizzleTx,
   ledger: LedgerPlayEligibilityPort | undefined,

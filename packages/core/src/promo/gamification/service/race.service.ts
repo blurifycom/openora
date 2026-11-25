@@ -318,8 +318,6 @@ export class RaceService implements WagerTrackingCommands {
         .where(eq(promoRaceWager.raceId, raceId)),
     ]);
 
-    // Names through IDENTITY_READER; a standing identity no longer knows drops out, as the inner
-    // join on the user table once dropped it.
     const names = await leaderboardNamesOf(
       this.identity,
       ranked.map((row) => row.userId),

@@ -492,7 +492,6 @@ describe('the rakeback summary a player reads', () => {
 describe('rakeback auto-payout', () => {
   it('pays a self-excluded player below the minimum, once', async () => {
     const userId = await newPlayer('self_excluded');
-    // The RG block that refuses a claim never holds back an auto-payout.
     isRestricted.mockResolvedValue(true);
     await accrue(userId, '0.2');
 

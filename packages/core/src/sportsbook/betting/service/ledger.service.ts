@@ -822,7 +822,6 @@ export class SportsbookLedgerService {
       });
     } catch (err) {
       if (err instanceof LedgerProjectionStaleError) {
-        // Fail closed and unstored: a stale copy may be missing a restriction; a retry re-checks.
         return { status: 'refused', reason: 'player_blocked' };
       }
       if (!(err instanceof LedgerRefusal)) {

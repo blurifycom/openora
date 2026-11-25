@@ -766,7 +766,6 @@ describe('GamingService admin list filters (real PG)', () => {
     expect(ids(result)).toEqual([original.id, casino.id].sort());
   });
 
-  /** The rule pairs compliance answers `listGeoRulePairs` with, read from the seeded tables. */
   async function geoRulePairs(filter?: { countries?: readonly string[] }): Promise<GameGeoRules> {
     const countries = filter?.countries;
     const [games, providers] = await Promise.all([

@@ -20,7 +20,6 @@ type Sent = {
   body: { method: string; args: string };
 };
 
-/** A client that records each request and answers it from `replies` in order. */
 function scripted(replies: (() => unknown)[]) {
   const sent: Sent[] = [];
   const client: InternalClient = {

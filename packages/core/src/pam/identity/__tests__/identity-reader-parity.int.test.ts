@@ -8,9 +8,6 @@ import { migrate } from '../migrate.js';
 import { user } from '../schema/index.js';
 import { IdentityReaderService } from '../adapters/identity-reader.service.js';
 
-// The joins money modules ran on the identity and profile tables before they moved behind
-// IDENTITY_READER, kept as oracles: each reader method must answer what its old query did.
-
 let db: TestDb;
 let reader: IdentityReaderService;
 let userIds: string[];

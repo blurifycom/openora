@@ -66,7 +66,6 @@ const SYNC_TOPICS = [
 export default {
   id: 'support-chat',
   dependsOn: ['identity', 'profile', 'compliance', 'audit'],
-  // The money side through its ports only, so a platform process can load it.
   requiresPorts: [WALLET_READER, PLAYER_RANK_READER],
   register(ctx) {
     // Set by the router factory, which runs after subscriptions are wired but before any

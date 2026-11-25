@@ -43,9 +43,6 @@ import { wallet, walletBalance } from '../schema/index.js';
 import walletPlugin from '../plugin.js';
 import { ledgerPlayEligibilityProjection } from '../service/ledger-play-eligibility.service.js';
 
-// A4: a money module's balance event travels through the outbox in the money transaction, so it
-// exists if and only if the money moved, and the relay delivers it once to a deduped consumer.
-
 const SERVICE = `money-${randomUUID()}`;
 const TOPIC = 'wallet.balance.changed';
 const DELIVERY = { timeout: 5000, interval: 20 };
@@ -69,7 +66,6 @@ beforeAll(async () => {
     outbox: new DrizzleOutboxWriter(),
     processedEvents: new DrizzleProcessedEventLog(db.drizzle.db),
   });
-  // Runs inside the money transaction after the outbox write; throwing rolls the whole move back.
   bus.tapTransactional(async () => {
     if (failNextCommit) {
       failNextCommit = false;
@@ -187,7 +183,6 @@ describe('money events on the outbox (real PG + Redis)', () => {
     const [event] = await balanceEvents();
     expect(event).toBeDefined();
     await relay.drainOnce();
-    // A second relay pass, and a redelivery of the same entry, apply nothing again.
     await relay.drainOnce();
     await broker.publish({
       eventId: event!.eventId,

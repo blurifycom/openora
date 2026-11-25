@@ -43,9 +43,6 @@ export class FunnelAnalyticsService {
   private async computeConversion({ dateFrom, dateTo }: FunnelQuery): Promise<ConversionFunnel> {
     const range = resolveFunnelRange(dateFrom, dateTo);
 
-    // Who registered is identity's; who deposited and bet is the money side's.
-    // ponytail: every verified id of the range travels to MONEY_REPORTING; a money-side
-    // projection of first deposit and first bet if a range ever holds hundreds of thousands.
     const registered = await this.drizzle.db
       .select({ id: user.id, emailVerified: user.emailVerified })
       .from(user)

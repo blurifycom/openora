@@ -9,7 +9,6 @@ import { createAnalyticsRouter } from './router/index.js';
 export default {
   id: 'analytics',
   dependsOn: ['identity', 'profile'],
-  // The money tables are read by the wallet, through its reporting port.
   requiresPorts: [MONEY_REPORTING],
   register(ctx) {
     let financialRef: FinancialAnalyticsService | null = null;

@@ -8,7 +8,7 @@ New `money-remote` plugin (`@openora/core/money-remote/plugin`). With `MONEY_SER
 
 Platform modules (analytics, compliance, player-management, support-chat, admin-console, tag, profile) now declare `requiresPorts` (`WALLET_READER`, `MONEY_REPORTING`, `PLAYER_RANK_READER`, `ADMIN_WALLET_REPORTING`, `ADMIN_GAME_REPORTING`, `EXCHANGE_RATE_READER`) in place of `dependsOn` the money modules. The money modules read player names, ids and claim eligibility through `IDENTITY_READER` in place of the identity tables.
 
-The ledger projections write block-first and carry a freshness heartbeat. The owner schedules one recurring job every `LEDGER_PROJECTION_HEARTBEAT_MS` (default 10000), and once `MONEY_PORTS_CALLERS` names a caller the ledger refuses a stake, deposit or wager when its last heartbeat is older than `LEDGER_PROJECTION_STALE_MS` (default 60000). A value that is not a positive whole number of milliseconds fails the boot.
+The ledger projections write block-first and carry a freshness heartbeat. The owner schedules one recurring job every `LEDGER_PROJECTION_HEARTBEAT_MS` (default 10000), and once `MONEY_PORTS_CALLERS` names a caller the ledger refuses a stake, deposit or wager when its last heartbeat is older than `LEDGER_PROJECTION_STALE_MS` (default 60000). A check logs an error once the last heartbeat is older than `LEDGER_PROJECTION_ALERT_MS` (default 30000). Set `MONEY_PORTS_CALLERS` only after the owners have beaten once (ADR-0062 rollout order). A value that is not a positive whole number of milliseconds fails the boot.
 
 New bin `openora-outbox-replay --since <ISO time> [--topic <topic>] [--dry-run]` republishes the outbox events written since a time, for a consumer that missed them. A time older than the outbox retention is refused.
 

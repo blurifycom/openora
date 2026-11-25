@@ -556,7 +556,6 @@ export default {
         void jobQueueRef
           .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000 })
           .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
-        // One recurring job, not a timer per replica (ADR-0062).
         void jobQueueRef
           .schedule(
             RG_LIMITS_HEARTBEAT_QUEUE,

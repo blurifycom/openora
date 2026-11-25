@@ -37,14 +37,6 @@ export type GameGeoCheckPort = {
   checkGame(input: GameGeoCheckInput): Promise<GameGeoDecision>;
   /** Sorted, deduped country codes blocked platform-wide (config + a global block rule). */
   listGloballyBlockedCountries(): Promise<string[]>;
-  /**
-   * Every game and provider geo rule, each `(id, country)` pair once, narrowed by `filter`: only
-   * those of `countries`, of `gameIds` and written by `source` when given. A provider rule has no
-   * game and no source, so `gameIds` and `source` narrow `games` only and `providers` is narrowed
-   * by `countries` alone; a caller that needs one game's provider rules filters them by its
-   * provider. The admin catalog filters read these instead of compliance's tables. Optional so an
-   * operator's own implementation keeps compiling; without it those filters are refused.
-   */
   listGeoRulePairs?(filter?: {
     countries?: readonly string[];
     gameIds?: readonly string[];

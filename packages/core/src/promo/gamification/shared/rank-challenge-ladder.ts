@@ -16,10 +16,6 @@ export const TIER_COLUMNS = {
   physicalItem: promoRankChallengeTier.physicalItem,
 };
 
-/**
- * Each tier with who has won it so far, or nulls while it is still open. No names: those come
- * from identity through {@link nameWinners}, after any transaction this ran in.
- */
 export async function withWinners<T extends Pick<PromoRankChallengeTier, 'id'>>(
   db: DrizzleDb | DrizzleTx,
   tiers: readonly T[],
@@ -42,10 +38,6 @@ export async function withWinners<T extends Pick<PromoRankChallengeTier, 'id'>>(
   });
 }
 
-/**
- * Adds each winner's username through IDENTITY_READER. A winner identity no longer knows reads
- * as an open tier, as the inner join on the user table once made it.
- */
 export async function nameWinners<
   T extends { winnerUserId: Uuid | null; claimedAt: string | null },
 >(
@@ -64,7 +56,6 @@ export async function nameWinners<
   });
 }
 
-/** Rows whose user identity knows, each with its username: the old inner join on `user`. */
 export async function withUsernames<T extends { userId: Uuid }>(
   identity: IdentityReader,
   rows: readonly T[],

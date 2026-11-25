@@ -519,9 +519,7 @@ function reportServerFault(error: unknown) {
 
 /**
  * The single composition root: wires the DI container, boots the plugins in
- * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset; with
- * `CHAT_SERVICE_URL` or `MONEY_SERVICE_URL` set, minus chat or the money modules and the
- * plugins that depend on them), and
+ * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
  * mounts the resulting oRPC router on a Hono app. A manifest that leaves out a module its
  * modules depend on, the module that binds a port they require, or the module behind a
  * control - a selected module's `controlPorts`, or AdminGuard's - that the plugin list has,

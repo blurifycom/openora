@@ -19,21 +19,10 @@ class ReplayError extends Error {}
 
 type ReplayOptions = { since: Date; topic?: string; dryRun?: boolean; now?: Date };
 
-/** Events republished (or, on a dry run, that would be), per topic. */
 type ReplayReport = Map<string, number>;
 
-// The cursor carries occurred_at as Postgres text, so a row stamped with microseconds compares
-// exactly and is never read twice.
 type Cursor = { occurredAt: string; seq: number; eventId: string };
 
-/**
- * Republishes the `event_outbox` rows published at or after `since` to the broker, oldest first
- * in the relay's order. A named plugin consumer drops what it already applied through
- * `processed_events`, which outlives every row this can read, so it never applies an event twice;
- * a bare `bus.on` handler without a consumer name has no such record and runs it again. A `since`
- * older than `EVENT_RETENTION_MS` is refused: the relay has pruned part of that range, and a
- * replay that silently skipped it would look complete. Unpublished rows are left to the relay.
- */
 async function replayOutbox(
   db: DrizzleDb,
   broker: MessageBrokerAdapter | undefined,
@@ -75,8 +64,6 @@ async function replayOutbox(
     const after: SQL | undefined = cursor
       ? sql`(${eventOutbox.occurredAt}, ${seqKey}, ${eventOutbox.eventId}) > (${cursor.occurredAt}::timestamptz, ${cursor.seq}, ${cursor.eventId})`
       : undefined;
-    // ponytail: the keyset filters on the published index, then sorts the range per batch; add
-    // an (occurred_at, seq, event_id) index if replays over a busy week get slow.
     const rows = await db
       .select({
         ...getTableColumns(eventOutbox),
@@ -137,7 +124,6 @@ function required(env: Record<string, string | undefined>, name: string): string
 
 const say = (line: string) => process.stdout.write(`${line}\n`);
 
-/** Entry point of `openora-outbox-replay`; returns the exit code. */
 export async function main(
   argv: readonly string[],
   env: Record<string, string | undefined>,

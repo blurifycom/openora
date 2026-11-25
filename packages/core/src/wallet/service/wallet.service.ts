@@ -1802,7 +1802,6 @@ export class WalletService {
     idempotencyKey?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
-    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
@@ -1827,6 +1826,7 @@ export class WalletService {
     // consumes it commit together under the player's deposit lock, so a second concurrent
     // deposit reads the first one's reservation instead of spending the same headroom.
     const reservation = await this.drizzle.db.transaction(async (txn) => {
+      await this.assertDepositAdmitted(userId, txn);
       let walletRecord = preResolvedWallet;
       if (!walletRecord) {
         [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
@@ -4258,8 +4258,8 @@ export class WalletService {
     }));
   }
 
-  async assertDepositAdmitted(userId: User['id']): Promise<void> {
-    const refusal = await this.playRefusal(userId);
+  async assertDepositAdmitted(userId: User['id'], txn?: DrizzleTx): Promise<void> {
+    const refusal = await this.playRefusal(userId, txn);
     if (refusal) {
       throw new DepositRefusedError(refusal);
     }
@@ -4269,14 +4269,14 @@ export class WalletService {
     }
   }
 
-  private async playRefusal(userId: User['id']): Promise<string | null> {
+  private async playRefusal(userId: User['id'], txn?: DrizzleTx): Promise<string | null> {
     if (!this.playEligibility) {
       return null;
     }
     if (this.playEligibility.checkPlay) {
-      return this.playEligibility.checkPlay(userId);
+      return this.playEligibility.checkPlay(userId, txn);
     }
-    return (await this.playEligibility.isRestricted(userId)) ? 'restricted' : null;
+    return (await this.playEligibility.isRestricted(userId, txn)) ? 'restricted' : null;
   }
 
   async getOrCreateDepositAddress(

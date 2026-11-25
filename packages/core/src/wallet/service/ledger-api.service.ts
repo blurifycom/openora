@@ -113,7 +113,6 @@ const REFUSAL_BY_ERROR: ReadonlyArray<
 > = [
   [WalletReplayMismatchError, 'fingerprint_mismatch'],
   [WalletRgRestrictedError, 'player_blocked'],
-  // Fail closed: a stale copy may be missing the restriction that would refuse this stake.
   [LedgerProjectionStaleError, 'player_blocked'],
   [RgLimitExceededError, 'limit'],
   [MaxBetExceededError, 'max_bet_exceeded'],

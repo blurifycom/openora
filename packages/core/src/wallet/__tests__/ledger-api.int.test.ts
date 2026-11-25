@@ -335,7 +335,6 @@ describe('Ledger API v1 bet (real PG)', () => {
       ));
 
     it('a stake while the remote writer stopped beating as player_blocked, taken once it beats', async () => {
-      // Another service may write the projections once MONEY_PORTS_CALLERS names one.
       vi.stubEnv('MONEY_PORTS_CALLERS', 'platform');
       const guarded = boot();
       vi.unstubAllEnvs();

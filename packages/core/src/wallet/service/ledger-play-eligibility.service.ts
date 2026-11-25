@@ -94,32 +94,36 @@ export class LedgerPlayEligibilityService
 
   private async read(userId: User['id'], tx?: unknown) {
     const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
-    // A remote writer that stopped beating may hold back a restriction: refuse the stake.
     await assertFresh(db, 'play_eligibility', this.freshness);
     const query = db
-      .select()
+      .select({
+        row: ledgerPlayEligibility,
+        now: sql`now()`.mapWith(ledgerPlayEligibility.updatedAt),
+      })
       .from(ledgerPlayEligibility)
       .where(eq(ledgerPlayEligibility.userId, userId))
       .limit(1);
-    const [row] = tx ? await query.for('share') : await query;
-    return row;
+    const [read] = tx ? await query.for('share') : await query;
+    return read;
   }
 
   async isRestricted(userId: User['id'], tx?: unknown): Promise<boolean> {
-    const row = await this.read(userId, tx);
-    return (
-      !row || (row.rgBlocked && (row.rgBlockedUntil === null || row.rgBlockedUntil > new Date()))
-    );
+    const read = await this.read(userId, tx);
+    if (!read) {
+      return true;
+    }
+    const { row, now } = read;
+    return row.rgBlocked && (row.rgBlockedUntil === null || row.rgBlockedUntil > now);
   }
 
   async checkPlay(userId: User['id'], tx?: unknown): Promise<PlayRefusal | null> {
-    const row = await this.read(userId, tx);
-    return row ? playRefusalOf(row) : 'account_inactive';
+    const read = await this.read(userId, tx);
+    return read ? playRefusalOf(read.row, read.now) : 'account_inactive';
   }
 
   async stateOf(userId: User['id'], tx?: unknown): Promise<PlayEligibilityState | null> {
-    const row = await this.read(userId, tx);
-    return row ? stateOf(row) : null;
+    const read = await this.read(userId, tx);
+    return read ? stateOf(read.row) : null;
   }
 
   async statesOf(
@@ -163,10 +167,6 @@ export class LedgerPlayEligibilityService
       .onConflictDoUpdate({ target: ledgerPlayEligibility.userId, set: fromExcluded });
   }
 
-  /**
-   * `write` for a call over the internal API (ADR-0063). It runs in a transaction of its own and
-   * may arrive late or twice, so a held newer version is kept; an equal one is rewritten.
-   */
   async writeFromRemote(snapshot: PlayEligibilitySnapshot, tx: unknown): Promise<void> {
     await (tx as DrizzleTx)
       .insert(ledgerPlayEligibility)
@@ -256,7 +256,6 @@ export class LedgerPlayEligibilityService
   }
 }
 
-/** The projection over a bare database handle, for a seed script or test that boots no container. */
 export function ledgerPlayEligibilityProjection(
   db: DrizzleService['db'],
 ): PlayEligibilityProjectionPort & LedgerPlayEligibilityPort {

@@ -25,8 +25,6 @@ export async function announceCashCredits(
   if (credits.every((credit) => !credit.transactionId)) {
     return;
   }
-  // Through IDENTITY_READER on the credit's transaction, as the wallet resolves its own events'
-  // player id: the profile table is not the ledger's to read.
   const playerId = await identity.getPlayerIdByUserId(userId, tx);
   for (const { amount, currency, transactionId } of credits) {
     if (!transactionId) {

@@ -14,7 +14,6 @@ import { createBackofficeRouter } from './router/index.js';
 export default {
   id: 'admin-console',
   dependsOn: ['identity', 'audit', 'iam'],
-  // The wallet and the rounds through their reporting ports, so a platform process can load it.
   requiresPorts: [ADMIN_WALLET_REPORTING, ADMIN_GAME_REPORTING],
   register(ctx) {
     ctx.routers.add('backoffice', (c) =>

@@ -82,7 +82,6 @@ export type RakebackClaimed = { userId: Uuid; claimId: Uuid; paid: RakebackPaid[
 type RakebackClaimDeps = {
   drizzle: DrizzleService;
   wallet: WalletCommands | undefined;
-  /** LEDGER_PLAY_ELIGIBILITY: the claim gates read the ledger's projection, never identity. */
   eligibility: LedgerPlayEligibilityPort | undefined;
   exclusions: RgExclusionReader | undefined;
   rates: ExchangeRateReader;
@@ -194,7 +193,6 @@ export class RakebackClaimService {
           ),
         ),
       );
-    // Only players who could claim: the ledger's projection, not the identity tables (ADR-0056).
     const states =
       (await this.deps.eligibility?.statesOf(accrued.map((row) => row.userId))) ?? new Map();
     const candidates = accrued

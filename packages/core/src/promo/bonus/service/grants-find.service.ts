@@ -36,7 +36,6 @@ export class GrantsFindService {
     now = new Date(),
   ): Promise<GrantsFind> {
     const db = this.drizzle.db;
-    // The player id names a user through IDENTITY_READER; an unknown one matches nothing.
     const playerUserId = playerId ? await userIdOfPlayer(this.identity, playerId) : null;
     const where = and(
       status?.length ? inArray(grant.status, status) : undefined,

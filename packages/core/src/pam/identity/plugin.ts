@@ -409,9 +409,6 @@ export default {
     ctx.routers.add('identity', (c, options) => {
       if (options?.mounted !== false) {
         assertAuthSurfaceGuards(c);
-        // Only where identity is selected: a process that merely binds its ports must not claim
-        // the play eligibility projection is fresh. One recurring job, not a timer per replica
-        // (ADR-0062).
         if (c.has(PLAY_ELIGIBILITY_PROJECTION)) {
           const projection = c.get(PLAY_ELIGIBILITY_PROJECTION);
           playEligibilityHeartbeatRef = () => projection.heartbeat();

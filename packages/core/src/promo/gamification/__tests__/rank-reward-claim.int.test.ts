@@ -326,7 +326,6 @@ describe('the rank rewards a player reads', () => {
 describe('rank reward auto-payout', () => {
   it('pays every unclaimed reward of a self-excluded player, once', async () => {
     const userId = await newPlayer('self_excluded');
-    // The RG block that refuses a claim never holds back an auto-payout.
     isRestricted.mockResolvedValue(true);
     const a = await leave(userId, '1');
     const b = await leave(userId, '2');

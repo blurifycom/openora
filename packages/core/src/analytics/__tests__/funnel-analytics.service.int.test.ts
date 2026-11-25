@@ -46,7 +46,6 @@ async function seedMember(
   return account;
 }
 
-// The funnel query analytics ran on the wallet tables before MONEY_REPORTING, kept as the oracle.
 async function oldFunnelCounts(from: Date, to: Date): Promise<number[]> {
   const result = await db.drizzle.db.execute<{
     registered: string;

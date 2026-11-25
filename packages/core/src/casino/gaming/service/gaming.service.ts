@@ -180,8 +180,6 @@ export const WinAmountInvalidError = createDomainError<[roundId: string, winAmou
     `round ${roundId} won ${JSON.stringify(winAmount)}, which is not a decimal with at most 18 places`,
 );
 
-// True when the game or its provider is in the id lists. Never null: `game.provider_id` is not
-// null and an empty array answers false, so `not(...)` keeps the games with no rule.
 function ruledBy(gameIds: readonly string[], providerIds: readonly string[]): SQL {
   return sql`(${game.id} = ANY(${sql.param([...new Set(gameIds)])}::uuid[]) or ${game.providerId} = ANY(${sql.param([...new Set(providerIds)])}::uuid[]))`;
 }
@@ -320,7 +318,6 @@ export class GamingService {
           : undefined,
         gameTypes ? inArray(game.gameType, gameTypes) : undefined,
         reviewStatuses ? inArray(game.reviewStatus, reviewStatuses) : undefined,
-        // A game counts as geo-blocked by its own rule or its provider's, matching the play gate's check.
         geoBlocked === undefined || !geo
           ? undefined
           : geoBlocked
@@ -354,9 +351,6 @@ export class GamingService {
     });
   }
 
-  // The rule pairs come from compliance through GAME_GEO_CHECK, so the catalog never reads its
-  // tables. ponytail: the ids travel as query params; fine for an admin filter, a projection
-  // table on the money side if the rule tables grow past tens of thousands of rows.
   private async loadGeoRules(
     gameGeoCheck: GameGeoCheckPort,
     geoBlocked: boolean | undefined,
@@ -366,7 +360,6 @@ export class GamingService {
     if (!listGeoRulePairs) {
       throw new GameGeoFiltersUnavailableError();
     }
-    // The plain blocked filter needs every rule; the country filters only their countries.
     return listGeoRulePairs.call(
       gameGeoCheck,
       geoBlocked === undefined ? { countries: [...new Set(countries)] } : undefined,

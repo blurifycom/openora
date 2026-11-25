@@ -2,7 +2,6 @@ import { MONEY_MODULE_IDS, MONEY_TX_BOUND_PORTS, type TokenCatalog } from '@open
 import type { Plugin } from './define-plugin.js';
 import type { PluginEntry } from './load-plugins.js';
 
-/** A group of modules another service runs, named by the env var that points at that service. */
 const REMOTE_DOMAINS = [
   { env: 'CHAT_SERVICE_URL', roots: ['chat'] },
   { env: 'MONEY_SERVICE_URL', roots: MONEY_MODULE_IDS },
@@ -12,20 +11,9 @@ type RemoteDomainEnv = (typeof REMOTE_DOMAINS)[number]['env'];
 
 export type RemoteModulesResult = {
   entries: PluginEntry[];
-  /** The ids dropped per env var that is set, in registry order. */
   dropped: { env: RemoteDomainEnv; modules: string[] }[];
 };
 
-/**
- * With `CHAT_SERVICE_URL` set, chat runs in another service; with `MONEY_SERVICE_URL` set, the
- * money modules do. This process then drops those modules and every entry that `dependsOn` one,
- * directly or through another dropped entry, and `chat-remote` / `money-remote` bind their ports
- * instead. With neither set the registry is returned as it came.
- *
- * With `MONEY_SERVICE_URL` set, a kept module that requires a port taking the caller's
- * transaction (`MONEY_TX_BOUND_PORTS`) fails the boot: no remote binding can join that
- * transaction.
- */
 export async function withoutRemoteModules<C extends TokenCatalog>(
   entries: PluginEntry[],
   readPlugin: (entry: PluginEntry) => Promise<Plugin<C>>,

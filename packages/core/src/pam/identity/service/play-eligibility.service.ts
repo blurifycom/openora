@@ -133,10 +133,6 @@ export class PlayEligibilityPublisher {
       .where(eq(player.userId, userId))
       .limit(1);
     const snapshot = snapshotOf(userId, { ...account, status: profile?.status ?? null });
-    // Block-first (ADR-0062): a restricting state is written before this transaction commits, so
-    // a write that fails fails the change. A playable state on a remote projection commits first
-    // and reaches the ledger by the event below: a remote write cannot roll back with this
-    // transaction, and a lift the ledger saw but identity rolled back would let a player stake.
     const projection = this.projection();
     if (projection && (!projection.remote || playRefusalOf(snapshotState(snapshot)) !== null)) {
       await projection.write(snapshot, tx);

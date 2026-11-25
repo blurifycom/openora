@@ -518,7 +518,6 @@ describe('the projection outside a limit write (real PG)', () => {
 describe('a limits projection written from another service (real PG, ADR-0062)', () => {
   const deposit = (userId: string) =>
     container.get(RG_LIMITS).checkDeposit(db.drizzle.db, userId, '1', 'USD');
-  /** The real ledger behind a remote binding: same writes, `remote: true`. */
   const remoteLedger = (
     write = vi.fn((s: RgLimitsSnapshot, tx: unknown) => ledger().write(s, tx)),
   ) => ({ write, remote: true }) satisfies Pick<RgLimitLedgerPort, 'write' | 'remote'>;

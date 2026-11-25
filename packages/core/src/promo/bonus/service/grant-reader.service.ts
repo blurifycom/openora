@@ -115,7 +115,6 @@ export class GrantReaderService {
     private readonly identity: IdentityReader,
   ) {}
 
-  /** The staff member who forfeited each grant, named through IDENTITY_READER. */
   private async withForfeitActors(rows: readonly UnnamedAdminGrantRow[]): Promise<AdminGrant[]> {
     const contacts = await userContactsOf(
       this.identity,

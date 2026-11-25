@@ -6,13 +6,11 @@ import { promoPlayerRank, promoRankTier } from '../schema/index.js';
 
 const lowestTier = alias(promoRankTier, 'lowest_tier');
 
-/** PLAYER_RANK_READER: the query support-chat ran on these tables itself. */
 export class PlayerRankReaderService implements PlayerRankReader {
   constructor(private readonly drizzle: DrizzleService) {}
 
   async getRankName(userId: Uuid): Promise<string | null> {
     const db = this.drizzle.db;
-    // A player with no tier yet sits on the ladder's bottom rung, as the rank read shows it.
     const lowest = db
       .select({ name: lowestTier.name })
       .from(lowestTier)

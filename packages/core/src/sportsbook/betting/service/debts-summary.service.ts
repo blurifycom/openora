@@ -66,7 +66,6 @@ export class SportsbookDebtsSummaryService {
             .where(lte(ranked.rank, largest))
             .orderBy(asc(ranked.currency), asc(ranked.rank)),
     ]);
-    // Player ids through IDENTITY_READER, after the money reads: the profile is not the ledger's.
     const playerIds = await playerIdsOfUsers(
       this.identity,
       largestRows.map((entry) => entry.userId),

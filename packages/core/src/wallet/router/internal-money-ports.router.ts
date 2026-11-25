@@ -11,19 +11,8 @@ import {
   moneyPortErrorWireOf,
 } from '@openora/core/contracts';
 
-// Below the client's 2s timeout: a write blocked on a row lock fails fast, so the client's one
-// retry still has time, instead of both attempts timing out behind the same holder.
 const REMOTE_WRITE_LOCK_TIMEOUT = '1500ms';
 
-/**
- * The internal API behind every port in `MONEY_REMOTE_PORTS`, for a platform service that does
- * not load the money modules (ADR-0063). Each call is answered by this process's own binding of
- * the named port, so `resolve` must read the container of the money service, never a remote
- * binding. A method with a `tx` position gets a fresh transaction on a write and this db on a
- * read. Only services named in `callers` (`MONEY_PORTS_CALLERS`) may call; any other signed
- * caller is refused. A typed error in `MoneyPortErrorWire` answers 422 with its fields, so the
- * caller rethrows it; any other error stays a 5xx.
- */
 export function createInternalMoneyPortsRouter(
   resolve: (token: symbol) => unknown,
   db: DrizzleDb,

@@ -202,7 +202,6 @@ const rankChallengeService = (c: TypedContainer<CoreTokenCatalog>) =>
 export default {
   id: 'gamification',
   dependsOn: ['exchange-rate', 'audit'],
-  // Player names, player ids and nothing else of identity's: through its reader.
   requiresPorts: [IDENTITY_READER],
   register(ctx) {
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.

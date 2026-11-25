@@ -1,9 +1,3 @@
-/**
- * The money ports a platform service reaches over the signed internal API when the money modules
- * run in another service (`MONEY_SERVICE_URL`, ADR-0063). One route carries every call: the
- * money service answers it from its own binding of the named port, the platform service binds
- * the port to a client of it (`money-remote`).
- */
 import * as z from 'zod';
 import { LimitPeriodSchema, LimitTypeSchema } from '../schemas/compliance.js';
 import type { AdminGameReporting } from './admin-game-reporting.js';
@@ -36,7 +30,6 @@ import { WALLET_READER } from './wallet-reader.js';
 
 export const MONEY_PORTS_ROUTE = '/money/ports/call' as const;
 
-/** Request and reply of {@link MONEY_PORTS_ROUTE}. `args` and `result` use {@link encodeMoneyWire}. */
 export const MoneyPortCallWire = {
   input: z.object({
     port: z.string().min(1),
@@ -46,15 +39,6 @@ export const MoneyPortCallWire = {
   output: z.object({ result: z.string() }),
 } as const;
 
-/**
- * How one port method crosses the wire. `arity` is how many leading arguments the caller's
- * call carries (a trailing optional `tx` is left out, so the money service reads on its own
- * connection). `tx` is the position of a required transaction or db argument: never sent, the
- * money service fills it with its own (a transaction on a write, its db on a read). `write`
- * marks a call that changes state: it is retried once with the same body, so it must be
- * idempotent at the money service. `served` names the method of the money service's binding
- * that answers the call, when that is not the method called.
- */
 export type MoneyMethodSpec = {
   readonly arity: number;
   readonly tx?: number;
@@ -71,9 +55,6 @@ function port<T>(token: AnyToken<unknown>, methods: Methods<T>, remoteFlag = fal
 const READ_1 = { arity: 1 } as const;
 const READ_2 = { arity: 2 } as const;
 const WRITE_1 = { arity: 1, write: true } as const;
-// A remote projection write runs in a transaction of its own and may arrive late or twice (a
-// retry, a replayed body), so the money service answers it with the variant that keeps a held
-// newer version instead of the in-transaction writer's overwrite.
 const REMOTE_PROJECTION_WRITE = {
   arity: 2,
   tx: 1,
@@ -81,11 +62,6 @@ const REMOTE_PROJECTION_WRITE = {
   served: 'writeFromRemote',
 } as const;
 
-/**
- * Every money port a platform module reads, by name. `remoteFlag` sets `remote: true` on the
- * client, which makes the owner follow ADR-0062: a restriction is written first, a lift or
- * loosening reaches the ledger by its event.
- */
 export const MONEY_REMOTE_PORTS = {
   WALLET_READER: port<WalletReader>(WALLET_READER, {
     getLifetimeDeposit: READ_1,
@@ -158,11 +134,6 @@ export const MONEY_REMOTE_PORTS = {
 
 export type MoneyRemotePortName = keyof typeof MONEY_REMOTE_PORTS;
 
-/**
- * The typed errors a remote money port method throws that its callers branch on. The money
- * service answers one as a 422 carrying this shape, and the client rethrows the same class and
- * never retries it. Any other error stays a 5xx, which the client reads as the money service down.
- */
 export const MoneyPortErrorWire = z.discriminatedUnion('code', [
   z.object({
     code: z.literal('rg_rate_unavailable'),
@@ -179,7 +150,6 @@ export const MoneyPortErrorWire = z.discriminatedUnion('code', [
 ]);
 export type MoneyPortErrorWire = z.infer<typeof MoneyPortErrorWire>;
 
-/** `err` as {@link MoneyPortErrorWire}, or null when it is not one of those errors. */
 export function moneyPortErrorWireOf(err: unknown): MoneyPortErrorWire | null {
   if (err instanceof RgRateUnavailableError) {
     const { limitType, period, missingCurrency, limitCurrency } = err;
@@ -195,7 +165,6 @@ export function moneyPortErrorWireOf(err: unknown): MoneyPortErrorWire | null {
   return null;
 }
 
-/** The error {@link moneyPortErrorWireOf} sent. */
 export function moneyPortErrorFromWire(wire: MoneyPortErrorWire): Error {
   switch (wire.code) {
     case 'rg_rate_unavailable':
@@ -217,7 +186,6 @@ export function isMoneyRemotePortName(name: string): name is MoneyRemotePortName
   return Object.hasOwn(MONEY_REMOTE_PORTS, name);
 }
 
-/** The modules a platform service drops when `MONEY_SERVICE_URL` is set. */
 export const MONEY_MODULE_IDS = [
   'wallet',
   'bonus',
@@ -227,11 +195,6 @@ export const MONEY_MODULE_IDS = [
   'exchange-rate',
 ] as const;
 
-/**
- * Money ports whose calls take the caller's transaction so they commit with it (a debit, a
- * wager, a grant, a limit check under the caller's lock). They never cross the network: a
- * platform module that requires one keeps the process from booting with `MONEY_SERVICE_URL` set.
- */
 export const MONEY_TX_BOUND_PORTS: readonly symbol[] = [
   WALLET_COMMANDS,
   WAGER_TRACKING,
@@ -244,12 +207,7 @@ export const MONEY_TX_BOUND_PORTS: readonly symbol[] = [
   LEDGER_PLAY_ELIGIBILITY,
 ];
 
-/**
- * JSON that keeps what port arguments and answers carry beyond JSON: `Date`, `Map` and an
- * `undefined` in an argument list (an omitted optional argument stays omitted).
- */
 export function encodeMoneyWire(value: unknown): string {
-  // Wrapped, so a call that answers nothing still sends a string.
   return JSON.stringify([value], function (this: Record<string, unknown>, key, encoded: unknown) {
     const raw = this[key];
     if (raw instanceof Date) {

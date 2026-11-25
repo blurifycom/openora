@@ -8,7 +8,6 @@ import {
   ProductRevenueSchema,
 } from '@openora/core/contracts';
 
-// The shapes live beside MONEY_REPORTING, the port the wallet answers them through.
 export {
   SignedMoneyAmountSchema,
   type SignedMoneyAmount,

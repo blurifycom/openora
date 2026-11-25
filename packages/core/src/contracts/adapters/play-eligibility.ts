@@ -91,15 +91,7 @@ export const PLAY_ELIGIBILITY: Token<PlayEligibilityPort> =
  * overlay can neither rebind the stake gate nor the writer that lifts a restriction.
  */
 export type LedgerPlayEligibilityPort = Required<PlayEligibilityPort> & {
-  /**
-   * The projected account facts, or null for a user the projection has no row for. Same `tx`
-   * rule as `isRestricted`: on a caller's transaction the row is held `FOR SHARE`.
-   */
   stateOf(userId: string, tx?: unknown): Promise<PlayEligibilityState | null>;
-  /**
-   * {@link stateOf} for many users in one read; a user with no row is absent. Same `tx` rule: on
-   * a caller's transaction every row read is held `FOR SHARE`, otherwise it reads on the pool.
-   */
   statesOf(userIds: readonly string[], tx?: unknown): Promise<Map<string, PlayEligibilityState>>;
 };
 
@@ -123,16 +115,7 @@ export type PlayEligibilityProjectionPort = {
    * that are missing, older, or at the same version but different, and returns how many it wrote.
    */
   reconcile(snapshots: readonly PlayEligibilitySnapshot[]): Promise<number>;
-  /**
-   * Marks the projection fresh at the ledger's clock. Identity calls it every
-   * `LEDGER_PROJECTION_HEARTBEAT_MS` where its module is selected (ADR-0062).
-   */
   heartbeat(): Promise<void>;
-  /**
-   * True on a binding that reaches the ledger over the network, set by that binding. Its write
-   * is not part of the writer's transaction, so a lift skips it and reaches the ledger by its
-   * event; a restriction still writes first and fails the change when the write fails.
-   */
   readonly remote?: boolean;
 };
 
@@ -159,15 +142,9 @@ export type PlayEligibilitySourcePort = {
 export const PLAY_ELIGIBILITY_SOURCE: SealedToken<PlayEligibilitySourcePort> =
   createSealedToken<PlayEligibilitySourcePort>('PLAY_ELIGIBILITY_SOURCE');
 
-/** The ledger projections a heartbeat keeps fresh (ADR-0062). */
 export const LEDGER_PROJECTIONS = ['play_eligibility', 'rg_limits'] as const;
 export type LedgerProjection = (typeof LEDGER_PROJECTIONS)[number];
 
-/**
- * A stake or deposit refused because the projection it reads has not heard from its remote
- * writer within `LEDGER_PROJECTION_STALE_MS` (ADR-0062). Fail closed: the copy may be missing a
- * restriction. `lastBeatAt` is null when no heartbeat was ever written.
- */
 export class LedgerProjectionStaleError extends Error {
   readonly code = 'ledger_projection_stale';
   constructor(

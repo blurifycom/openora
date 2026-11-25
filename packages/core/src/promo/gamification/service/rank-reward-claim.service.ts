@@ -68,7 +68,6 @@ type PaidOutcome = Claimed['outcome'];
 type RankRewardClaimDeps = {
   drizzle: DrizzleService;
   wallet: WalletCommands | undefined;
-  /** LEDGER_PLAY_ELIGIBILITY: the claim gates read the ledger's projection, never identity. */
   eligibility: LedgerPlayEligibilityPort | undefined;
   exclusions: RgExclusionReader | undefined;
   audit: AuditWritePort;

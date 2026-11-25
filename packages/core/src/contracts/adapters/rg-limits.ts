@@ -143,16 +143,7 @@ export type RgLimitLedgerPort = {
    * one through `write` under a fresh version, never by an equal-version overwrite.
    */
   drifted(snapshots: readonly RgLimitsSnapshot[]): Promise<string[]>;
-  /**
-   * Marks the projection fresh at the ledger's clock. Compliance calls it every
-   * `LEDGER_PROJECTION_HEARTBEAT_MS` where its module is selected (ADR-0062).
-   */
   heartbeat(): Promise<void>;
-  /**
-   * True on a binding that reaches the ledger over the network, set by that binding. A
-   * loosening (a confirmed raise or removal) then skips the write and reaches the ledger by its
-   * event; every other change still writes first and fails when the write fails (ADR-0062).
-   */
   readonly remote?: boolean;
   /**
    * Spend counted against one money limit since `from`, converted into `limitCurrency`, from the

@@ -10,10 +10,6 @@ import { migrate } from '../migrate.js';
 import { user } from '../schema/index.js';
 import { backfillPlayEligibility } from '../service/play-eligibility.service.js';
 
-// Money modules once read a player's status off the profile table and the RG block off the user
-// table; they now read LEDGER_PLAY_ELIGIBILITY's projection. Once identity has published, the
-// projection must answer what those reads did, for one user, many, and on a caller's tx.
-
 let db: TestDb;
 let userIds: string[];
 

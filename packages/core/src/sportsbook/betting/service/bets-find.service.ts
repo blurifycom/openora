@@ -46,7 +46,6 @@ export class BetsFindService {
     const range = resolveBetsFindRange(days, now);
     const { from, to } = dayRangeInstants(range);
     const db = this.drizzle.db;
-    // The player id names a user through IDENTITY_READER; an unknown one matches nothing.
     const playerUserId = playerId ? await userIdOfPlayer(this.identity, playerId) : null;
     const where = and(
       gte(bet.createdAt, from),

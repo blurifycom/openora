@@ -354,7 +354,6 @@ describe('a new registration reaches the ledger (real PG)', () => {
 });
 
 describe('a play eligibility projection written from another service (real PG, ADR-0062)', () => {
-  /** The real ledger behind a remote binding: `write` as given, `remote: true`. */
   const remote = (write: PlayEligibilityProjectionPort['write']) => () =>
     mock<PlayEligibilityProjectionPort>({ write: vi.fn(write), remote: true });
 

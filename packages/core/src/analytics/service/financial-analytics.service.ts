@@ -58,7 +58,6 @@ export function totalsPerCurrency(summary: FinancialSummary): FinancialCurrencyT
 }
 
 export class FinancialAnalyticsService {
-  // The queries are the money side's (MONEY_REPORTING); this caches and shapes them.
   constructor(
     private readonly reporting: MoneyReportingPort,
     private readonly cache: CacheAdapter,

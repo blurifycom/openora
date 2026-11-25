@@ -97,10 +97,6 @@ const FLOW_BUCKETS: Record<PaymentFlowGranularity, SQL<string>> = {
 };
 const dayAfter = (isoDay: string) => new Date(Date.parse(isoDay) + DAY_MS);
 
-/**
- * MONEY_REPORTING: the reporting reads over the wallet, round and sportsbook tables, moved
- * unchanged from analytics. Uncached; analytics caches what it asks.
- */
 export class MoneyReportingService implements MoneyReportingPort {
   private sportsbookLedgerFound = false;
 
@@ -128,7 +124,6 @@ export class MoneyReportingService implements MoneyReportingPort {
     return { deposited, placedBet };
   }
 
-  // openora-migrate creates these tables for every operator, so only a recorded bet means the book is in use.
   private async hasSportsbookLedger(): Promise<boolean> {
     if (this.sportsbookLedgerFound) {
       return true;
@@ -239,10 +234,6 @@ export class MoneyReportingService implements MoneyReportingPort {
     const prior = alias(sportsbookBetTransaction, 'prior_settle');
     const sportsbook = await this.hasSportsbookLedger();
     const book = <T>(query: () => Promise<T[]>) => (sportsbook ? query() : []);
-    // Typed through the ledger's own `ledger_game`, so a round on a game the catalogue deleted
-    // still counts. A game not projected yet falls back to its catalogue type, so a sportsbook
-    // game is still told apart from the book's ledger; one in neither table is unclassified.
-    // An inline literal, not a bind parameter, so the select and the group by are one expression.
     const product = sql<
       ProductRevenue['product']
     >`coalesce(${ledgerGame.gameType}::text, ${game.gameType}::text, ${sql.raw(`'${UNCLASSIFIED_PRODUCT}'`)})`;
@@ -260,7 +251,6 @@ export class MoneyReportingService implements MoneyReportingPort {
         .where(
           and(
             eq(gameRound.status, COMPLETED_STATUS),
-            // With the book in use its ledger is the sportsbook row, not a catalog game typed so.
             ...(sportsbook ? [ne(product, 'sportsbook')] : []),
             ...inRange(gameRound.startedAt, gameRound.currency, query),
           ),
@@ -281,7 +271,6 @@ export class MoneyReportingService implements MoneyReportingPort {
           .where(and(eq(tx.kind, 'settle'), ...inRange(tx.createdAt, bet.currency, query)))
           .groupBy(bet.currency),
       ),
-      // A reopen takes back the whole payout of the settlement it reopens, whatever it collected.
       book(() =>
         db
           .select({ currency: bet.currency, amount: total(prior.amount) })

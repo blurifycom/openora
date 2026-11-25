@@ -67,7 +67,6 @@ export class SportsbookTurnoverService {
             .where(lte(ranked.rank, largestOpen))
             .orderBy(asc(ranked.currency), asc(ranked.rank)),
     ]);
-    // Player ids through IDENTITY_READER, after the money reads: the profile is not the ledger's.
     const playerIds = await playerIdsOfUsers(
       this.identity,
       largest.map((open) => open.userId),

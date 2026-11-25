@@ -166,17 +166,15 @@ export default {
     // One instance behind both play eligibility ports; the router factory constructs it, and runs
     // in every process before any event is delivered.
     let playEligibility: LedgerPlayEligibilityService | null = null;
-    // The services allowed to call the money ports over the internal API (ADR-0063). Unset
-    // refuses every caller.
     const moneyPortsCallers = parseInternalCallers(process.env['MONEY_PORTS_CALLERS']);
-    // A projection goes stale only when its owner writes it from another service, so the gate
-    // checks the heartbeat once another service may call the money ports (ADR-0062).
     const remoteWriter = () => moneyPortsCallers.size > 0;
     const staleMs = envMs('LEDGER_PROJECTION_STALE_MS', 60_000);
+    const alertMs = envMs('LEDGER_PROJECTION_ALERT_MS', 30_000);
     const sharedPlayEligibility = (c: TypedContainer<CoreTokenCatalog>) =>
       (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE), {
         remoteWriter,
         staleMs,
+        alertMs,
       }));
     // Same for the limits gate and its projection writer (ADR-0057).
     let rgLimitsRef: LedgerRgLimitsService | null = null;
@@ -184,7 +182,7 @@ export default {
       (rgLimitsRef ??= new LedgerRgLimitsService(
         c.get(DRIZZLE),
         c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
-        { remoteWriter, staleMs },
+        { remoteWriter, staleMs, alertMs },
       ));
 
     // Publishes a change *signal*, never the balance itself - see the comment on
@@ -576,13 +574,10 @@ export default {
         }),
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
-    // Analytics' reads of the money tables.
     ctx.provide(MONEY_REPORTING, (c) => new MoneyReportingService(c.get(DRIZZLE)));
     // Operator-editable currency/network config, readable by a payment adapter without
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
-    // The money ports for a platform service that runs without the money modules (ADR-0063),
-    // answered from this process's own bindings.
     ctx.routers.addInternal('money', (c) =>
       createInternalMoneyPortsRouter(
         (token) => c.get(token as CoreTokenCatalog[keyof CoreTokenCatalog]),

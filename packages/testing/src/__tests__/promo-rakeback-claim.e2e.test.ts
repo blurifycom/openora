@@ -29,8 +29,6 @@ let admin: TestClient;
 
 const drizzle = () => app.container.get(DRIZZLE).db;
 
-// A direct write bypasses identity's publisher, so re-project as a script would; the platform's
-// RG routes would also end the login the claim needs.
 const reproject = () =>
   backfillPlayEligibility(drizzle(), app.container.get(PLAY_ELIGIBILITY_PROJECTION));
 

@@ -1,21 +1,19 @@
-// The heartbeat of a ledger projection's owner, and the gate that refuses on a stale one
-// (ADR-0062). Both use the ledger's clock, so the owner's clock never matters.
-import type { DrizzleService, DrizzleTx } from '@openora/core/server';
+import { createLogger, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import { LedgerProjectionStaleError, type LedgerProjection } from '@openora/core/contracts';
 import { eq, sql } from 'drizzle-orm';
 import { ledgerProjectionHeartbeat } from '../schema/index.js';
 
-/**
- * How a projection's gate judges freshness. `remoteWriter` is read per check: a monolith or a
- * shared-database split writes the projection in the owner's transaction, so it never goes stale
- * and is never checked.
- */
+const log = createLogger('wallet:projection-heartbeat');
+
 export type ProjectionFreshness = {
   remoteWriter: () => boolean;
   staleMs: number;
+  alertMs: number;
 };
 
 type Db = DrizzleService['db'] | DrizzleTx;
+
+const lastLateAlertAt = new Map<LedgerProjection, number>();
 
 export async function beat(db: Db, projection: LedgerProjection): Promise<void> {
   await db
@@ -27,7 +25,36 @@ export async function beat(db: Db, projection: LedgerProjection): Promise<void> 
     });
 }
 
-/** Throws `LedgerProjectionStaleError` when the writer is remote and its last beat is too old. */
+export async function databaseNow(db: Db): Promise<Date> {
+  const [row] = await db
+    .select({ now: sql`now()`.mapWith(ledgerProjectionHeartbeat.beatAt) })
+    .from(sql`(select 1) as clock`);
+  if (!row) {
+    throw new Error('the database returned no clock');
+  }
+  return row.now;
+}
+
+const olderThan = (ms: number) =>
+  sql<boolean>`${ledgerProjectionHeartbeat.beatAt} < now() - make_interval(secs => ${ms / 1000})`;
+
+function alertLate(projection: LedgerProjection, beatAt: Date | null, alertMs: number): void {
+  const now = Date.now();
+  if (now - (lastLateAlertAt.get(projection) ?? 0) < alertMs) {
+    return;
+  }
+  lastLateAlertAt.set(projection, now);
+  log.error(
+    {
+      err: new Error(`ledger projection ${projection} heartbeat is late`),
+      projection,
+      beatAt,
+      alertMs,
+    },
+    'ledger projection heartbeat is late',
+  );
+}
+
 export async function assertFresh(
   db: Db,
   projection: LedgerProjection,
@@ -39,10 +66,14 @@ export async function assertFresh(
   const [row] = await db
     .select({
       beatAt: ledgerProjectionHeartbeat.beatAt,
-      stale: sql<boolean>`${ledgerProjectionHeartbeat.beatAt} < now() - make_interval(secs => ${freshness.staleMs / 1000})`,
+      late: olderThan(freshness.alertMs),
+      stale: olderThan(freshness.staleMs),
     })
     .from(ledgerProjectionHeartbeat)
     .where(eq(ledgerProjectionHeartbeat.projection, projection));
+  if (!row || row.late) {
+    alertLate(projection, row?.beatAt ?? null, freshness.alertMs);
+  }
   if (!row || row.stale) {
     throw new LedgerProjectionStaleError(projection, row?.beatAt ?? null);
   }

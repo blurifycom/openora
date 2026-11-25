@@ -36,7 +36,6 @@ const deposit = () => ({
   transactionId: randomUUID(),
 });
 
-/** A service over the real stream: `applied` is the deduped consumer, `delivered` sees every copy. */
 async function service(serviceName = `svc-${randomUUID()}`) {
   const broker = new RedisStreamsBroker(redis.client, { serviceName });
   brokers.push(broker);
@@ -99,7 +98,6 @@ describe('openora-outbox-replay (real PG + Redis)', () => {
   it('after Redis is flushed, delivers every event published since the cut and none before', async () => {
     const first = await service('replayed-svc');
     await commitDeposits(first.bus, 3);
-    // Published with nobody consuming yet, then Redis is lost with the stream.
     await first.broker.close();
     expect(await new OutboxRelay(db.drizzle.db, first.broker).drainOnce()).toBe(3);
     const [before, ...after] = await db.drizzle.db
@@ -112,7 +110,6 @@ describe('openora-outbox-replay (real PG + Redis)', () => {
       .where(inArray(eventOutbox.eventId, [before!.id]));
     await redis.flush();
 
-    // The service comes back after the loss; its group is recreated at the stream tail.
     const back = await service('replayed-svc');
     const out = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
     expect(await replay('--since', new Date(Date.now() - 30 * 60_000).toISOString())).toBe(0);

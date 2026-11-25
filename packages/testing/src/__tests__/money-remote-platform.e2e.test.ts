@@ -15,10 +15,6 @@ import {
 } from '@openora/core/contracts';
 import { bootTestApp, newPlayer, setupTestDb, type TestApp, type TestDb } from '../index.js';
 
-// Two services on one database, as in the split before the database moves:
-// `money` loads every module, `platform` sets MONEY_SERVICE_URL, so it drops the money modules
-// and money-remote binds their ports to money's internal API. A call to the money origin is
-// answered by the money app itself.
 const MONEY_SERVICE_URL = 'http://money.internal';
 const SECRETS = 'x'.repeat(32);
 
@@ -64,7 +60,6 @@ beforeAll(async () => {
       body,
     });
     if (mode === 'lose-one-reply') {
-      // Applied on the money side, but the reply never reaches the caller.
       mode = 'up';
       throw new TypeError('fetch failed');
     }
@@ -122,7 +117,6 @@ describe('a platform service with money-remote', () => {
   });
 
   it('keeps the platform modules that require money ports, served by the money service', async () => {
-    // Required ports are checked at boot, so these resolving at all means money-remote binds them.
     expect((await platform.app.request('/compliance/country-rules')).status).not.toBe(404);
     const player = await newPlayer(money, 'money-remote-reporting');
     moneyCalls.length = 0;
@@ -157,7 +151,6 @@ describe('a platform service with money-remote', () => {
       },
     ]);
 
-    // The first attempt wrote the row; the retry found it at that version and wrote nothing.
     expect(written).toBe(0);
     expect(moneyCalls).toHaveLength(2);
     expect(moneyCalls[1]?.body).toBe(moneyCalls[0]?.body);
@@ -198,7 +191,6 @@ describe('a platform service with money-remote', () => {
       ],
     });
 
-    // v6 is a self-exclusion and a lower limit; the late v5 would undo both.
     await eligibility.write(standing(6, true), undefined);
     await eligibility.write(standing(5, false), undefined);
     await limits.write(limited(6, '10'), undefined);

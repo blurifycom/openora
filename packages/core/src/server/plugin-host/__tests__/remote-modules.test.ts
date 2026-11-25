@@ -37,8 +37,6 @@ const chatGraph = registry({
   wallet: { dependsOn: ['identity'] },
 });
 
-// The platform modules as they declare themselves: they require money ports, never depend on a
-// money module, so a platform service keeps them and money-remote binds those ports.
 const PLATFORM_GRAPH: Record<string, Node> = {
   profile: { dependsOn: ['identity'], requiresPorts: [WALLET_READER, EXCHANGE_RATE_READER] },
   'player-management': {
