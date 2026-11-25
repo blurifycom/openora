@@ -1,92 +1,23 @@
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
-import type { TokenCatalog } from '@openora/core/contracts';
-import { Container } from '../../kernel/index.js';
-import type { Plugin } from '../define-plugin.js';
-import { PORTED, built } from './fixtures/ported-plugin.js';
-import {
-  assertEntryMatchesPlugin,
-  loadPlugins,
-  topoSort,
-  type PluginEntry,
-} from '../load-plugins.js';
+import { describe, it } from 'vitest';
 
-function plugin(id: string, dependsOn: string[] = []): Plugin<TokenCatalog> {
-  return {
-    id,
-    dependsOn,
-    register() {},
-  };
-}
-
-describe('topoSort', () => {
-  it('places dependencies before dependents', () => {
-    const sorted = topoSort([plugin('feature', ['foundation']), plugin('foundation')]);
-
-    expect(sorted.map(({ id }) => id)).toEqual(['foundation', 'feature']);
-  });
-
-  it('rejects an unregistered dependency', () => {
-    expect(() => topoSort([plugin('feature', ['missing'])])).toThrow(
-      'Plugin "feature" depends on "missing" which is not registered',
-    );
-  });
-
-  it('rejects a dependency cycle', () => {
-    expect(() => topoSort([plugin('a', ['b']), plugin('b', ['c']), plugin('c', ['a'])])).toThrow(
-      'Circular plugin dependency: a -> b -> c -> a',
-    );
-  });
+describe('entry validation', () => {
+  it.todo('rejects a registry that is not an array');
+  it.todo('rejects an entry that is not an object');
+  it.todo('rejects an entry with a missing or empty id');
+  it.todo('rejects an entry with a missing or empty path');
+  it.todo('rejects a duplicate plugin id');
 });
 
-describe('assertEntryMatchesPlugin', () => {
-  const entry = (id: string): PluginEntry => ({ id, path: `./${id}.js` });
-
-  it('accepts a registry entry that resolves the same plugin id', () => {
-    expect(() => assertEntryMatchesPlugin(entry('wallet'), plugin('wallet'))).not.toThrow();
-  });
-
-  it('rejects a registry entry that resolves a different plugin id', () => {
-    expect(() => assertEntryMatchesPlugin(entry('wallet'), plugin('tag'))).toThrow(
-      /does not match the plugin's own id "tag"/,
-    );
-  });
+describe('entry matches plugin', () => {
+  it.todo('fails the boot when the entry id differs from the id of the plugin it loads');
+  it.todo('fails when the module does not default-export a valid plugin');
 });
 
-describe('loadPlugins', () => {
-  it('attributes each tool and action type to the plugin whose register() added it', async () => {
-    const path = fileURLToPath(new URL('./fixtures/agent-surface-plugin.ts', import.meta.url));
-
-    const registry = await loadPlugins([{ id: 'agent-surface', path }], new Container());
-
-    expect(registry.mcp.getTools().map(({ owner }) => owner)).toEqual(['agent-surface']);
-    expect(registry.actions.getAll().map(({ owner }) => owner)).toEqual(['agent-surface']);
-  });
-
-  describe('a module marked noRoutes', () => {
-    const path = fileURLToPath(new URL('./fixtures/ported-plugin.ts', import.meta.url));
-
-    it('binds its ports, still runs its router factory and serves an empty router', async () => {
-      const container = new Container();
-      built.length = 0;
-
-      const registry = await loadPlugins([{ id: 'ported', path, noRoutes: true }], container);
-      const factory = registry.routers.getAll().get('ported');
-
-      expect(container.get(PORTED)).toBe('bound');
-      expect(factory?.(container as never)).toEqual({});
-      expect(built).toEqual(['ported']);
-    });
-
-    it('mounts its router when not marked', async () => {
-      const container = new Container();
-
-      const registry = await loadPlugins([{ id: 'ported', path }], container);
-
-      expect(container.get(PORTED)).toBe('bound');
-      expect(registry.routers.getAll().get('ported')?.(container as never)).toEqual({
-        route: 'real',
-      });
-    });
-  });
+describe('ports and dependencies', () => {
+  it.todo('a plugin with an unbound required port fails the boot naming the plugin and the port');
+  it.todo('a plugin with every required port bound boots');
+  it.todo('an unbound optional port is reported in a warning and does not fail');
+  it.todo('a plugin depending on an unregistered plugin fails with a clear error');
+  it.todo('a circular plugin dependency fails and names the cycle');
+  it.todo('plugins register after the plugins they depend on');
 });

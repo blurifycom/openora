@@ -43,8 +43,6 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
   await expect(svc.assign(assignment)).rejects.toThrow(TagNotFoundError);
   ```
 
-  Canonical integration test to copy: `packages/core/src/pam/tag/__tests__/tag.service.int.test.ts` (ephemeral db, seeded rows, event assertions). Pure-logic reference: `packages/core/src/wallet/__tests__/rail-for.test.ts`.
-
 - **Cover new logic as part of the change** - unit for pure fns; always include authz negatives, in the route's E2E.
 - **Every test catches a regression no other test catches.** Before adding one, name the bug it fails on; if an existing test already fails on that bug, do not add it. Cover a behaviour once, at the outermost tier that reaches it: an E2E that proves a refusal makes a unit or integration test of the same refusal redundant. Add the inner-tier test only for a branch, input or side effect (event, audit, ledger row) the outer one cannot reach. Pure-function tests stay branch-complete; this rule is about repeating one outcome across tiers.
 - **Deterministic and isolated:** no shared mutable state, no real network, seedable data. Real-infra suites stay parallel-safe - own your database and Redis keys, never assume an empty shared one.

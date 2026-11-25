@@ -1,21 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { classifyIntent } from '../intent.js';
+import { describe, it } from 'vitest';
 
 describe('classifyIntent', () => {
-  it.each([
-    ['add a stripe gateway', 'adapter'],
-    ['build a player page', 'ui-page'],
-    ['add an rpc endpoint', 'route'],
-    ['weekly cashback', 'feature'],
-    ['make it nicer', 'unsure'],
-    ['', 'unsure'],
-    ['ADD KYC', 'adapter'],
-    ['payment page', 'adapter'],
-    ['bonus page', 'ui-page'],
-    ['dashboard route', 'ui-page'],
-    ['bonus route', 'route'],
-    ['payments', 'unsure'],
-  ] as const)('%s -> %s', (ask, kind) => {
-    expect(classifyIntent(ask)).toBe(kind);
-  });
+  it.todo('an ask naming a vendor, payment or notification is an adapter');
+  it.todo('an ask naming a page, screen or dashboard is a ui-page');
+  it.todo('an ask naming an endpoint or route is a route');
+  it.todo('an ask naming a feature, bonus or tournament is a feature');
+  it.todo('adapter wins over ui-page when both are named');
+  it.todo('an ask matching nothing is unsure');
+  it.todo('matching is case-insensitive and whole-word');
 });

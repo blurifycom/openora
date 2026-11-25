@@ -400,7 +400,7 @@ const MalformedDepositEventError = createDomainError<[externalId: string]>(
   (externalId) => `Deposit event ${externalId || '(empty id)'} carries no usable amount or id`,
 );
 
-export const AmbiguousDepositAddressError = createDomainError(
+const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
   (address, network) =>
     `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
@@ -412,7 +412,7 @@ const WITHDRAWAL_ADDRESS_LIMIT = 50;
 
 // A new payout address cannot be paid to for this long, so a stolen session cannot add its own
 // address and empty the wallet before the owner sees the mail.
-export const WITHDRAWAL_ADDRESS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const WITHDRAWAL_ADDRESS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddress {
   return {
@@ -455,7 +455,7 @@ type WithdrawalAsset = {
  * (a fiat PSP), and the caller's choice passes through unchecked; rows that are all
  * withdrawal-disabled is a deliberate operator decision and fails closed.
  */
-export function resolveWithdrawalNetwork(
+function resolveWithdrawalNetwork(
   assets: readonly WithdrawalAsset[],
   currency: string,
   network?: string,
@@ -487,7 +487,7 @@ export function resolveWithdrawalNetwork(
  * currency-wide minimum is either too high for the cheap chain or below the fee on the
  * expensive one.
  */
-export function assertAboveMinimumWithdrawal(
+function assertAboveMinimumWithdrawal(
   assets: readonly WithdrawalAsset[],
   amount: string,
   currency: string,
@@ -509,7 +509,7 @@ function payableAsset(assets: readonly WithdrawalAsset[], network: string | null
  * The network fee kept from a withdrawal: the player is debited `amount` and the provider pays
  * out `amount - fee`, so the operator never funds the fee. `null` when the network charges none.
  */
-export function withdrawalFeeFor(
+function withdrawalFeeFor(
   assets: readonly WithdrawalAsset[],
   amount: string,
   currency: string,
@@ -530,7 +530,7 @@ export function withdrawalFeeFor(
  * both must fit the asset's on-chain precision. Rounding either would pay a different amount
  * than the ledger debits.
  */
-export function assertPayablePrecision(
+function assertPayablePrecision(
   decimals: number | null,
   amounts: readonly (string | null)[],
   currency: string,
@@ -596,7 +596,7 @@ function depositFloor(assets: readonly DepositAsset[], network?: string) {
   );
 }
 
-export function assertAboveMinimumDeposit(
+function assertAboveMinimumDeposit(
   assets: readonly DepositAsset[],
   amount: string,
   currency: string,

@@ -142,16 +142,16 @@ function canonicalHashInput(fields: CanonicalHashInput): string {
   });
 }
 
-export function computeHash(fields: CanonicalHashInput): string {
+function computeHash(fields: CanonicalHashInput): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
 }
 
-export function startOfDayUtc(dateStr: string): Date {
+function startOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
 }
 
-export function endOfDayUtc(dateStr: string): Date {
+function endOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
 }
@@ -282,7 +282,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * from a broker that does not mint uuids) as the sha1-based uuid of its text, so a redelivery
  * maps to the same id and still dedups.
  */
-export function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry['eventId'] {
+function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry['eventId'] {
   if (UUID_PATTERN.test(eventId)) {
     return eventId;
   }

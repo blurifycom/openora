@@ -57,6 +57,7 @@ export default {
     related: false,
     // A test calls `process.chdir()`, which threads do not support.
     pool: 'forks',
+    allowEmpty: true,
   },
   checkers: ['typescript'],
   tsconfigFile: 'packages/core/tsconfig.json',

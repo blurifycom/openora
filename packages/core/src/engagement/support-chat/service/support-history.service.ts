@@ -92,7 +92,7 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
  * earlier window by that much, and a clock running behind whose stamps still follow every earlier
  * one, which shifts the bounds by the lag.
  */
-export function buildEmailWindows({
+function buildEmailWindows({
   currentEmail,
   registeredEmail,
   registeredAt,
@@ -158,7 +158,7 @@ export function buildEmailWindows({
  * Either way the trail is reported broken. An incomplete result, which has no registration window,
  * is returned as it is.
  */
-export function boundFirstWindow(
+function boundFirstWindow(
   built: ReturnType<typeof buildEmailWindows>,
   registeredAt: Date,
   others: readonly Pick<EmailChange, 'before' | 'after' | 'at'>[],

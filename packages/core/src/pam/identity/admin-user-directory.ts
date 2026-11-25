@@ -82,9 +82,7 @@ type AdminUserPatch = { isActive?: boolean; role?: string };
  * The revocation a patch calls for, keyed on the state it writes rather than on the change it
  * makes: repeating a deactivation or a demotion revokes again.
  */
-export function automaticMcpRevokeReason(
-  patch: AdminUserPatch,
-): McpTokenAutomaticRevokeReason | null {
+function automaticMcpRevokeReason(patch: AdminUserPatch): McpTokenAutomaticRevokeReason | null {
   if (patch.isActive === false) {
     return 'admin_disabled';
   }

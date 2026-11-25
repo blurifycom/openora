@@ -130,7 +130,7 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
 // `deadline` (captured once the change is known committed), so this catches it while
 // sparing anything created afterwards.
 // Exported for direct testing; the service schedules it via setTimeout.
-export async function sweepRacedSessionsAfterPasswordChange(
+async function sweepRacedSessionsAfterPasswordChange(
   db: DrizzleService['db'],
   params: { userId: User['id']; sparedToken: Session['token']; deadline: Date },
 ): Promise<Session['id'][]> {
@@ -390,7 +390,7 @@ async function isUserInsertFailure(res: globalThis.Response) {
 }
 
 const MINUTE_MS = 60 * 1000;
-export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
 // token/session), NOT IP. The lockout above is a per-account credential-failure
 // counter; these bound raw request volume on each brute-force surface. An overlay

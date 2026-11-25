@@ -32,7 +32,7 @@ const coreVersion = corePackage.version;
 type TelemetryEvent = 'boot' | 'heartbeat';
 type Env = Record<string, string | undefined>;
 
-export type TelemetryBody = {
+type TelemetryBody = {
   type: 'event';
   payload: {
     website: string;
@@ -57,7 +57,7 @@ function isSet(flag: string | undefined): boolean {
   return flag !== undefined && ['1', 'true', 'yes'].includes(flag.trim().toLowerCase());
 }
 
-export function isTelemetryEnabled(option: false | undefined, env: Env = process.env): boolean {
+function isTelemetryEnabled(option: false | undefined, env: Env = process.env): boolean {
   return (
     option !== false &&
     env['NODE_ENV'] !== 'test' &&
@@ -67,7 +67,7 @@ export function isTelemetryEnabled(option: false | undefined, env: Env = process
   );
 }
 
-export async function resolveInstanceId(drizzle: DrizzleService): Promise<string> {
+async function resolveInstanceId(drizzle: DrizzleService): Promise<string> {
   await drizzle.db.insert(openoraInstance).values({ singleton: true }).onConflictDoNothing();
   const [row] = await drizzle.db
     .select({ instanceId: openoraInstance.instanceId })
@@ -113,7 +113,7 @@ async function collectTelemetry(
   };
 }
 
-export async function sendTelemetry(url: string, body: TelemetryBody): Promise<void> {
+async function sendTelemetry(url: string, body: TelemetryBody): Promise<void> {
   const res = await fetch(url, {
     method: 'POST',
     // Umami drops bot-like user agents, which a bare `name/version` or anything naming node is.
