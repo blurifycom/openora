@@ -11,7 +11,13 @@ import {
   invalidate,
   withAdvisoryXactLock,
 } from '@openora/core/server';
-import type { CacheAdapter, ClientMeta, User, Uuid } from '@openora/core/contracts';
+import type {
+  BannerImageCountBoundsOverrides,
+  CacheAdapter,
+  ClientMeta,
+  User,
+  Uuid,
+} from '@openora/core/contracts';
 import { eq, ne, and, or, asc, desc, isNotNull, inArray, sql, gt, lt, gte, lte } from 'drizzle-orm';
 import {
   page as pageTable,
@@ -78,6 +84,8 @@ const pageCacheKey = (slug: string) => `cms:page:${slug}`;
 const publicBannerCacheEpochKey = (placement: string) => `cms:banner-placement:${placement}:epoch`;
 const publicBannerCacheKey = (placement: string, epoch: string, locale: string) =>
   `cms:banner-placement:${placement}:${epoch}:${locale}`;
+const bannerConfigurationCreateLockKey = (placement: string) =>
+  `cms:banner-configuration-create:${placement}`;
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
 const bannerConfigurationMutationLockKey = (bannerConfigurationId: Uuid) =>
   `cms:banner-configuration:${bannerConfigurationId}`;
@@ -241,6 +249,7 @@ export class CmsService {
     private readonly events: EventBus,
     private readonly cache?: CacheAdapter,
     private readonly allowedBannerImageHosts: readonly string[] = [],
+    private readonly bannerImageCountBounds: BannerImageCountBoundsOverrides = {},
   ) {}
 
   // Public routes (no adminGuard, HTTP-cacheable) - published-only. There is no
@@ -516,29 +525,56 @@ export class CmsService {
   }
 
   async createConfiguration(
-    input: { placement: string; layout: BannerLayout },
+    input: { placement: string; layout: BannerLayout; reuseExisting?: boolean },
     actorId: User['id'],
     meta?: ClientMeta,
   ) {
-    const record = findOneOrThrow(
-      await this.drizzle.db
-        .insert(bannerConfigurationTable)
-        .values({
-          placement: input.placement,
-          layout: input.layout,
-          isDefault: false,
-          createdBy: actorId,
-        })
-        .returning(),
-      new BannerConfigurationNotFoundError(input.placement),
+    const { record, images, created } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, bannerConfigurationCreateLockKey(input.placement), async () => {
+        if (input.reuseExisting) {
+          // The default configuration, else the newest, returned as it is whatever its layout.
+          const [existing] = await tx
+            .select()
+            .from(bannerConfigurationTable)
+            .where(eq(bannerConfigurationTable.placement, input.placement))
+            .orderBy(
+              desc(bannerConfigurationTable.isDefault),
+              desc(bannerConfigurationTable.createdAt),
+            )
+            .limit(1);
+          if (existing) {
+            const existingImages = await tx
+              .select()
+              .from(bannerImageTable)
+              .where(eq(bannerImageTable.bannerConfigurationId, existing.id))
+              .orderBy(asc(bannerImageTable.sortOrder));
+            return { record: existing, images: existingImages.map(toBannerImage), created: false };
+          }
+        }
+        const inserted = findOneOrThrow(
+          await tx
+            .insert(bannerConfigurationTable)
+            .values({
+              placement: input.placement,
+              layout: input.layout,
+              isDefault: false,
+              createdBy: actorId,
+            })
+            .returning(),
+          new BannerConfigurationNotFoundError(input.placement),
+        );
+        return { record: inserted, images: [], created: true };
+      }),
     );
-    this.events.emit('cms.banner.configuration.created', {
-      bannerConfigurationId: record.id,
-      actorId,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
-    return toBannerConfiguration(record, []);
+    if (created) {
+      this.events.emit('cms.banner.configuration.created', {
+        bannerConfigurationId: record.id,
+        actorId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    return toBannerConfiguration(record, images);
   }
 
   async deleteConfiguration(
@@ -1199,7 +1235,7 @@ export class CmsService {
 
   private async assertBannerConfigurationImageCount(
     tx: DrizzleTx,
-    configuration: { id: Uuid; layout: BannerLayout },
+    configuration: { id: Uuid; placement: string; layout: BannerLayout },
   ) {
     // Slot count is measured against base-locale rows only: locale overrides replace
     // a slot rather than adding a publishable slot.
@@ -1213,7 +1249,9 @@ export class CmsService {
         ),
       );
     const slotCount = new Set(slotRows.map((row) => row.sortOrder)).size;
-    const bounds = BANNER_IMAGE_COUNT_BOUNDS[configuration.layout];
+    const bounds =
+      this.bannerImageCountBounds[configuration.placement]?.[configuration.layout] ??
+      BANNER_IMAGE_COUNT_BOUNDS[configuration.layout];
     if (slotCount < bounds.min || slotCount > bounds.max) {
       throw new BannerConfigurationImageCountError(
         configuration.layout,

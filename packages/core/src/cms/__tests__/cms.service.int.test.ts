@@ -235,6 +235,22 @@ describe('CmsService banner configurations (real PG + real Redis)', () => {
   });
 });
 
+describe('CmsService.createConfiguration reuseExisting (real PG)', () => {
+  it('emits the created event once for concurrent reuse calls and not on reuse', async () => {
+    const { svc, events } = makeService();
+    const input = { placement: 'reuse-events', layout: 'single', reuseExisting: true } as const;
+
+    const results = await Promise.all([
+      svc.createConfiguration(input, ADMIN_ID),
+      svc.createConfiguration(input, ADMIN_ID),
+      svc.createConfiguration(input, ADMIN_ID),
+    ]);
+
+    expect(new Set(results.map((result) => result.id)).size).toBe(1);
+    expect(emittedTopics(events)).toEqual(['cms.banner.configuration.created']);
+  });
+});
+
 describe('CmsService.setDefaultConfiguration image-count bounds (real PG)', () => {
   it('rejects a single-layout configuration with zero images, accepts it with one', async () => {
     const { svc } = makeService();

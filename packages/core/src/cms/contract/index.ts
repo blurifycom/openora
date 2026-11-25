@@ -1,7 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { IdInputSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
-import { BannerLayoutSchema, type BannerLayout } from './enums.js';
+import { BannerLayoutSchema } from './enums.js';
 
 export const PageSchema = z.object({
   id: UuidSchema,
@@ -15,11 +15,7 @@ export type Page = z.infer<typeof PageSchema>;
 
 export * from './enums.js';
 
-export const BANNER_IMAGE_COUNT_BOUNDS: Record<BannerLayout, { min: number; max: number }> = {
-  carousel: { min: 2, max: 6 },
-  grid: { min: 3, max: 3 },
-  single: { min: 1, max: 1 },
-};
+export { BANNER_IMAGE_COUNT_BOUNDS } from '@openora/core/contracts';
 
 export const DEFAULT_LOCALE = 'default';
 
@@ -98,6 +94,13 @@ export type PublicBanner = z.infer<typeof PublicBannerSchema>;
 export const CreateBannerConfigurationInputSchema = z.object({
   placement: z.string(),
   layout: BannerLayoutSchema,
+  /**
+   * Return the placement's existing configuration (the default one, else the newest) instead
+   * of creating another. The check and the insert are atomic per placement, so concurrent
+   * callers on an empty placement get the same configuration. The existing one is returned as
+   * it is, whatever its layout. Absent or false = always create.
+   */
+  reuseExisting: z.boolean().optional(),
 });
 export type CreateBannerConfigurationInput = z.infer<typeof CreateBannerConfigurationInputSchema>;
 

@@ -17,6 +17,31 @@ describe('resolveWalletDefaultCurrency', () => {
   });
 });
 
+describe('definePlatformConfig cms.bannerImageCountBounds', () => {
+  it('defaults to no overrides and accepts a valid per-placement override', () => {
+    expect(definePlatformConfig({}).cms.bannerImageCountBounds).toEqual({});
+    const config = definePlatformConfig({
+      cms: { bannerImageCountBounds: { hero: { carousel: { min: 1, max: 6 } } } },
+    });
+    expect(config.cms.bannerImageCountBounds).toEqual({ hero: { carousel: { min: 1, max: 6 } } });
+  });
+
+  it.each([
+    ['min above max', { carousel: { min: 4, max: 3 } }, /min 4 is above max 3/],
+    ['max above the layout maximum', { carousel: { min: 1, max: 7 } }, /maximum of 6/],
+    [
+      'min below 1',
+      { carousel: { min: 0, max: 3 } },
+      /cms\.bannerImageCountBounds\.hero\.carousel\.min/,
+    ],
+    ['a non-integer bound', { single: { min: 1, max: 1.5 } }, /cms\.bannerImageCountBounds/],
+  ] as const)('rejects %s at boot', (_name, layouts, message) => {
+    expect(() =>
+      definePlatformConfig({ cms: { bannerImageCountBounds: { hero: layouts } } }),
+    ).toThrow(message);
+  });
+});
+
 describe('definePlatformConfig', () => {
   it('canonicalizes attachment hosts before services consume the config', () => {
     const config = definePlatformConfig({

@@ -40,6 +40,17 @@ does not repeat it.
   the configuration's slot count (distinct `sortOrder` among its default-locale images) against
   its layout's bounds before promoting it, and refuses with `BannerConfigurationImageCountError`
   otherwise - a placement can never go live half-built.
+- A placement can replace a layout's bounds with `PlatformConfig.cms.bannerImageCountBounds`
+  (placement -> layout -> `{ min, max }`): the check in `setDefaultConfiguration` and
+  `createBannerSchedule` then uses that placement's bounds, and every other placement keeps the
+  defaults. `min` is at least 1, `max` at most the layout's own maximum, and `min <= max`;
+  anything else fails at boot with the offending path.
+- `createBannerConfiguration` with `reuseExisting: true` returns the placement's existing
+  configuration (the default one, else the newest) instead of creating another, as it is and
+  whatever its layout, and only inserts - and emits `cms.banner.configuration.created` - when
+  the placement has none. A per-placement advisory lock makes that check-and-insert atomic, so
+  concurrent first callers get the same configuration. Without the flag every call creates a
+  new row.
 - Deleting a configuration that is the current default is refused
   (`BannerConfigurationIsDefaultError`) - unset or replace the default first, then delete.
 

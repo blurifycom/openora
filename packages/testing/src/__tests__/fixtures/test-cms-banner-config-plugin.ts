@@ -6,7 +6,10 @@ export default {
   register(ctx) {
     ctx.provide(PLATFORM_CONFIG, () =>
       definePlatformConfig({
-        cms: { allowedBannerImageHosts: ['img.example.test'] },
+        cms: {
+          allowedBannerImageHosts: ['img.example.test'],
+          bannerImageCountBounds: { 'bounds-override': { carousel: { min: 1, max: 6 } } },
+        },
       }),
     );
   },
