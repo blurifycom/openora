@@ -97,6 +97,7 @@
       "@openora/core/mail/contract": ["./src/mail/contract/index.ts"],
       "@openora/core/mail/contracts": ["./src/mail/contract/index.ts"],
       "@openora/core/mail/plugin": ["./src/mail/plugin.ts"],
+      "@openora/core/money-remote/plugin": ["./src/money-remote/plugin.ts"],
       "@openora/core/pam": ["./src/pam/index.ts"],
       "@openora/core/pam/contracts": ["./src/pam/contracts.ts"],
       "@openora/core/pam/contracts/identity": ["./src/pam/identity/contract/index.ts"],

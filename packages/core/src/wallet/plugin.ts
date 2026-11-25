@@ -1,4 +1,11 @@
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, createLogger, envMs } from '@openora/core/server';
+import {
+  ADMIN_GUARD,
+  EVENT_BUS,
+  DRIZZLE,
+  createLogger,
+  envMs,
+  parseInternalCallers,
+} from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
@@ -85,6 +92,7 @@ import { WalletAssetCatalogService } from './adapters/wallet-asset-catalog.servi
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { MoneyReportingService } from './service/money-reporting.service.js';
 import { createWalletRouter, walletBalanceChannel } from './router/index.js';
+import { createInternalMoneyPortsRouter } from './router/internal-money-ports.router.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 import {
@@ -574,6 +582,16 @@ export default {
     // Operator-editable currency/network config, readable by a payment adapter without
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
+    // The money ports for a platform service that runs without the money modules (ADR-0063),
+    // answered from this process's own bindings. Unset MONEY_PORTS_CALLERS refuses every caller.
+    const moneyPortsCallers = parseInternalCallers(process.env['MONEY_PORTS_CALLERS']);
+    ctx.routers.addInternal('money', (c) =>
+      createInternalMoneyPortsRouter(
+        (token) => c.get(token as CoreTokenCatalog[keyof CoreTokenCatalog]),
+        c.get(DRIZZLE).db,
+        moneyPortsCallers,
+      ),
+    );
     ctx.routers.add('wallet', (c, options) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       sharedPlayEligibility(c);
