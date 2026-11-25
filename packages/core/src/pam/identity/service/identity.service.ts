@@ -469,6 +469,11 @@ function loginShadowKey(email: string): string {
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
 
+// A `player` role is a casino account; every other role is staff.
+function matchesAudience(role: string, audience: 'staff' | 'player'): boolean {
+  return (role === 'player') === (audience === 'player');
+}
+
 // Gate input for a caller whose account could not be resolved: never exempt as staff.
 const NO_ROLE = { role: 'player' };
 
@@ -1211,6 +1216,23 @@ export class IdentityService {
         },
       );
 
+      // Same placement as the country gate: after the credential, before any cookie, so a
+      // player never holds a backoffice session (or a pending 2FA challenge) and a staff
+      // account never gets a player profile and wallet from the casino.
+      if (input.audience && existingUser && !matchesAudience(existingUser.role, input.audience)) {
+        await this.expireSessionToken(body.token);
+        this.events.emit('identity.user.login.failed', {
+          email,
+          reason: 'audience_mismatch',
+          ip,
+          userAgent,
+        });
+        throw new ORPCError('FORBIDDEN', {
+          message: 'This account cannot sign in here.',
+          data: { code: 'AUDIENCE_MISMATCH' },
+        });
+      }
+
       this.forwardCookies(authResponse, resHeaders);
 
       if (body.twoFactorRedirect || !body.user || !body.token) {
@@ -1275,7 +1297,8 @@ export class IdentityService {
         (hasErrorCode(error, 'RG_BLOCKED') ||
           hasErrorCode(error, 'ACCOUNT_SUSPENDED') ||
           hasErrorCode(error, 'ACCOUNT_INACTIVE') ||
-          hasErrorCode(error, 'GEO_BLOCKED'))
+          hasErrorCode(error, 'GEO_BLOCKED') ||
+          hasErrorCode(error, 'AUDIENCE_MISMATCH'))
       ) {
         throw error;
       }
