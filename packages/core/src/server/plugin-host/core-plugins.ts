@@ -39,7 +39,8 @@ const CORE_PLUGIN_MODULES = [
  * checkout.
  *
  * Compose your registry as `[...corePlugins(), ...overlays]`. To opt a module
- * out, filter by id: `corePlugins().filter((p) => p.id !== 'chat')`.
+ * out, filter by id, together with the modules that depend on it, e.g. chat:
+ * `corePlugins().filter((p) => !['chat', 'chat-commands', 'social'].includes(p.id))`.
  */
 export function corePlugins(): PluginEntry[] {
   return CORE_PLUGIN_MODULES.map((module) => ({

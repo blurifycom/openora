@@ -72,7 +72,7 @@ The consumer template's `compose.prod.yml` is this example on one server, with t
 
 Chat's HTTP routes sit under `/chat/*` (player, realtime streams included) and `/backoffice/chat/*` (staff), and its handlers and jobs (room purge, moderation expiry) run wherever the module loads.
 
-The main API can drop chat. Of the modules it keeps, only `player-management` needs a chat port (`CHAT_BLOCK_READER`, for player search), and it requires the port, not the `chat` module. Set `CHAT_SERVICE_URL` and `createApp` drops `chat` and every plugin that `dependsOn` it, directly or through another dropped one (`social`, `chat-commands`), before it applies any manifest. The `chat-remote` plugin, part of `corePlugins()`, then binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API (ADR-0054, ADR-0060). A module of your own that needs chat's tables must `dependsOn` chat to be dropped with it:
+The main API can drop chat. Of the modules it keeps, only `player-management` needs a chat port (`CHAT_BLOCK_READER`, for player search), and it requires the port, not the `chat` module. Set `CHAT_SERVICE_URL` and `createApp` drops `chat` and every plugin that `dependsOn` it, directly or through another dropped one (`social`, `chat-commands`), before it applies any manifest. The `chat-remote` plugin, part of `corePlugins()` (a hand-written registry lists it itself), then binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API (ADR-0054, ADR-0060). A module of your own that needs chat's tables must `dependsOn` chat to be dropped with it:
 
 ```
 SERVICE_NAME=monolith

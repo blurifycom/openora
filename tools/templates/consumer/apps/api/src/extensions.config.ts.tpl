@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 // Your plugin registry. `corePlugins()` returns every built-in platform plugin,
 // resolved from the installed @openora/core. Add your own overlays after it - a
 // later registration of a DI token wins, so an adapter override must come after
-// the module it replaces. Opt a core module out with a filter, eg
-// `corePlugins().filter((p) => p.id !== 'chat')`. Chat runs as its own service in
+// the module it replaces. Opt a core module out with a filter that also drops the modules
+// depending on it, eg `corePlugins().filter((p) => !['chat', 'chat-commands', 'social'].includes(p.id))`.
+// Chat runs as its own service in
 // compose.prod.yml, from this same registry: createApp drops the chat modules from the API
 // when CHAT_SERVICE_URL is set. See docs/guides/split-deployment.md.
 //

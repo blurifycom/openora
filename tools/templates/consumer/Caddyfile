@@ -1,3 +1,11 @@
+# Trust X-Forwarded-For from the TLS proxy in front (it reaches this container from a private
+# address); without it Caddy replaces the header and every player gets the same IP.
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
 :80 {
 	@chat path /chat/* /backoffice/chat/* /social/* /chat-command/* /backoffice/chat-command/*
 	reverse_proxy @chat chat:3001

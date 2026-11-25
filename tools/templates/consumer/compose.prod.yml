@@ -14,6 +14,9 @@ x-runtime: &runtime
     PORT: 3001
     DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/oss_igaming
     REDIS_URL: redis://redis:6379
+    # The gateway reaches api and chat from the compose network; trust its X-Forwarded-For so
+    # geo checks, throttles and audit rows see the player's address. api and chat publish no port.
+    TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     INTERNAL_API_SECRETS: ${INTERNAL_API_SECRETS:?set INTERNAL_API_SECRETS in .env}
 
 services:

@@ -45,7 +45,7 @@ my-casino/
 ```
 
 - **Headless** - the API only. Build your frontend in the same repo and talk to it over HTTP with [`@openora/core/react`](https://www.npmjs.com/package/@openora/core).
-- **Every core module enabled** via `corePlugins()`, resolved from your installed `@openora/core`. Opt one out with `corePlugins().filter((p) => p.id !== 'chat')`.
+- **Every core module enabled** via `corePlugins()`, resolved from your installed `@openora/core`. Opt one out by id, together with the modules that depend on it, eg `corePlugins().filter((p) => !['chat', 'chat-commands', 'social'].includes(p.id))`.
 - **AI-native** - `.mcp.json` points at [`@openora/mcp`](https://www.npmjs.com/package/@openora/mcp) so an agent can discover routes, schemas, adapter seams, and events in your repo.
 
 ## Add your own capability

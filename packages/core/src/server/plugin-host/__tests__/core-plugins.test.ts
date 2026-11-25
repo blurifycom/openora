@@ -25,8 +25,11 @@ describe('corePlugins', () => {
     }
   }, 60000);
 
-  it('is a self-contained dependency graph - every dependsOn is present in the set', async () => {
-    const loaded = await loadDefaults();
+  it.each([
+    ['the full set', []],
+    ['the documented chat opt-out', ['chat', 'chat-commands', 'social']],
+  ])('is a self-contained dependency graph - %s', async (_name, optedOut: string[]) => {
+    const loaded = (await loadDefaults()).filter(({ entry }) => !optedOut.includes(entry.id));
     const present = new Set(loaded.map(({ plugin }) => plugin.id));
     const missing = loaded.flatMap(({ plugin }) =>
       (plugin.dependsOn ?? [])

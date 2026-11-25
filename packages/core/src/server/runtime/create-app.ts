@@ -683,6 +683,15 @@ async function bootApp(
 
   const bootLogger = createLogger('create-app');
   const registryEntries = await withoutChatModules(config.plugins, importPlugin<CoreTokenCatalog>);
+  const droppedForChat = config.plugins
+    .filter((e) => !registryEntries.includes(e))
+    .map((e) => e.id);
+  if (droppedForChat.length > 0) {
+    bootLogger.info(
+      { modules: droppedForChat },
+      'CHAT_SERVICE_URL is set: not loading the chat modules here',
+    );
+  }
   const manifestCheck: ServiceManifestCheck<CoreTokenCatalog> | null =
     manifest === null
       ? null

@@ -184,7 +184,7 @@ and each job reaches one of them.
   protected chat route: check that list first.
 - **Chat's block reads and transfer check from a process that does not run chat.** Set
   `CHAT_SERVICE_URL` to the chat service's private origin there: `createApp` drops `chat` and the
-  plugins that depend on it, and `chat-remote` (in `corePlugins()`) takes their place. Set `CHAT_SERVICE_NAME` too if the chat
+  plugins that depend on it, and `chat-remote` (in `corePlugins()`) takes their place; a registry not built from `corePlugins()` must list `chat-remote` itself. Set `CHAT_SERVICE_NAME` too if the chat
   service's `SERVICE_NAME` is not `chat`. It binds
   `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API, so the process
   needs no chat tables. On the chat service set `CHAT_BLOCK_READER_CALLERS` and
