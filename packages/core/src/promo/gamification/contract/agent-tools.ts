@@ -34,6 +34,12 @@ const RakebackFigureSchema = z.object({
   players: z.number().int().nonnegative(),
 });
 
+const RankRewardFigureSchema = z.object({
+  amount: MoneyAmountSchema,
+  rewards: z.number().int().nonnegative(),
+  players: z.number().int().nonnegative(),
+});
+
 export const RakebackLiabilityOutputSchema = z.object({
   dateFrom: z.iso.date(),
   dateTo: z.iso.date(),
@@ -51,6 +57,23 @@ export const RakebackLiabilityOutputSchema = z.object({
     )
     .max(RAKEBACK_LIABILITY_MAX_CURRENCIES),
   truncated: z.boolean(),
+  /** Claim-mode daily, weekly and monthly rank rewards, kept apart from rakeback. */
+  rankRewards: z.object({
+    currencies: z
+      .array(
+        z.object({
+          currency: CurrencyTickerSchema,
+          /** Left for the player and not yet paid, now: what the operator owes. */
+          unclaimed: RankRewardFigureSchema,
+          /** Left over the range, whatever became of them since. */
+          created: RankRewardFigureSchema,
+          /** Claimed or auto-paid over the range, by when each was paid. */
+          paid: RankRewardFigureSchema,
+        }),
+      )
+      .max(RAKEBACK_LIABILITY_MAX_CURRENCIES),
+    truncated: z.boolean(),
+  }),
 });
 export type RakebackLiabilityReport = z.infer<typeof RakebackLiabilityOutputSchema>;
 
@@ -65,12 +88,14 @@ export const rakebackLiabilityTool = defineMcpTool({
     'and the distinct players behind it. A voided accrual counts in accrued only. Narrow with ' +
     'currency. At most 20 currencies, alphabetical; truncated is true when more had rakeback. ' +
     'Amounts are decimal strings in the row currency, never converted or summed across ' +
-    'currencies. Names no player.',
+    'currencies. rankRewards reports the claim-mode daily, weekly and monthly rank rewards the ' +
+    'same way, apart from rakeback: unclaimed now, created over the range, and paid (claimed or ' +
+    'auto-paid) over the range. Names no player.',
   class: 'read',
-  schemaVersion: 1,
+  schemaVersion: 2,
   iam: { resource: 'bonus', action: 'view' },
   inputSchema: RakebackLiabilityInputSchema,
   outputSchema: RakebackLiabilityOutputSchema,
-  redact: { allow: ['dateFrom', 'dateTo', 'currencies', 'truncated'] },
+  redact: { allow: ['dateFrom', 'dateTo', 'currencies', 'truncated', 'rankRewards'] },
   errors: [],
 });

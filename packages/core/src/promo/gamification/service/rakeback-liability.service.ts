@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gte, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 import { dayRangeInstants } from '@openora/core/contracts';
 import { sumMoney, type DrizzleService } from '@openora/core/server';
 import {
@@ -7,15 +7,22 @@ import {
   type RakebackLiabilityInput,
   type RakebackLiabilityReport,
 } from '../contract/index.js';
-import { promoRakebackAccrual } from '../schema/index.js';
+import { promoRakebackAccrual, promoRankPeriodicReward } from '../schema/index.js';
 
 const accrual = promoRakebackAccrual;
+const reward = promoRankPeriodicReward;
 
 /** An amount, how many accruals and how many players make it, over the accruals `where` holds. */
 const figures = (where: SQL) => ({
   amount: sumMoney(accrual.amount, where),
   accruals: sql<number>`count(*) filter (where ${where})`.mapWith(Number),
   players: sql<number>`count(distinct ${accrual.userId}) filter (where ${where})`.mapWith(Number),
+});
+
+const rewardFigures = (where: SQL) => ({
+  amount: sumMoney(reward.amount, where),
+  rewards: sql<number>`count(*) filter (where ${where})`.mapWith(Number),
+  players: sql<number>`count(distinct ${reward.userId}) filter (where ${where})`.mapWith(Number),
 });
 
 /**
@@ -81,6 +88,53 @@ export class RakebackLiabilityService {
           accruals: row.claimedAccruals,
           players: row.claimedPlayers,
         },
+      })),
+      truncated: rows.length > RAKEBACK_LIABILITY_MAX_CURRENCIES,
+      rankRewards: await this.rankRewards(from, to, currency),
+    };
+  }
+
+  private async rankRewards(from: Date, to: Date, currency: string | undefined) {
+    const unclaimed = eq(reward.status, 'claimable');
+    const created = and(gte(reward.createdAt, from), lte(reward.createdAt, to)) as SQL;
+    const paid = and(
+      ne(reward.status, 'claimable'),
+      gte(reward.settledAt, from),
+      lte(reward.settledAt, to),
+    ) as SQL;
+    const rows = await this.drizzle.db
+      .select({
+        currency: reward.currency,
+        unclaimed: rewardFigures(unclaimed).amount,
+        unclaimedRewards: rewardFigures(unclaimed).rewards,
+        unclaimedPlayers: rewardFigures(unclaimed).players,
+        created: rewardFigures(created).amount,
+        createdRewards: rewardFigures(created).rewards,
+        createdPlayers: rewardFigures(created).players,
+        paid: rewardFigures(paid).amount,
+        paidRewards: rewardFigures(paid).rewards,
+        paidPlayers: rewardFigures(paid).players,
+      })
+      .from(reward)
+      .where(
+        and(
+          or(unclaimed, created, paid),
+          currency ? eq(reward.currency, currency.toUpperCase()) : undefined,
+        ),
+      )
+      .groupBy(reward.currency)
+      .orderBy(asc(reward.currency))
+      .limit(RAKEBACK_LIABILITY_MAX_CURRENCIES + 1);
+    return {
+      currencies: rows.slice(0, RAKEBACK_LIABILITY_MAX_CURRENCIES).map((row) => ({
+        currency: row.currency,
+        unclaimed: {
+          amount: row.unclaimed,
+          rewards: row.unclaimedRewards,
+          players: row.unclaimedPlayers,
+        },
+        created: { amount: row.created, rewards: row.createdRewards, players: row.createdPlayers },
+        paid: { amount: row.paid, rewards: row.paidRewards, players: row.paidPlayers },
       })),
       truncated: rows.length > RAKEBACK_LIABILITY_MAX_CURRENCIES,
     };

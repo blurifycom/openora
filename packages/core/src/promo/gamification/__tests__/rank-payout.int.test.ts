@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, seedPlayerWithUser, type TestDb } from '@openora/core/testing';
 import { makeOutboxEventBus, mock } from '../../../testing/mock.js';
 import type {
+  AuditWritePort,
   BonusGrantCommands,
   ExchangeRateReader,
   PlayEligibilityPort,
@@ -13,24 +14,29 @@ import type {
 import { eventOutbox, type EventBus } from '@openora/core/server';
 import { migrate as serverMigrate } from '@openora/core/server/migrate';
 import { migrate } from '../migrate.js';
+import { migrate as identityMigrate } from '@openora/core/pam/migrate/identity';
+import { migrate as profileMigrate } from '@openora/core/pam/migrate/profile';
 import {
   promoPlayerRank,
   promoRankConfig,
+  promoRankPeriodPayout,
   promoRankPeriodWager,
   promoRankRoundWager,
   promoRankLevelUp,
+  promoRankPeriodicReward,
   promoRankTier,
 } from '../schema/index.js';
-import { DEFAULT_PAYOUT_ANCHORS } from '../contract/index.js';
+import { DEFAULT_PAYOUT_ANCHORS, type SetRankConfigInput } from '../contract/index.js';
 import { seedRankLadder } from '../seed/index.js';
 import { RankPayoutService } from '../service/rank-payout.service.js';
+import { RankAdminService } from '../service/rank-admin.service.js';
 
 let db: TestDb;
 const grant = vi.fn<BonusGrantCommands['grant']>();
 const isRestricted = vi.fn<PlayEligibilityPort['isRestricted']>();
 const convert = vi.fn<ExchangeRateReader['convert']>();
 const getBalances = vi.fn<WalletReader['getBalances']>();
-const logger = { warn: vi.fn(), error: vi.fn() };
+const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
 const LEVEL_UP_TERMS = { wageringMultiplier: '3', expiryDays: 7 };
 const DAILY_TERMS = { wageringMultiplier: '1', expiryDays: 1 };
@@ -112,8 +118,7 @@ const wageredInPeriod = (
     .insert(promoRankPeriodWager)
     .values({ userId, kind: 'daily', periodKey, currency: 'USD', wagered, margin });
 
-const holding = async (key: string, lastWageredAt: Date | null) => {
-  const userId = randomUUID();
+const holding = async (key: string, lastWageredAt: Date | null, userId: string = randomUUID()) => {
   await db.drizzle.db.insert(promoPlayerRank).values({
     userId,
     currency: 'USD',
@@ -125,14 +130,40 @@ const holding = async (key: string, lastWageredAt: Date | null) => {
 };
 
 /** Holds the rank and wagered inside the period the daily payout settles. */
-const played = async (key: string, wagered = '5') => {
-  const userId = await holding(key, YESTERDAY_NOON);
-  await wageredInPeriod(userId, wagered);
-  return userId;
+const played = async (key: string, wagered = '5', userId?: string) => {
+  const holder = await holding(key, YESTERDAY_NOON, userId);
+  await wageredInPeriod(holder, wagered);
+  return holder;
+};
+
+type AccountStatus = 'active' | 'self_excluded' | 'suspended' | 'closed';
+
+/** `played`, for a player with a real account in the given status. */
+const playedWithAccount = async (key: string, status: AccountStatus = 'active') =>
+  played(key, '5', (await seedPlayerWithUser(db, { status })).account.id);
+
+/** Saves the rank config through the admin service, as of `at`. */
+const saveConfigAt = async (at: Date, rewards: SetRankConfigInput['rewards']) => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(at);
+  try {
+    await new RankAdminService(
+      db.drizzle,
+      mock<AuditWritePort>({ recordInTransaction: vi.fn() }),
+    ).setConfig(randomUUID(), {
+      eligibleProducts: ['casino', 'live-casino', 'sportsbook', 'pvp'],
+      rewards,
+      payoutAnchors: DEFAULT_PAYOUT_ANCHORS,
+      payInPlayerCurrency: false,
+      periodicRequiresActivity: true,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 };
 
 beforeAll(async () => {
-  db = await createTestDb([serverMigrate, migrate]);
+  db = await createTestDb([serverMigrate, identityMigrate, profileMigrate, migrate]);
 });
 
 afterAll(() => db.drop());
@@ -145,6 +176,8 @@ beforeEach(async () => {
   getBalances.mockResolvedValue({ activeCurrency: 'USD', balances: [] });
   await db.drizzle.db.delete(eventOutbox);
   await db.drizzle.db.delete(promoRankLevelUp);
+  await db.drizzle.db.delete(promoRankPeriodicReward);
+  await db.drizzle.db.delete(promoRankPeriodPayout);
   await db.drizzle.db.delete(promoRankPeriodWager);
   await db.drizzle.db.delete(promoRankRoundWager);
   await db.drizzle.db.delete(promoPlayerRank);
@@ -657,6 +690,291 @@ describe('paying a periodic bonus', () => {
     grant.mockClear();
     expect(await service().payPeriodic('daily', NOW)).toEqual([]);
     expect(grant).not.toHaveBeenCalled();
+  });
+});
+
+describe('leaving a periodic reward to claim', () => {
+  const claimMode = () =>
+    db.drizzle.db.update(promoRankConfig).set({ rewards: { daily: { payout: 'claim' } } });
+
+  const claimable = async () =>
+    (
+      await db.drizzle.db
+        .select({ payload: eventOutbox.payload })
+        .from(eventOutbox)
+        .where(eq(eventOutbox.topic, 'promo.rank.reward.claimable'))
+    ).map(({ payload }) => payload);
+
+  const rewards = () => db.drizzle.db.select().from(promoRankPeriodicReward);
+
+  it('leaves one claimable row for the period, grants no bonus, and announces it', async () => {
+    await claimMode();
+    const userId = await playedWithAccount('silver');
+
+    const paid = await service().payPeriodic('daily', NOW);
+
+    const [row] = await rewards();
+    expect(row).toMatchObject({
+      userId,
+      kind: 'daily',
+      periodKey: DAILY_PERIOD_KEY,
+      periodStart: new Date('2026-09-21T00:00:00Z'),
+      periodEnd: NOW,
+      tierId: await tierId('silver'),
+      ladderCurrency: 'USD',
+      ladderAmount: '0.500000000000000000',
+      currency: 'USD',
+      amount: '0.500000000000000000',
+      status: 'claimable',
+      settledAt: null,
+      transactionId: null,
+    });
+    expect(paid).toEqual([
+      {
+        userId,
+        rewardId: row?.id,
+        kind: 'daily',
+        periodKey: DAILY_PERIOD_KEY,
+        currency: 'USD',
+        amount: '0.500000000000000000',
+      },
+    ]);
+    expect(await claimable()).toEqual(paid);
+    expect(grant).not.toHaveBeenCalled();
+    expect(await announcedGrants()).toEqual([]);
+  });
+
+  it('leaves a period once, however often the job runs', async () => {
+    await claimMode();
+    await playedWithAccount('silver');
+
+    await service().payPeriodic('daily', NOW);
+    const second = await service().payPeriodic('daily', NOW);
+
+    expect(second).toEqual([]);
+    expect(await rewards()).toHaveLength(1);
+    expect(await claimable()).toHaveLength(1);
+  });
+
+  it('fixes the amount in the payout currency when the period settles', async () => {
+    await db.drizzle.db
+      .update(promoRankConfig)
+      .set({ payoutCurrency: 'USDT', rewards: { daily: { payout: 'claim' } } });
+    convert.mockResolvedValue('0.480000000000000000');
+    await playedWithAccount('silver');
+
+    await service().payPeriodic('daily', NOW);
+
+    expect(await rewards()).toMatchObject([
+      { ladderAmount: '0.500000000000000000', currency: 'USDT', amount: '0.480000000000000000' },
+    ]);
+  });
+
+  it('keeps the activity rule and skips a blocked player', async () => {
+    await claimMode();
+    await holding('silver', TWO_DAYS_AGO);
+    const blocked = await playedWithAccount('silver');
+    isRestricted.mockImplementation(async (userId) => userId === blocked);
+
+    expect(await service().payPeriodic('daily', NOW)).toEqual([]);
+    expect(await rewards()).toEqual([]);
+  });
+
+  it('pays in claim mode with no bonus grant port bound', async () => {
+    await claimMode();
+    await playedWithAccount('silver');
+    const noGrants = new RankPayoutService(
+      db.drizzle,
+      undefined,
+      mock<PlayEligibilityPort>({ isRestricted }),
+      mock<ExchangeRateReader>({ convert }),
+      mock<WalletReader>({ getBalances }),
+      makeOutboxEventBus(),
+      logger,
+      'flat',
+    );
+
+    expect(await noGrants.payPeriodic('daily', NOW)).toHaveLength(1);
+  });
+  const watermark = async () => {
+    const [config] = await db.drizzle.db
+      .select({ paidThrough: promoRankConfig.paidThrough })
+      .from(promoRankConfig);
+    return config?.paidThrough.daily;
+  };
+
+  it('leaves nothing for an account closed, suspended, self-excluded or missing, and settles the period', async () => {
+    await claimMode();
+    const active = await playedWithAccount('silver');
+    await playedWithAccount('silver', 'closed');
+    await playedWithAccount('silver', 'suspended');
+    await playedWithAccount('silver', 'self_excluded');
+    await played('silver');
+
+    const paid = await service().payPeriodic('daily', NOW);
+
+    expect(paid.map((p) => p.userId)).toEqual([active]);
+    expect((await rewards()).map((r) => r.userId)).toEqual([active]);
+    expect((await claimable()).map((p) => (p as { userId: string }).userId)).toEqual([active]);
+    expect(await watermark()).toBe(NOW.toISOString());
+    expect(logger.info).toHaveBeenCalledTimes(4);
+  });
+
+  it('finishes a period paid as a bonus before periods were pinned as a bonus, once switched to claim', async () => {
+    const failing = await playedWithAccount('silver');
+    const paid = await playedWithAccount('silver');
+    const granted = new Set<string>();
+    let failingIsDown = true;
+    grant.mockImplementation(async (_tx, args) => {
+      if (args.userId === failing && failingIsDown) {
+        throw new Error('database unavailable');
+      }
+      const created = !granted.has(args.userId);
+      granted.add(args.userId);
+      return { ok: true, grantId: randomUUID(), created };
+    });
+    await service().payPeriodic('daily', NOW);
+    await db.drizzle.db.delete(promoRankPeriodPayout);
+
+    await saveConfigAt(NOW, { levelUp: LEVEL_UP_TERMS, daily: { payout: 'claim' } });
+    failingIsDown = false;
+    grant.mockClear();
+    const retried = await service().payPeriodic('daily', NOW);
+
+    expect(retried.map((g) => g.userId)).toEqual([failing]);
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: failing, terms: DAILY_TERMS }),
+    );
+    expect(granted).toEqual(new Set([failing, paid]));
+    expect(await rewards()).toEqual([]);
+    expect(await watermark()).toBe(NOW.toISOString());
+  });
+
+  it('finishes a bonus period as a bonus after the kind is dropped and added back as claim', async () => {
+    const failing = await playedWithAccount('silver');
+    await playedWithAccount('silver');
+    let failingIsDown = true;
+    grant.mockImplementation(async (_tx, args) => {
+      if (args.userId === failing && failingIsDown) {
+        throw new Error('database unavailable');
+      }
+      return { ok: true, grantId: randomUUID(), created: true };
+    });
+    await service().payPeriodic('daily', NOW);
+    await db.drizzle.db.delete(promoRankPeriodPayout);
+
+    await saveConfigAt(NOW, { levelUp: LEVEL_UP_TERMS });
+    await saveConfigAt(NOW, { levelUp: LEVEL_UP_TERMS, daily: { payout: 'claim' } });
+    failingIsDown = false;
+    const retried = await service().payPeriodic('daily', NOW);
+
+    expect(retried.map((g) => g.userId)).toContain(failing);
+    expect(await rewards()).toEqual([]);
+  });
+
+  it('skips a period pinned as a bonus while no bonus grant port is bound, without retrying it', async () => {
+    await playedWithAccount('silver');
+    await db.drizzle.db
+      .insert(promoRankPeriodPayout)
+      .values({ kind: 'daily', periodKey: DAILY_PERIOD_KEY, terms: DAILY_TERMS });
+    await claimMode();
+    const noGrants = new RankPayoutService(
+      db.drizzle,
+      undefined,
+      mock<PlayEligibilityPort>({ isRestricted }),
+      mock<ExchangeRateReader>({ convert }),
+      mock<WalletReader>({ getBalances }),
+      makeOutboxEventBus(),
+      logger,
+      'flat',
+    );
+
+    expect(await noGrants.payPeriodic('daily', NOW)).toEqual([]);
+    expect(await rewards()).toEqual([]);
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'daily', sourceRef: DAILY_PERIOD_KEY }),
+      expect.any(String),
+    );
+  });
+
+  it('finishes a bonus period as a bonus after the kind is switched to claim', async () => {
+    const failing = await playedWithAccount('silver');
+    const paid = await playedWithAccount('silver');
+    const granted = new Set<string>();
+    let failingIsDown = true;
+    grant.mockImplementation(async (_tx, args) => {
+      if (args.userId === failing && failingIsDown) {
+        throw new Error('database unavailable');
+      }
+      const created = !granted.has(args.userId);
+      granted.add(args.userId);
+      return { ok: true, grantId: randomUUID(), created };
+    });
+    expect((await service().payPeriodic('daily', NOW)).map((g) => g.userId)).toEqual([paid]);
+    expect(await watermark()).toBeUndefined();
+
+    await claimMode();
+    failingIsDown = false;
+    grant.mockClear();
+    const retried = await service().payPeriodic('daily', NOW);
+
+    expect(retried.map((g) => g.userId)).toEqual([failing]);
+    expect(grant).toHaveBeenCalledTimes(2);
+    expect(grant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: failing, terms: DAILY_TERMS }),
+    );
+    expect(await rewards()).toEqual([]);
+    expect(await claimable()).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'daily', pinned: 'bonus' }),
+      expect.any(String),
+    );
+    expect(await watermark()).toBe(NOW.toISOString());
+
+    const nextDay = new Date('2026-09-23T00:00:00Z');
+    await wageredInPeriod(failing, '5', 'rank-daily:2026-09-22T00');
+    await db.drizzle.db
+      .update(promoPlayerRank)
+      .set({ lastWageredAt: new Date('2026-09-22T12:00:00Z') })
+      .where(eq(promoPlayerRank.userId, failing));
+    grant.mockClear();
+    await service().payPeriodic('daily', nextDay);
+
+    expect(grant).not.toHaveBeenCalled();
+    expect(await rewards()).toMatchObject([
+      { userId: failing, periodKey: 'rank-daily:2026-09-22T00', status: 'claimable' },
+    ]);
+  });
+
+  it('finishes a claim period as claimable cash after the kind is switched to bonus', async () => {
+    await claimMode();
+    const failing = await playedWithAccount('silver');
+    const left = await playedWithAccount('silver');
+    const events = makeOutboxEventBus();
+    const emit = events.emitInTransaction.bind(events);
+    let failingIsDown = true;
+    vi.spyOn(events, 'emitInTransaction').mockImplementation(async (tx, topic, payload) => {
+      if ((payload as { userId?: string }).userId === failing && failingIsDown) {
+        throw new Error('outbox unavailable');
+      }
+      return emit(tx, topic, payload);
+    });
+    expect((await service('flat', events).payPeriodic('daily', NOW)).map((p) => p.userId)).toEqual([
+      left,
+    ]);
+    expect(await watermark()).toBeUndefined();
+
+    await db.drizzle.db.update(promoRankConfig).set({ rewards: { daily: DAILY_TERMS } });
+    failingIsDown = false;
+    const retried = await service('flat', events).payPeriodic('daily', NOW);
+
+    expect(retried.map((p) => p.userId)).toEqual([failing]);
+    expect(grant).not.toHaveBeenCalled();
+    expect((await rewards()).map((r) => r.userId).sort()).toEqual([failing, left].sort());
+    expect(await watermark()).toBe(NOW.toISOString());
   });
 });
 

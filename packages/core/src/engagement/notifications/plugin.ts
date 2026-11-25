@@ -468,6 +468,15 @@ export const notificationEventMap: NotificationMapEntry[] = [
     }),
   ),
 
+  mapEvent('promo.rank.reward.claimable', (p) =>
+    notification({
+      userId: p.userId,
+      type: 'rank.reward.claimable',
+      params: { kind: p.kind, amount: p.amount, currency: p.currency },
+      data: { rewardId: p.rewardId },
+    }),
+  ),
+
   mapEvent('chat.user.mentioned', (p) =>
     notification({
       userId: p.mentionedUserId,

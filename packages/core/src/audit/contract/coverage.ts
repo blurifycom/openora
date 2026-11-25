@@ -93,6 +93,17 @@ export const AUDIT_COVERAGE_GAPS = {
     reason:
       'an invitation to claim, no money moves; the payout is audited by RakebackClaimService (promo.rakeback.claimed / promo.rakeback.auto_paid)',
   },
+  'promo.rank.reward.claimable': {
+    kind: 'exempt',
+    reason:
+      'an invitation to claim, no money moves; the reward row is the record and the payout is audited by RankRewardClaimService (promo.rank_reward.claimed / promo.rank_reward.auto_paid)',
+  },
+  'promo.rank.reward.claimed': {
+    kind: 'atSource',
+    writer:
+      'RankRewardClaimService via recordInTransaction (promo.rank_reward.claimed / promo.rank_reward.auto_paid)',
+    reason: 'joins the cash credit and the reward row flip; this topic is the announcement',
+  },
   'promo.rank.changed': {
     kind: 'atSource',
     writer: 'RankService via recordInTransaction',

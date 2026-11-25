@@ -14,7 +14,11 @@ import { createMcpKernel, createTestDb, type TestDb } from '@openora/core/testin
 import { makeAuditWriter } from '../../../testing/mock.js';
 import { RakebackLiabilityInputSchema } from '../contract/index.js';
 import { migrate } from '../migrate.js';
-import { promoRakebackAccrual, promoRakebackClaim } from '../schema/index.js';
+import {
+  promoRakebackAccrual,
+  promoRakebackClaim,
+  promoRankPeriodicReward,
+} from '../schema/index.js';
 import gamificationPlugin from '../plugin.js';
 
 let db: TestDb;
@@ -71,6 +75,32 @@ async function seedClaim(userId: string, settledAt: Date) {
   );
 }
 
+async function seedReward(
+  userId: string,
+  values: Partial<typeof promoRankPeriodicReward.$inferInsert> & { amount: string },
+) {
+  await db.drizzle.db.insert(promoRankPeriodicReward).values({
+    userId,
+    kind: 'daily',
+    periodKey: randomUUID(),
+    periodStart: AT('2026-01-09T00:00:00.000Z'),
+    periodEnd: AT('2026-01-10T00:00:00.000Z'),
+    tierId: randomUUID(),
+    ladderCurrency: 'USD',
+    ladderAmount: values.amount,
+    currency: 'USD',
+    createdAt: AT('2026-01-10T10:00:00.000Z'),
+    ...values,
+  });
+}
+
+const paid = (settledAt: string) => ({
+  status: 'claimed' as const,
+  settledAt: AT(settledAt),
+  transactionId: randomUUID(),
+  idempotencyKey: randomUUID(),
+});
+
 beforeAll(async () => {
   db = await createTestDb([migrate]);
 });
@@ -81,7 +111,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${promoRakebackAccrual}, ${promoRakebackClaim} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${promoRakebackAccrual}, ${promoRakebackClaim}, ${promoRankPeriodicReward} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -141,6 +171,7 @@ describe('bonus.rakeback_liability through the MCP kernel (real PG)', () => {
           },
         ],
         truncated: false,
+        rankRewards: { currencies: [], truncated: false },
       },
     });
     expect(
@@ -150,6 +181,48 @@ describe('bonus.rakeback_liability through the MCP kernel (real PG)', () => {
         runContext(),
       ),
     ).toMatchObject({ ok: true, output: { currencies: [{ currency: 'EUR' }] } });
+  });
+
+  it('reports claim-mode rank rewards apart from rakeback', async () => {
+    const [alice, bob] = [randomUUID(), randomUUID()];
+    await seedAccrual(alice, { amount: '1' });
+    // Unclaimed now: one created in the range, one before it.
+    await seedReward(alice, { amount: '2' });
+    await seedReward(bob, { amount: '3', createdAt: AT('2025-12-20T10:00:00.000Z') });
+    // Created in the range, claimed on its last millisecond; auto-paid after it.
+    await seedReward(bob, { amount: '5', ...paid('2026-01-31T23:59:59.999Z') });
+    await seedReward(alice, {
+      amount: '7',
+      ...paid('2026-02-01T00:00:00.000Z'),
+      status: 'auto_paid',
+    });
+    await seedReward(alice, { amount: '4', currency: 'EUR' });
+
+    const result = await bootKernel().invokeTool('bonus.rakeback_liability', RANGE, runContext());
+
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        currencies: [{ currency: 'USD', unclaimed: { amount: amount(1) } }],
+        rankRewards: {
+          currencies: [
+            {
+              currency: 'EUR',
+              unclaimed: { amount: amount(4), rewards: 1, players: 1 },
+              created: { amount: amount(4), rewards: 1, players: 1 },
+              paid: { amount: amount(0), rewards: 0, players: 0 },
+            },
+            {
+              currency: 'USD',
+              unclaimed: { amount: amount(5), rewards: 2, players: 2 },
+              created: { amount: amount(14), rewards: 3, players: 2 },
+              paid: { amount: amount(5), rewards: 1, players: 1 },
+            },
+          ],
+          truncated: false,
+        },
+      },
+    });
   });
 
   it('refuses a range over 366 days', async () => {
