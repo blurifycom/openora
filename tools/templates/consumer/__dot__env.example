@@ -29,7 +29,7 @@ WITHDRAWAL_PIN_HMAC_SECRET=
 # Chat runs as its own service in compose.prod.yml, next to the API on the same database. The two
 # call each other over a signed internal API; set a shared secret of 32+ characters
 # (openssl rand -base64 32). Local dev runs every module in one process and ignores it.
-# compose.prod.yml sets the rest: SERVICE_NAME, REALTIME_NAMESPACE, SERVICE_MANIFEST,
+# compose.prod.yml sets the rest: SERVICE_NAME, REALTIME_NAMESPACE, SERVICE_MANIFEST (chat only),
 # CHAT_SERVICE_URL, CHAT_BLOCK_READER_CALLERS, CHAT_TRANSFER_CHECK_CALLERS and JOB_WORKERS.
 # INTERNAL_API_SECRETS=
 

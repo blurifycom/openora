@@ -73,6 +73,7 @@ import {
 } from '../auth/index.js';
 import { loadPlugins, parseServiceManifest, type PluginEntry } from '../plugin-host/index.js';
 import { importPlugin } from '../plugin-host/load-plugins.js';
+import { withoutChatModules } from '../plugin-host/remote-chat.js';
 import {
   assertServiceComplete,
   selectServiceEntries,
@@ -518,7 +519,8 @@ function reportServerFault(error: unknown) {
 
 /**
  * The single composition root: wires the DI container, boots the plugins in
- * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
+ * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset; with
+ * `CHAT_SERVICE_URL` set, minus `chat` and the plugins that depend on it), and
  * mounts the resulting oRPC router on a Hono app. A manifest that leaves out a module its
  * modules depend on, the module that binds a port they require, or the module behind a
  * control - a selected module's `controlPorts`, or AdminGuard's - that the plugin list has,
@@ -680,17 +682,18 @@ async function bootApp(
   const corsOrigins = resolveCorsOrigins(config.cors);
 
   const bootLogger = createLogger('create-app');
+  const registryEntries = await withoutChatModules(config.plugins, importPlugin<CoreTokenCatalog>);
   const manifestCheck: ServiceManifestCheck<CoreTokenCatalog> | null =
     manifest === null
       ? null
       : {
-          entries: config.plugins,
+          entries: registryEntries,
           manifest,
           readPlugin: (entry) => importPlugin(entry),
           hostControls: ADMIN_GUARD_CONTROLS,
           isBound: (port) => container.has(port),
         };
-  const plugins = manifestCheck ? await selectServiceEntries(manifestCheck) : config.plugins;
+  const plugins = manifestCheck ? await selectServiceEntries(manifestCheck) : registryEntries;
   if (manifestCheck) {
     bootLogger.info(
       { modules: plugins.map((e) => (e.noRoutes ? `${e.id} (no routes)` : e.id)) },

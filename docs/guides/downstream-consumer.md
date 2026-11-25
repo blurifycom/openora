@@ -98,7 +98,7 @@ and each job reaches one of them.
   AdminGuard's ports, so every split loads iam and identity, and with them audit and mail.
   Identity's controls pull in compliance, and compliance depends on wallet, gaming,
   player-management and exchange-rate; player-management requires the `CHAT_BLOCK_READER` port, which
-  the `chat` module binds, or `chat-remote` when chat runs in another service. A split is those nine
+  the `chat` module binds, or `chat-remote` when chat runs in another service (`CHAT_SERVICE_URL`). A split is those nine
   modules, `chat` or `chat-remote`, and the ones you meant to move, and until
   [ADR-0050](../adr/0050-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
   nine handles every event once in the split and once in the rest of the install.
@@ -182,9 +182,10 @@ and each job reaches one of them.
   the first failure, then one summary line per 30 seconds with the count. A 4xx from identity
   answers 401, so a caller missing from `SESSION_RESOLVER_CALLERS` shows as 401 on every
   protected chat route: check that list first.
-- **Chat's block reads and transfer check from a process that does not run chat.** Load the
-  `chat-remote` plugin there, in place of `chat`, and set `CHAT_SERVICE_URL` to the chat service's
-  private origin (and `CHAT_SERVICE_NAME` if its `SERVICE_NAME` is not `chat`). It binds
+- **Chat's block reads and transfer check from a process that does not run chat.** Set
+  `CHAT_SERVICE_URL` to the chat service's private origin there: `createApp` drops `chat` and the
+  plugins that depend on it, and `chat-remote` (in `corePlugins()`) takes their place. Set `CHAT_SERVICE_NAME` too if the chat
+  service's `SERVICE_NAME` is not `chat`. It binds
   `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API, so the process
   needs no chat tables. On the chat service set `CHAT_BLOCK_READER_CALLERS` and
   `CHAT_TRANSFER_CHECK_CALLERS` to the caller's `SERVICE_NAME`; unset, every caller is refused. The

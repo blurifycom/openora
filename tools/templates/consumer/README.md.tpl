@@ -50,8 +50,8 @@ is listed at https://openora.ai/documentation/telemetry.
 ## Deploy
 
 `compose.prod.yml` runs the app on one server with Docker: Postgres, Redis, a migration step, then
-the API and chat as two services of the same image, behind a gateway that routes `/chat/*` and
-`/backoffice/chat/*` to chat. Before the first start:
+the API and chat as two services of the same image, behind a gateway that routes the chat paths
+(`/chat/*`, `/social/*`, `/chat-command/*` and their `/backoffice` twins) to chat. Before the first start:
 
 1. Copy the repo to the server, `pnpm-lock.yaml` included. Never commit `.env`.
 2. In the server's `.env`, set fresh `AUTH_SECRET`, `WITHDRAWAL_PIN_HMAC_SECRET` and `INTERNAL_API_SECRETS`

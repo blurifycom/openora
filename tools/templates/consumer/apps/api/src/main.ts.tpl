@@ -15,6 +15,8 @@ import { profileContract } from '@openora/core/pam/contracts/profile';
 import { cmsContract } from '@openora/core/cms/contracts';
 import { notificationsContract } from '@openora/core/engagement/contracts/notifications';
 import { chatContract } from '@openora/core/engagement/contracts/chat';
+import { chatCommandsContract } from '@openora/core/engagement/contracts/chat-commands';
+import { socialContract } from '@openora/core/engagement/contracts/social';
 import { walletContract } from '@openora/core/wallet/contract';
 import { gamingContract } from '@openora/core/casino/contracts/gaming';
 import { lobbyContract } from '@openora/core/casino/contracts/lobby';
@@ -30,6 +32,8 @@ const contract = composeContract({
   wallet: walletContract,
   gaming: gamingContract,
   chat: chatContract,
+  chatCommands: chatCommandsContract,
+  social: socialContract,
   lobby: lobbyContract,
   backoffice: backofficeContract,
   profile: profileContract,

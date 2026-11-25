@@ -14,6 +14,10 @@ const CORE_PLUGIN_MODULES = [
   { id: 'gaming', path: '@openora/core/casino/plugins/gaming' },
   { id: 'lobby', path: '@openora/core/casino/plugins/lobby' },
   { id: 'chat', path: '@openora/core/engagement/plugins/chat' },
+  { id: 'chat-commands', path: '@openora/core/engagement/plugins/chat-commands' },
+  { id: 'social', path: '@openora/core/engagement/plugins/social' },
+  // Binds the chat ports to the chat service when CHAT_SERVICE_URL is set; nothing otherwise.
+  { id: 'chat-remote', path: '@openora/core/engagement/plugins/chat-remote' },
   { id: 'profile', path: '@openora/core/pam/plugins/profile' },
   { id: 'tag', path: '@openora/core/pam/plugins/tag' },
   { id: 'player-management', path: '@openora/core/pam/plugins/player-management' },

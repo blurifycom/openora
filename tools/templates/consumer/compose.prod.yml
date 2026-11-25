@@ -5,7 +5,7 @@
 # INTERNAL_API_SECRETS and POSTGRES_PASSWORD (letters and digits only, it goes into a URL).
 # No demo data is seeded here. To run chat inside the API instead, see
 # docs/guides/split-deployment.md: drop the `chat` and `gateway` services, publish `api`,
-# and remove SERVICE_MANIFEST, SERVICE_NAME, REALTIME_NAMESPACE and CHAT_SERVICE_URL from it.
+# and remove CHAT_SERVICE_URL from it.
 x-runtime: &runtime
   build: .
   env_file: .env
@@ -51,15 +51,15 @@ services:
       postgres:
         condition: service_healthy
 
-  # Everything but chat. `chat-remote` stands in for the chat module: it binds the chat ports
-  # to the chat service's internal API. Pinned to the names a monolith already uses.
+  # Everything but chat, from the same registry: with CHAT_SERVICE_URL set, createApp drops the
+  # chat modules and `chat-remote` binds the chat ports to the chat service's internal API.
+  # Pinned to the names a monolith already uses.
   api:
     <<: *runtime
     environment:
       <<: *runtime-env
       SERVICE_NAME: monolith
       REALTIME_NAMESPACE: monolith
-      SERVICE_MANIFEST: audit,identity,iam,mail,notifications,exchange-rate,wallet,gaming,lobby,profile,tag,player-management,compliance,admin-console,analytics,player-note,cms,chat-remote
       CHAT_SERVICE_URL: http://chat:3001
       CHAT_SERVICE_ALLOW_HTTP: 'true' # the compose network is private; use https across hosts
     depends_on:
@@ -76,7 +76,7 @@ services:
       <<: *runtime-env
       SERVICE_NAME: chat
       REALTIME_NAMESPACE: monolith
-      SERVICE_MANIFEST: chat,identity:no-routes,iam:no-routes,audit:no-routes,mail:no-routes,compliance:no-routes,wallet:no-routes,gaming:no-routes,exchange-rate:no-routes,player-management:no-routes,tag:no-routes
+      SERVICE_MANIFEST: chat,chat-commands,social,identity:no-routes,iam:no-routes,audit:no-routes,mail:no-routes,compliance:no-routes,player-management:no-routes,wallet:no-routes,gaming:no-routes,exchange-rate:no-routes,tag:no-routes
       JOB_WORKERS: chat-*
       CHAT_BLOCK_READER_CALLERS: monolith
       CHAT_TRANSFER_CHECK_CALLERS: monolith

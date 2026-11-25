@@ -68,22 +68,21 @@ Decide this per module, later. Splitting the process does not force it.
 
 ## Worked example: chat next to the main API
 
-The consumer template's `compose.prod.yml` is this example on one server, with the shared database and a Caddy gateway for the path prefixes. Its `api` service sets `SERVICE_MANIFEST` to every core module but `chat`, plus `chat-remote`; its `chat` service sets `chat` plus the dependency modules as `:no-routes`, which is the closed list the boot accepts for the core plugins. Both share `REALTIME_NAMESPACE=monolith` and `INTERNAL_API_SECRETS`. It leaves out `social` and `chat-commands`, which `corePlugins()` does not register. To run one process instead, remove `chat-remote` and the manifest variables from `api` and drop `chat` and `gateway`.
+The consumer template's `compose.prod.yml` is this example on one server, with the shared database and a Caddy gateway for the path prefixes. The `api` service sets no manifest; the `chat` service sets `chat`, `chat-commands`, `social` and the modules they need as `:no-routes`. Both share `REALTIME_NAMESPACE=monolith` and `INTERNAL_API_SECRETS`. To run one process instead, remove `CHAT_SERVICE_URL` from `api` and drop `chat` and `gateway`.
 
-Chat's HTTP routes sit under `/chat/*` (player) and `/backoffice/chat/*` (staff), and its handlers and jobs (room purge, moderation expiry) run wherever the module loads.
+Chat's HTTP routes sit under `/chat/*` (player, realtime streams included) and `/backoffice/chat/*` (staff), and its handlers and jobs (room purge, moderation expiry) run wherever the module loads.
 
-The main API can drop chat. Of the modules it keeps, only `player-management` needs a chat port (`CHAT_BLOCK_READER`, for player search), and it requires the port, not the `chat` module. `social` and `chat-commands` `dependsOn` chat, so they stay with the chat service. Load the `chat-remote` plugin in the main API and it binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API (ADR-0054, ADR-0060):
+The main API can drop chat. Of the modules it keeps, only `player-management` needs a chat port (`CHAT_BLOCK_READER`, for player search), and it requires the port, not the `chat` module. Set `CHAT_SERVICE_URL` and `createApp` drops `chat` and every plugin that `dependsOn` it, directly or through another dropped one (`social`, `chat-commands`), before it applies any manifest. The `chat-remote` plugin, part of `corePlugins()`, then binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API (ADR-0054, ADR-0060). A module of your own that needs chat's tables must `dependsOn` chat to be dropped with it:
 
 ```
 SERVICE_NAME=monolith
 REALTIME_NAMESPACE=monolith
-SERVICE_MANIFEST=<every module>,chat-remote
 CHAT_SERVICE_URL=https://chat.internal   # the chat service's private origin
 CHAT_SERVICE_NAME=chat                   # its SERVICE_NAME, the default
 INTERNAL_API_SECRETS=<shared secret>
 ```
 
-The main API then has no chat tables to migrate and serves no chat route. The boot fails when `chat-remote` is in the manifest and a module that needs a chat port finds none, which is what an unset `CHAT_SERVICE_URL` looks like. It also fails in the other direction: the chat plugin refuses to boot while `CHAT_SERVICE_URL` is set, so one process never binds the ports twice. In production the URL must be https unless `CHAT_SERVICE_ALLOW_HTTP=true` (a mesh that encrypts the hop).
+The main API then has no chat tables to migrate and serves no chat route. A manifest on the main API must not name a dropped module (that is an unknown id); it is not needed to leave chat out. It also fails in the other direction: the chat plugin refuses to boot while `CHAT_SERVICE_URL` is set, so one process never binds the ports twice. In production the URL must be https unless `CHAT_SERVICE_ALLOW_HTTP=true` (a mesh that encrypts the hop).
 
 The chat service serves the two routes only to the callers it names, and refuses every caller while the lists are unset:
 
@@ -175,11 +174,11 @@ The account closed and account reopened jobs read the account fresh from the ide
 
 1. Deploy the chat service with the new `SERVICE_NAME`, taking no traffic, and set `CHAT_BLOCK_READER_CALLERS` and `CHAT_TRANSFER_CHECK_CALLERS` to the main API's `SERVICE_NAME`.
 2. Move the chat prefixes above to the chat service at the load balancer.
-3. Deploy the main API with `chat-remote` in the manifest and `CHAT_SERVICE_URL` set, without `chat`.
+3. Deploy the main API with `CHAT_SERVICE_URL` set, which drops chat from it.
 
 Until step 3 the main API still loads chat, so chat handlers run in both services, idempotently. Its consumer group does not move, so step 3 loses nothing. The chat service's group is new: it starts at the stream tail, so deploy it (step 1) before you depend on it.
 
-Rollback is routing and the manifest. Redeploy the main API with plain `chat` in the manifest, unset `CHAT_SERVICE_URL`, and point the prefixes back at it.
+Rollback is routing and that variable. Redeploy the main API with `CHAT_SERVICE_URL` unset, and point the prefixes back at it.
 
 ## Checklist
 
