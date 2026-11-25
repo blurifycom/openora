@@ -78,7 +78,18 @@ describe('loadPlugins', () => {
       expect(built).toEqual(['ported']);
     });
 
-    it('mounts its router when not marked', async () => {
+    it('wires none of its event handlers or job workers', async () => {
+      const registry = await loadPlugins([{ id: 'ported', path, noRoutes: true }], new Container());
+
+      expect(registry.events.getAll().size).toBe(0);
+      expect(registry.jobs.getAll()).toEqual([]);
+      expect(registry.withheld()).toEqual([
+        { owner: 'ported', kind: 'event', name: 'ported.happened' },
+        { owner: 'ported', kind: 'job', name: 'ported-job' },
+      ]);
+    });
+
+    it('mounts its router and wires its handlers and workers when not marked', async () => {
       const container = new Container();
 
       const registry = await loadPlugins([{ id: 'ported', path }], container);
@@ -87,6 +98,9 @@ describe('loadPlugins', () => {
       expect(registry.routers.getAll().get('ported')?.(container as never)).toEqual({
         route: 'real',
       });
+      expect(registry.events.getAll().get('ported.happened')).toHaveLength(1);
+      expect(registry.jobs.getAll().map((w) => w.queue)).toEqual(['ported-job']);
+      expect(registry.withheld()).toEqual([]);
     });
   });
 });

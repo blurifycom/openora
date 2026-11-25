@@ -34,9 +34,10 @@ export type TypedContainer<C extends TokenCatalog> = {
 };
 
 // Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
-// `mounted: false` (a `:no-routes` module): the factory still runs, because several modules
-// build their service and schedule their jobs here, but its router is discarded. Skip only
-// what guards the HTTP surface.
+// `mounted: false` (a `:no-routes` module, loaded for its ports only): the factory still runs,
+// because several modules build their services here, but its router is discarded and the
+// module consumes nothing in this process. Skip what guards the HTTP surface, and upsert no
+// schedule: the service that selects the module owns them (ADR-0050).
 export type RouterFactory<C extends TokenCatalog> = (
   c: TypedContainer<C>,
   options?: { mounted: boolean },

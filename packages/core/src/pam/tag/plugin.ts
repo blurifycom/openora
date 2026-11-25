@@ -173,21 +173,23 @@ export default {
       },
     });
 
-    ctx.routers.add('tag', (c) => {
+    ctx.routers.add('tag', (c, options) => {
       const tagSvc = tagService(c);
       const ruleSvcForRouter = ruleService(c);
       tagEvaluationService(c); // ensure evalSvc is constructed for the event handlers/job worker above
 
       // Idempotent daily schedule (keyed by scheduleId). In-process driver runs it
       // manually; a durable overlay (BullMQ) fires at cron time.
-      void c
-        .get(JOB_QUEUE)
-        .schedule(
-          queue('tag.daily-evaluation'),
-          'tag.daily-evaluation.daily',
-          {},
-          { cron: '0 2 * * *' },
-        );
+      if (options?.mounted !== false) {
+        void c
+          .get(JOB_QUEUE)
+          .schedule(
+            queue('tag.daily-evaluation'),
+            'tag.daily-evaluation.daily',
+            {},
+            { cron: '0 2 * * *' },
+          );
+      }
 
       return createTagRouter(tagSvc, ruleSvcForRouter, c.get(ADMIN_GUARD));
     });

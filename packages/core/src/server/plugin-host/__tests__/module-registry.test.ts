@@ -9,6 +9,7 @@ import {
   defineMcpTool,
   MoneyAmountSchema,
   PlayerStatusSchema,
+  queue,
   UuidSchema,
   type ActionTypeContract,
   type McpToolContract,
@@ -90,6 +91,37 @@ describe('ModuleRegistryImpl', () => {
     expect(reg.events.getAll().get('tag.created')).toEqual([
       { handler: plain, consumer: 'unknown/tag.created' },
       { handler: grouped, consumer: 'unknown/tag.created#1', consumerGroup: 'audit' },
+    ]);
+  });
+
+  it('withholds what a required-only module would consume, and keeps the rest', () => {
+    const { reg } = newRegistry();
+    const worker = (queueName: string) => ({
+      queue: queue(queueName),
+      schema: z.object({}),
+      handler: async () => {},
+    });
+    const consumed = () => {};
+    reg.requireOnly('identity');
+
+    reg.setOwner('identity');
+    reg.events.on('wallet.deposit.completed', () => {});
+    reg.triggers.listen(() => {});
+    reg.jobs.worker(worker('identity-job'));
+    reg.setOwner('chat');
+    reg.events.on('wallet.deposit.completed', consumed);
+    reg.jobs.worker(worker('chat-job'));
+    reg.setOwner(null);
+
+    expect(reg.events.getAll().get('wallet.deposit.completed')).toEqual([
+      { handler: consumed, consumer: 'chat/wallet.deposit.completed' },
+    ]);
+    expect(reg.triggers.getAll()).toEqual([]);
+    expect(reg.jobs.getAll().map((w) => w.queue)).toEqual(['chat-job']);
+    expect(reg.withheld()).toEqual([
+      { owner: 'identity', kind: 'event', name: 'wallet.deposit.completed' },
+      { owner: 'identity', kind: 'trigger', name: 'agent triggers' },
+      { owner: 'identity', kind: 'job', name: 'identity-job' },
     ]);
   });
 

@@ -499,7 +499,7 @@ export default {
       },
     });
 
-    ctx.routers.add('compliance', (c) => {
+    ctx.routers.add('compliance', (c, options) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const kycAdapter = c.get(KYC_ADAPTER);
@@ -538,9 +538,11 @@ export default {
       selfServiceRef = rgSelfService;
 
       jobQueueRef = c.get(JOB_QUEUE);
-      void jobQueueRef
-        .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000 })
-        .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
+      if (options?.mounted !== false) {
+        void jobQueueRef
+          .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000 })
+          .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
+      }
 
       return createComplianceRouter({
         compliance,

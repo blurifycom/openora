@@ -28,6 +28,12 @@ import { assertValidActionType, assertValidMcpTool } from '../mcp/contract-valid
 
 const UNKNOWN_OWNER = 'unknown';
 
+export type WithheldRegistration = {
+  owner: string;
+  kind: 'event' | 'trigger' | 'job';
+  name: string;
+};
+
 export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
   private _internalRouters = new Map<string, RouterFactory<C>>();
@@ -40,15 +46,30 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   private _actions: RegisteredActionType<C>[] = [];
   private _sealedBound = new Set<symbol>();
   private _owner = UNKNOWN_OWNER;
-  private _routerless = new Set<string>();
+  private _requiredOnly = new Set<string>();
+  private _withheld: WithheldRegistration[] = [];
 
   constructor(private readonly container: Container<C>) {}
 
-  // The module still binds every port, handles every event and runs every job. Its router
-  // factories still run too (they build the services and schedules its handlers and workers
-  // read), but each router is swapped for an empty one, so no route is served.
-  withholdRouters(pluginId: string): void {
-    this._routerless.add(pluginId);
+  // A module this process loads only for what it provides (ADR-0050): it still binds every port
+  // and its router factories still run (they build the services its ports and the selected
+  // modules read), but each router is swapped for an empty one and its event handlers, trigger
+  // listeners and job workers are withheld, so another process that selects it consumes for it.
+  requireOnly(pluginId: string): void {
+    this._requiredOnly.add(pluginId);
+  }
+
+  /** What a required-only module registered and this process does not consume. */
+  withheld(): readonly WithheldRegistration[] {
+    return this._withheld;
+  }
+
+  private withholds(kind: WithheldRegistration['kind'], name: string): boolean {
+    if (!this._requiredOnly.has(this._owner)) {
+      return false;
+    }
+    this._withheld.push({ owner: this._owner, kind, name });
+    return true;
   }
 
   setOwner(pluginId: string | null): void {
@@ -116,7 +137,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
     }
     routers.set(
       namespace,
-      this._routerless.has(this._owner)
+      this._requiredOnly.has(this._owner)
         ? (c) => {
             factory(c, { mounted: false });
             return {};
@@ -127,6 +148,9 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   events = {
     on: (event: string, handler: EventHandler, options?: EventSubscriptionOptions) => {
+      if (this.withholds('event', event)) {
+        return;
+      }
       const handlers = this._events.get(event) ?? [];
       const consumer = `${this._owner}/${event}`;
       const ordinal = this._consumerOrdinals.get(consumer) ?? 0;
@@ -143,6 +167,9 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   triggers = {
     listen: (listener: TriggerListener) => {
+      if (this.withholds('trigger', 'agent triggers')) {
+        return;
+      }
       this._triggerListeners.push({ owner: this._owner, listener });
     },
     getAll: () => this._triggerListeners,
@@ -150,6 +177,9 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   jobs = {
     worker: <T>(registration: WorkerRegistration<T>) => {
+      if (this.withholds('job', registration.queue)) {
+        return;
+      }
       this._jobs.push(registration as WorkerRegistration<unknown>);
     },
     getAll: () => this._jobs,

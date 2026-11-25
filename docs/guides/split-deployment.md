@@ -28,9 +28,11 @@ It keeps your flags. An unknown id, an unknown flag, or `:no-routes` on an infra
 
 ### Loading a module for its ports only
 
-`id:no-routes` binds the module's ports, runs its event handlers and jobs, and discards its router, so it serves no HTTP route. Use it for a dependency whose surface this service must not expose. In the chat service above, `identity:no-routes` gives chat its session resolver without serving sign-in, phone-login or 2FA.
+`id:no-routes` loads a module this service only requires, for what it provides (ADR-0050). It binds the module's ports and discards its router, so it serves no HTTP route, and it consumes nothing: none of the module's event handlers, agent trigger listeners, job workers or schedules are wired. Use it for every dependency. In the chat service above, `identity:no-routes` gives chat its session resolver without serving sign-in, phone-login or 2FA, and without handling identity's events a second time. A module named without the flag is selected, and the service consumes for it. Infra overlays are always selected.
 
-The router factory still runs, because several modules build their service and schedule their jobs inside it. A factory that guards its HTTP surface receives `options.mounted` and skips the guard when it is `false`. Identity refuses to build its router when the geo check is unbound, unless it is loaded `:no-routes`, so a process that serves auth routes without the compliance module fails closed instead of skipping the country gate.
+Every module must be selected in some process of the install, or its handlers, jobs and schedules run nowhere. A process with no manifest selects every module it loads, so the template's `api` covers everything chat loads `:no-routes`. The boot logs, under `SERVICE_MANIFEST active`, how many handlers and workers each required module left to another service (`notConsumed`).
+
+The router factory still runs, because several modules build their service inside it. A factory receives `options.mounted`, `false` for a `:no-routes` module: it skips what guards its HTTP surface and upserts no schedule. Identity refuses to build its router when the geo check is unbound, unless it is loaded `:no-routes`, so a process that serves auth routes without the compliance module fails closed instead of skipping the country gate.
 
 ## SERVICE_NAME: the consumer group
 
@@ -50,9 +52,11 @@ Because it defaults to `SERVICE_NAME`, a monolith that never set either keeps it
 
 ## Once per deployment or once per service
 
-By default a module's `ctx.events.on` handler runs once in each service that loads the module. Handlers are at-least-once and deduplicated per consumer through `processed_events`.
+A module's `ctx.events.on` handler runs once in each service that selects the module; a service that loads it `:no-routes` does not subscribe it. Handlers are at-least-once and deduplicated per consumer through `processed_events`.
 
-Some work must happen once per deployment however many services load the plugin. The audit writer is the example (`packages/core/src/audit/plugin.ts`): it would write one row per service otherwise. It passes `{ consumerGroup: 'audit' }` as the third argument of `ctx.events.on`, and `createApp` scopes it to `<REALTIME_NAMESPACE>/audit`. Every service loading the audit plugin competes in that one group, and two deployments sharing a Redis stay apart. Reach for the same option in your own plugin only when a duplicate would be wrong, not as a default.
+A handler that keeps state of the process it runs in up to date cannot rely on that: it runs in one replica of one service. Republish onto `REALTIME_TRANSPORT`, which every replica of every service of the deployment receives, the way chat purges its session cache on the identity session events. No shipped module keeps such state in a dependency: grant and catalog caches live in the shared Redis cache, so one purge reaches every service.
+
+Some work must happen once per deployment however many services select the plugin. The audit writer is the example (`packages/core/src/audit/plugin.ts`): it would write one row per service otherwise. It passes `{ consumerGroup: 'audit' }` as the third argument of `ctx.events.on`, and `createApp` scopes it to `<REALTIME_NAMESPACE>/audit`. Every service selecting the audit plugin competes in that one group, and two deployments sharing a Redis stay apart. Reach for the same option in your own plugin only when a duplicate would be wrong, not as a default.
 
 ## Database
 
@@ -70,7 +74,7 @@ Decide this per module, later. Splitting the process does not force it.
 
 The consumer template's `compose.prod.yml` is this example on one server, with the shared database and a Caddy gateway for the path prefixes. The `api` service sets no manifest; the `chat` service sets `chat`, `chat-commands`, `social` and the modules they need as `:no-routes`. Both share `REALTIME_NAMESPACE=monolith` and `INTERNAL_API_SECRETS`. To run one process instead, remove `CHAT_SERVICE_URL` from `api` and drop `chat` and `gateway`.
 
-Chat's HTTP routes sit under `/chat/*` (player, realtime streams included) and `/backoffice/chat/*` (staff), and its handlers and jobs (room purge, moderation expiry) run wherever the module loads.
+Chat's HTTP routes sit under `/chat/*` (player, realtime streams included) and `/backoffice/chat/*` (staff), and its handlers and jobs (room purge, moderation expiry) run wherever the module is selected.
 
 The main API can drop chat. Of the modules it keeps, only `player-management` needs a chat port (`CHAT_BLOCK_READER`, for player search), and it requires the port, not the `chat` module. Set `CHAT_SERVICE_URL` and `createApp` drops `chat` and every plugin that `dependsOn` it, directly or through another dropped one (`social`, `chat-commands`), before it applies any manifest. The `chat-remote` plugin, part of `corePlugins()` (a hand-written registry lists it itself), then binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API (ADR-0054, ADR-0060). A module of your own that needs chat's tables must `dependsOn` chat to be dropped with it:
 
@@ -187,6 +191,7 @@ Rollback is routing and that variable. Redeploy the main API with `CHAT_SERVICE_
 - Every process with a manifest sets all three variables.
 - Each queue has a consumer; each route prefix has exactly one owner at the load balancer.
 - Once-per-deployment work uses `{ consumerGroup }`.
+- Every module is selected (named without `:no-routes`, or loaded by a process with no manifest) in at least one service.
 
 - Each database is migrated, with the sets of the modules it hosts plus the engine set, before its service starts.
 - Every chat queue has a consumer: the chat service on `chat-*`, every other process on `!chat-*` or without the chat modules.

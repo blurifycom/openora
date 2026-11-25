@@ -1001,7 +1001,7 @@ export default {
       },
     });
 
-    ctx.routers.add('notifications', (c) => {
+    ctx.routers.add('notifications', (c, options) => {
       const svc = new NotificationsService(c.get(DRIZZLE), c.get(EVENT_BUS));
       svcRef = svc;
       mailDispatchRef = c.has(MAIL_DISPATCH) ? c.get(MAIL_DISPATCH) : null;
@@ -1018,12 +1018,14 @@ export default {
         platformConfig?.notifications?.retention?.cron ?? DEFAULT_NOTIFICATIONS_RETENTION_CRON;
       // Off-peak, one hour after tag's daily-evaluation (0 2 * * *), so the in-process
       // driver doesn't run both sweeps at once in dev/test.
-      void jobQueueRef.schedule(
-        NOTIFICATIONS_RETENTION_PURGE_QUEUE,
-        'notifications.retention-purge.daily',
-        {},
-        { cron: purgeCron },
-      );
+      if (options?.mounted !== false) {
+        void jobQueueRef.schedule(
+          NOTIFICATIONS_RETENTION_PURGE_QUEUE,
+          'notifications.retention-purge.daily',
+          {},
+          { cron: purgeCron },
+        );
+      }
       return createNotificationsRouter({ notifications: svc, realtime: realtimeRef });
     });
   },

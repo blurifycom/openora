@@ -75,21 +75,24 @@ afterAll(async () => {
 });
 
 describe('audit trail with two services of one deployment up', () => {
-  it('still writes the audit row when the module is loaded without its routes', async () => {
-    // Runs first and stops its service and drops its group, so its deployment leaves no group or
-    // row-writer behind for the tests below.
-    // The audit service is built inside its router factory; withholding the routes must not skip it.
+  it('leaves the audit rows to the service that selects the module', async () => {
+    // Runs first and stops its services and drops its group, so its deployment leaves no group
+    // or row-writer behind for the tests below.
     const namespace = `deploy-${randomUUID()}`;
-    const service = await bootService(`svc-a-${randomUUID()}`, namespace, true);
-    await vi.waitFor(
-      async () =>
-        expect((await redis.client.xInfoGroups('oss:evt:tag.created')).length).toBeGreaterThan(0),
-      { timeout: 10_000 },
-    );
+    const group = `${namespace}/audit`;
+    const groupNames = async () =>
+      (await redis.client.xInfoGroups('oss:evt:tag.created').catch(() => [])).map((g) => g.name);
+    // Loaded only as a dependency (`audit:no-routes`): its writer works, its subscriber is not wired.
+    const dependent = await bootService(`svc-a-${randomUUID()}`, namespace, true);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await groupNames()).not.toContain(group);
+
+    const selecting = await bootService(`svc-b-${randomUUID()}`, namespace);
+    await vi.waitFor(async () => expect(await groupNames()).toContain(group), { timeout: 10_000 });
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     const marker = randomUUID();
-    service.container
+    dependent.container
       .get(EVENT_BUS)
       .emit('tag.created', { key: 'vip', isSticky: false, actorId: marker });
 
@@ -104,8 +107,8 @@ describe('audit trail with two services of one deployment up', () => {
       },
       { timeout: 10_000 },
     );
-    await service.close();
-    await redis.client.xGroupDestroy('oss:evt:tag.created', `${namespace}/audit`);
+    await Promise.all([dependent.close(), selecting.close()]);
+    await redis.client.xGroupDestroy('oss:evt:tag.created', group);
   });
 
   it('writes exactly one audit row per event', async () => {

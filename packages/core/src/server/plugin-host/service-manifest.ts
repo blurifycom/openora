@@ -4,8 +4,9 @@ import type { ControlPort, Plugin } from './define-plugin.js';
 import { portName, validateEntries, type PluginEntry } from './load-plugins.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
-// `identity:no-routes` loads the module for its ports, events and jobs but mounts none of
-// its routers. It is for a module a kept module `dependsOn` without wanting its HTTP surface.
+// `identity:no-routes` loads the module for its ports only: it mounts none of its routers and
+// consumes nothing, leaving its events, jobs and schedules to a service that selects it
+// (ADR-0050). It is for a module a selected module needs.
 const NO_ROUTES_FLAG = 'no-routes';
 
 export type ServiceManifestEntry = { id: string; noRoutes: boolean };

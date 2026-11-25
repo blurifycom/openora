@@ -99,9 +99,10 @@ and each job reaches one of them.
   Identity's controls pull in compliance, and compliance depends on wallet, gaming,
   player-management and exchange-rate; player-management requires the `CHAT_BLOCK_READER` port, which
   the `chat` module binds, or `chat-remote` when chat runs in another service (`CHAT_SERVICE_URL`). A split is those nine
-  modules, `chat` or `chat-remote`, and the ones you meant to move, and until
-  [ADR-0050](../adr/0050-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
-  nine handles every event once in the split and once in the rest of the install.
+  modules, `chat` or `chat-remote`, and the ones you meant to move. Name the nine `:no-routes`:
+  the split then only binds their ports, and leaves their events, jobs and schedules to the
+  process that selects them ([ADR-0050](../adr/0050-dependency-only-modules-provide-but-do-not-consume.md)),
+  so nothing is handled twice.
 
 - **Chat writes from a process that does not run chat.** A module that writes chat state inside
   its own transaction binds the outbox writers from `@openora/core/engagement/server` over the
