@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { and, asc, desc, eq, like } from 'drizzle-orm';
+import { and, asc, desc, eq, like, sql } from 'drizzle-orm';
 import { PLAY_ELIGIBILITY_PROJECTION, type Paginated } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import type { betting } from '@openora/core/sportsbook/contracts';
@@ -466,7 +466,10 @@ describe('sportsbook refusal reasons', () => {
   // A direct write bypasses identity's publisher, so it re-projects as a script would.
   const setUser = async (userId: string, values: Partial<typeof user.$inferInsert>) => {
     const { db } = app.container.get(DRIZZLE);
-    await db.update(user).set(values).where(eq(user.id, userId));
+    await db
+      .update(user)
+      .set({ ...values, playEligibilityVersion: sql`${user.playEligibilityVersion} + 1` })
+      .where(eq(user.id, userId));
     await backfillPlayEligibility(db, app.container.get(PLAY_ELIGIBILITY_PROJECTION));
   };
 
@@ -476,6 +479,10 @@ describe('sportsbook refusal reasons', () => {
   ) => {
     const { db } = app.container.get(DRIZZLE);
     await db.update(playerProfile).set({ status }).where(eq(playerProfile.userId, userId));
+    await db
+      .update(user)
+      .set({ playEligibilityVersion: sql`${user.playEligibilityVersion} + 1` })
+      .where(eq(user.id, userId));
     await backfillPlayEligibility(db, app.container.get(PLAY_ELIGIBILITY_PROJECTION));
   };
 

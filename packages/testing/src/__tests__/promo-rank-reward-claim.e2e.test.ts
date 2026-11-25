@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { PLAY_ELIGIBILITY_PROJECTION } from '@openora/core/contracts';
 import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
@@ -196,7 +196,10 @@ describe('a player claiming a periodic rank reward', () => {
   it('is refused under a responsible-gambling block and kept for later', async () => {
     const { client, userId } = await newPlayer();
     const reward = await leave(userId);
-    await drizzle().update(user).set({ rgBlocked: true }).where(eq(user.id, userId));
+    await drizzle()
+      .update(user)
+      .set({ rgBlocked: true, playEligibilityVersion: sql`${user.playEligibilityVersion} + 1` })
+      .where(eq(user.id, userId));
     await reproject();
 
     const res = await claim(client, reward.id);

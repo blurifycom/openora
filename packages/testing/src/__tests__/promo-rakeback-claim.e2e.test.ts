@@ -187,7 +187,10 @@ describe('a player claiming rakeback on the house edge', () => {
   it('is refused for a player under a responsible-gambling block', async () => {
     const { client, userId } = await newPlayer();
     await bet(userId, '1000');
-    await drizzle().update(user).set({ rgBlocked: true }).where(eq(user.id, userId));
+    await drizzle()
+      .update(user)
+      .set({ rgBlocked: true, playEligibilityVersion: sql`${user.playEligibilityVersion} + 1` })
+      .where(eq(user.id, userId));
     await reproject();
 
     const res = await claim(client);
