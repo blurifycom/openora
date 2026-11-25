@@ -184,6 +184,29 @@ Until step 3 the main API still loads chat, so chat handlers run in both service
 
 Rollback is routing and that variable. Redeploy the main API with `CHAT_SERVICE_URL` unset, and point the prefixes back at it.
 
+## Redis loss
+
+Every service shares one Redis. It holds the event streams with each consumer group's position, and the BullMQ queues. Postgres holds the copy that survives: every event written with `emitInTransaction` stays in `event_outbox` for 7 days after the relay published it (`EVENT_RETENTION_MS`), and each consumer records what it applied in `processed_events`, kept a day longer.
+
+When Redis is lost or restored from a snapshot:
+
+1. Restore the latest snapshot, or start an empty Redis.
+2. Start the services. A consumer group the restore lost is recreated at the stream tail on boot, so it sees only events published from then on. Recurring job schedules are upserted again at boot.
+3. Once every service is up, replay what was published since the snapshot, with a margin, against each database that has an outbox:
+
+   ```sh
+   DATABASE_URL=... REDIS_URL=... npx openora-outbox-replay --since 2026-11-25T08:00:00Z --dry-run
+   DATABASE_URL=... REDIS_URL=... npx openora-outbox-replay --since 2026-11-25T08:00:00Z
+   ```
+
+   It republishes every published `event_outbox` row with `published_at` at or after `--since`, oldest first, and prints a count per topic. `--topic <topic>` limits it to one topic; `--dry-run` only counts. A consumer skips an event it already applied, so a generous `--since` and a second run are safe. A `--since` older than the 7-day retention is refused with a non-zero exit: part of that range is already pruned. Unpublished rows are left to the relay.
+
+Not recoverable from Postgres:
+
+- An event sent with plain `emit()`. It never had an outbox row. Those are informational, catalog and cache-invalidation events; anything reporting committed money, compliance or account state uses `emitInTransaction`.
+- A queued or delayed BullMQ job. It exists only in Redis. A recurring schedule comes back at boot; a one-off job enqueued before the loss does not.
+- Realtime pushes, presence and the shared cache. They rebuild as players reconnect and caches miss.
+
 ## Checklist
 
 - Each service has a distinct, stable `SERVICE_NAME`.

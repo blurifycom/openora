@@ -23,7 +23,8 @@
   },
   "bin": {
     "openora-audit-copy": "./bin/audit-copy.mjs",
-    "openora-migrate": "./bin/migrate.mjs"
+    "openora-migrate": "./bin/migrate.mjs",
+    "openora-outbox-replay": "./bin/outbox-replay.mjs"
   },
   "files": [
     "bin",
