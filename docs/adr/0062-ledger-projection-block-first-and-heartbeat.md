@@ -47,10 +47,16 @@ owner that never started.
 **Limit writes.** Every write of the limits projection that does not run inside compliance's own
 transaction (`writeFromRemote`, `reconcile`) takes the slot locks of the limits it writes before
 the version row, the same locks a deposit or wager check takes, so a lowered limit waits for an
-in-flight check and the next check reads it.
+in-flight check and the next check reads it. A player's first limit is not serialized this way: with
+no limit rows yet, a check returns before it takes any slot lock, so an in-flight check can pass
+while the first limit commits, and only the next check reads it.
 
-**Deposits.** The eligibility gate of a player deposit runs inside the transaction that reserves it,
-reading the projection `FOR SHARE` like a stake, so a block that commits meanwhile is seen or waits.
+**Deposits.** The eligibility gate of a player deposit and of an on-ramp checkout runs inside the
+transaction that reserves it, under the player's deposit lock and after the replay lookup, reading
+the projection `FOR SHARE` like a stake, so a block that commits meanwhile is seen or waits, and a
+retried deposit that already completed returns its result. The lock order is deposit lock, then
+eligibility row. The operator's deposit admission policy runs before that transaction, as it may
+read over its own connection or a remote port.
 
 **Drift.** The wallet reconciliation cycle (hourly by default) already compares each projection with
 its owner, repairs through `reconcile` or the owner's `repair`, and files `play_eligibility_drift` /

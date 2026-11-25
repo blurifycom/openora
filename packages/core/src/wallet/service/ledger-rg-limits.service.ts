@@ -30,6 +30,7 @@ import {
   assertFresh,
   beat,
   databaseNow,
+  lateAlertClock,
   type ProjectionFreshness,
 } from './ledger-projection-heartbeat.service.js';
 import {
@@ -127,6 +128,8 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     private readonly freshness?: ProjectionFreshness,
   ) {}
 
+  private readonly lateAlert = lateAlertClock();
+
   heartbeat(): Promise<void> {
     return beat(this.drizzle.db, 'rg_limits');
   }
@@ -174,7 +177,7 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     amount: string,
     amountCurrency: string,
   ): Promise<RgLimitDecision> {
-    await assertFresh(db, 'rg_limits', this.freshness);
+    await assertFresh(db, 'rg_limits', this.freshness, this.lateAlert);
     const scanned = await this.readLimits(db, userId, type);
     if (scanned.length === 0) {
       return { allowed: true };

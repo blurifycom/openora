@@ -170,6 +170,11 @@ export default {
     const remoteWriter = () => moneyPortsCallers.size > 0;
     const staleMs = envMs('LEDGER_PROJECTION_STALE_MS', 60_000);
     const alertMs = envMs('LEDGER_PROJECTION_ALERT_MS', 30_000);
+    if (alertMs >= staleMs) {
+      throw new Error(
+        `LEDGER_PROJECTION_ALERT_MS (${alertMs}) must be below LEDGER_PROJECTION_STALE_MS (${staleMs})`,
+      );
+    }
     const sharedPlayEligibility = (c: TypedContainer<CoreTokenCatalog>) =>
       (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE), {
         remoteWriter,

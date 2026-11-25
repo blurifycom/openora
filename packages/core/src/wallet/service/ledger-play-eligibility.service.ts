@@ -18,6 +18,7 @@ import { ledgerPlayEligibility } from '../schema/index.js';
 import {
   assertFresh,
   beat,
+  lateAlertClock,
   type ProjectionFreshness,
 } from './ledger-projection-heartbeat.service.js';
 
@@ -92,9 +93,11 @@ export class LedgerPlayEligibilityService
     private readonly freshness?: ProjectionFreshness,
   ) {}
 
+  private readonly lateAlert = lateAlertClock();
+
   private async read(userId: User['id'], tx?: unknown) {
     const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
-    await assertFresh(db, 'play_eligibility', this.freshness);
+    await assertFresh(db, 'play_eligibility', this.freshness, this.lateAlert);
     const query = db
       .select({
         row: ledgerPlayEligibility,
@@ -134,7 +137,7 @@ export class LedgerPlayEligibilityService
       return new Map();
     }
     const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
-    await assertFresh(db, 'play_eligibility', this.freshness);
+    await assertFresh(db, 'play_eligibility', this.freshness, this.lateAlert);
     const query = db
       .select()
       .from(ledgerPlayEligibility)

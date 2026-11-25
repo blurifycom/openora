@@ -13,7 +13,9 @@ export type ProjectionFreshness = {
 
 type Db = DrizzleService['db'] | DrizzleTx;
 
-const lastLateAlertAt = new Map<LedgerProjection, number>();
+export type LateAlertClock = { lastAlertAt: number };
+
+export const lateAlertClock = (): LateAlertClock => ({ lastAlertAt: 0 });
 
 export async function beat(db: Db, projection: LedgerProjection): Promise<void> {
   await db
@@ -38,12 +40,17 @@ export async function databaseNow(db: Db): Promise<Date> {
 const olderThan = (ms: number) =>
   sql<boolean>`${ledgerProjectionHeartbeat.beatAt} < now() - make_interval(secs => ${ms / 1000})`;
 
-function alertLate(projection: LedgerProjection, beatAt: Date | null, alertMs: number): void {
+function alertLate(
+  projection: LedgerProjection,
+  beatAt: Date | null,
+  alertMs: number,
+  clock: LateAlertClock,
+): void {
   const now = Date.now();
-  if (now - (lastLateAlertAt.get(projection) ?? 0) < alertMs) {
+  if (now - clock.lastAlertAt < alertMs) {
     return;
   }
-  lastLateAlertAt.set(projection, now);
+  clock.lastAlertAt = now;
   log.error(
     {
       err: new Error(`ledger projection ${projection} heartbeat is late`),
@@ -59,6 +66,7 @@ export async function assertFresh(
   db: Db,
   projection: LedgerProjection,
   freshness: ProjectionFreshness | undefined,
+  lateAlert: LateAlertClock,
 ): Promise<void> {
   if (!freshness?.remoteWriter()) {
     return;
@@ -72,7 +80,7 @@ export async function assertFresh(
     .from(ledgerProjectionHeartbeat)
     .where(eq(ledgerProjectionHeartbeat.projection, projection));
   if (!row || row.late) {
-    alertLate(projection, row?.beatAt ?? null, freshness.alertMs);
+    alertLate(projection, row?.beatAt ?? null, freshness.alertMs, lateAlert);
   }
   if (!row || row.stale) {
     throw new LedgerProjectionStaleError(projection, row?.beatAt ?? null);

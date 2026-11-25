@@ -13,7 +13,12 @@ import {
   type RgLimitsSnapshot,
 } from '@openora/core/contracts';
 import { setErrorReporter, withAdvisoryXactLocks } from '@openora/core/server';
-import { createTestDb, waitForRowLockWaiter, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  waitForAdvisoryLockWaiter,
+  waitForRowLockWaiter,
+  type TestDb,
+} from '@openora/core/testing';
 import {
   mock,
   makeEventBus,
@@ -219,6 +224,27 @@ describe('the ledger projections (real PG)', () => {
     );
   });
 
+  it('holds a reconcile limit write behind a stake that holds the limit slot', async () => {
+    const userId = randomUUID();
+    const ledger = new LedgerRgLimitsService(db.drizzle, undefined);
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stake = db.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLocks(tx, [limitSlotKey(userId, 'deposit', 'daily')], () => released),
+    );
+
+    const reconciled = ledger.reconcile([dailyDepositLimit(userId, '15')]);
+    await waitForAdvisoryLockWaiter(db).finally(release);
+    await stake;
+
+    await expect(reconciled).resolves.toBe(1);
+    expect(
+      await db.drizzle.db.select().from(ledgerUserLimit).where(eq(ledgerUserLimit.userId, userId)),
+    ).toHaveLength(1);
+  });
+
   it('judges a cooling-off end by the database clock, not the replica clock', async () => {
     const userId = randomUUID();
     const projection = new LedgerPlayEligibilityService(db.drizzle);
@@ -278,6 +304,50 @@ describe('the ledger projections (real PG)', () => {
       .update(ledgerProjectionHeartbeat)
       .set({ beatAt: sql`now() - interval '70 seconds'` });
     await expect(projection.checkPlay(userId)).rejects.toBeInstanceOf(LedgerProjectionStaleError);
+  });
+
+  it('alerts a late heartbeat once per alert interval, not once per check', async () => {
+    const userId = randomUUID();
+    const reported: unknown[] = [];
+    setErrorReporter((error) => reported.push(error));
+    const projection = new LedgerPlayEligibilityService(db.drizzle, {
+      remoteWriter: () => true,
+      staleMs: 60_000,
+      alertMs: 30_000,
+    });
+    await projection.reconcile([eligible(userId)]);
+    await db.drizzle.db
+      .insert(ledgerProjectionHeartbeat)
+      .values({ projection: 'play_eligibility', beatAt: sql`now() - interval '40 seconds'` });
+    vi.useFakeTimers({ toFake: ['Date'] });
+
+    await projection.checkPlay(userId);
+    await projection.checkPlay(userId);
+    await projection.checkPlay(userId);
+    expect(reported).toHaveLength(1);
+
+    vi.setSystemTime(Date.now() + 30_000);
+    await projection.checkPlay(userId);
+    await projection.checkPlay(userId);
+    expect(reported).toHaveLength(2);
+  });
+
+  it('replays a completed deposit after the player is blocked', async () => {
+    const userId = randomUUID();
+    const idempotencyKey = randomUUID();
+    const projection = new LedgerPlayEligibilityService(db.drizzle);
+    await projection.reconcile([eligible(userId)]);
+    const { svc, payment } = makeService(undefined, projection);
+    const first = await svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey });
+    await projection.reconcile([{ ...eligible(userId, 1), rgBlocked: true }]);
+
+    const replay = await svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey });
+
+    expect(replay).toEqual(first);
+    expect(payment.processDeposit).toHaveBeenCalledTimes(1);
+    await expect(
+      svc.deposit({ userId, amount: '30', currency: 'USD', idempotencyKey: randomUUID() }),
+    ).rejects.toBeInstanceOf(DepositRefusedError);
   });
 
   it('refuses a deposit against a block that commits while the deposit reads the projection', async () => {
