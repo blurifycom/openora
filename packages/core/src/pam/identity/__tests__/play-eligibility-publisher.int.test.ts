@@ -74,7 +74,7 @@ const versionOf = async (userId: string) => {
   return row?.version;
 };
 
-describe('a play eligibility projection written from another service (ADR-0062)', () => {
+describe('a play eligibility projection written from another service (ADR-0066)', () => {
   it('writes a block to a remote ledger in the caller transaction and emits the event', async () => {
     const userId = await seededUser();
     const { projection, written } = recordingProjection(true);

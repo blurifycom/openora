@@ -1,5 +1,6 @@
 import { createToken } from './token.js';
 import type { WalletTransactionType, WalletTransactionStatus } from '../schemas/wallet-tx.js';
+import type { TurnoverSummary } from './turnover.js';
 
 export type WalletProviderTransaction = {
   id: string;
@@ -145,6 +146,16 @@ export type WalletReader = {
    */
   isFirstDeposit?(userId: string, transactionId: string, tx?: unknown): Promise<boolean>;
   /**
+   * Whether the player has a completed deposit in `currency` of at least `minAmount`, made before
+   * `before` (a deposit transaction id) when given. A first-deposit-only offer is for the first
+   * deposit that qualifies for it, so a smaller deposit made earlier does not use it up.
+   */
+  hasQualifyingDeposit?(
+    userId: string,
+    args: { currency: string; minAmount: string; before?: string },
+    tx?: unknown,
+  ): Promise<boolean>;
+  /**
    * The player's completed and still-open withdrawals since the account opened. Optional for
    * the same reason as getWithdrawalCountsInWindow above.
    */
@@ -164,6 +175,11 @@ export type WalletReader = {
    * when a currency could not be priced. Optional for the same reason as above.
    */
   getTurnoverSince?(userId: string, since: Date): Promise<string | null>;
+  /**
+   * The player's deposit turnover requirement (ADR-0065); `enabled: false` with zeros while it is
+   * off. Lock-free, for display. Optional for the same reason as above.
+   */
+  readTurnover?(userId: string, tx?: unknown): Promise<TurnoverSummary>;
   /**
    * The withdrawals requested since `since`, whatever became of them, except those that paid
    * nothing out because the vendor failed or the request was cancelled - the requests the

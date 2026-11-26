@@ -54,6 +54,8 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       'mcp-access': RW,
       'agent-chat': RW,
       'mcp-token': RW,
+      turnover: R,
+      'turnover-config': R,
     },
   },
   {
@@ -70,6 +72,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       'game-config': RW,
       analytics: RW,
       sportsbook: RW,
+      'turnover-config': R,
     },
   },
   {
@@ -101,6 +104,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       audit: R,
       analytics: R,
       'treasury-rebalance-request': RW,
+      turnover: R,
     },
   },
   {
@@ -116,6 +120,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       withdrawal: R,
       audit: R,
       analytics: RW,
+      turnover: R,
     },
   },
   {
@@ -133,6 +138,8 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       analytics: R,
       'regulatory-overview': RW,
       'kyc-override-request': RW,
+      turnover: RW,
+      'turnover-config': RW,
     },
   },
   {
@@ -147,6 +154,8 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       report: R,
       withdrawal: R,
       audit: R,
+      turnover: RW,
+      'turnover-config': RW,
     },
   },
   {
@@ -206,6 +215,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       'wallet-asset': RW,
       'swap-config': RW,
       'treasury-rebalance-request': RW,
+      turnover: R,
     },
   },
   {
@@ -221,6 +231,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       bonus: R,
       'kyc-override-request': RW,
       'bonus-grant-request': RW,
+      turnover: R,
     },
   },
   {
@@ -240,6 +251,7 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       analytics: R,
       'kyc-override-request': RW,
       'bonus-grant-request': RW,
+      turnover: R,
     },
   },
   {

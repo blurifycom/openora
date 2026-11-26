@@ -72,6 +72,8 @@ export const MONEY_REMOTE_PORTS = {
     findOwnProviderTransaction: READ_2,
     getBalance: READ_1,
     isFirstDeposit: READ_2,
+    hasQualifyingDeposit: READ_2,
+    readTurnover: READ_1,
     getLifetimeWithdrawals: READ_1,
     getLastDeposit: READ_1,
     getLastDepositAts: READ_1,

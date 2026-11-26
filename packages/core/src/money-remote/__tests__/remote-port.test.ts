@@ -82,7 +82,7 @@ describe('remoteMoneyPort', () => {
     ]);
   });
 
-  it('marks the projection writers remote, so ADR-0062 applies', () => {
+  it('marks the projection writers remote, so ADR-0066 applies', () => {
     const { client } = scripted([]);
     expect(
       remoteMoneyPort<PlayEligibilityProjectionPort>(client, 'PLAY_ELIGIBILITY_PROJECTION').remote,

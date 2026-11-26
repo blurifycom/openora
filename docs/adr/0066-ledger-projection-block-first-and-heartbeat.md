@@ -1,4 +1,4 @@
-# ADR-0062: Ledger projections write block-first and carry a heartbeat
+# ADR-0066: Ledger projections write block-first and carry a heartbeat
 
 **Date**: 2026-11-25
 **Status**: Accepted. Extends [ADR-0056](./0056-ledger-owned-play-eligibility-projection.md) and [ADR-0057](./0057-ledger-owned-limits-projection.md) for a writer in another service.
@@ -26,7 +26,7 @@ local projection keeps writing every change in the transaction. Ports: `remote?:
 selected (`mounted`), so one replica beats per tick. A stalled job queue therefore also refuses
 stakes once the beat is stale.
 The ledger stores it in `ledger_projection_heartbeat` at its own clock. When another service may write the
-projections, which the money service reads from its own `MONEY_PORTS_CALLERS` being set (ADR-0063),
+projections, which the money service reads from its own `MONEY_PORTS_CALLERS` being set (ADR-0067),
 a stake (eligibility) and a deposit or wager (limits) refuse with `LedgerProjectionStaleError`
 (`ledger_projection_stale`: 503 on the deposit and casino start-round routes, a `player_blocked`
 refusal on the Ledger API and the sportsbook ledger) once the last beat is older than

@@ -1,8 +1,8 @@
-# ADR-0063: Money ports over the internal API
+# ADR-0067: Money ports over the internal API
 
 **Date**: 2026-11-25
 **Status**: Accepted
-**Relates to**: [ADR-0054](./0054-signed-internal-api-for-service-calls.md) (signed internal API), [ADR-0060](./0060-chat-ports-over-the-internal-api.md) (chat ports), [ADR-0062](./0062-ledger-projection-block-first-and-heartbeat.md) (projection heartbeat).
+**Relates to**: [ADR-0054](./0054-signed-internal-api-for-service-calls.md) (signed internal API), [ADR-0060](./0060-chat-ports-over-the-internal-api.md) (chat ports), [ADR-0066](./0066-ledger-projection-block-first-and-heartbeat.md) (projection heartbeat).
 
 ## Context
 
@@ -54,14 +54,14 @@ the money service.
 peer: anything holding the secret can name an allowed caller. Per-service keys are the follow-up.
 
 **Projection writers are remote.** `PLAY_ELIGIBILITY_PROJECTION` and `RG_LIMIT_LEDGER` are bound
-with `remote: true`, so ADR-0062's block-first, lift-by-event and stale-heartbeat rules apply.
+with `remote: true`, so ADR-0066's block-first, lift-by-event and stale-heartbeat rules apply.
 
 ## Consequences
 
 - A platform module that keeps `dependsOn` a money module is dropped with it; it must require ports
   instead, as the chat split did.
 - The ledger answers on its own transaction: a projection write is no longer atomic with the
-  writer's change, which ADR-0062 covers.
+  writer's change, which ADR-0066 covers.
 - `LEDGER_API_V1` is not remote; a platform service with `MONEY_SERVICE_URL` set has no binding.
 - `MONEY_SERVICE_URL` with a money database of its own is unsupported until `GAME_GEO_CHECK`,
   `KYC_WITHDRAWAL_POLICY`, `PLAY_ELIGIBILITY` and `RG_EXCLUSION_READER` have remote bindings; until

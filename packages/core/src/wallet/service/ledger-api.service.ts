@@ -43,6 +43,7 @@ import {
   type LedgerV1WinArgs,
   type SportsbookLedger,
   type Uuid,
+  type BonusCompletion,
   type WalletCommands,
   type WalletDebitOutcome,
   type WalletTransactionType,
@@ -56,7 +57,7 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull } from 'drizzle-orm';
 import type * as z from 'zod';
 import { ledgerApiRequest, wallet, walletTransaction } from '../schema/index.js';
 import { WalletRgRestrictedError } from './wallet-commands.service.js';
@@ -358,6 +359,9 @@ export class LedgerApiService implements LedgerApiV1 {
         await this.announceRound(tx, round, userId, playerId);
         const recorded = { userId, amount: args.amount };
         if (!isPositiveMoney(args.amount)) {
+          if (args.isFinal) {
+            await this.closeBonusRound(tx, userId, currency, externalRoundId, [providerName]);
+          }
           return {
             ...recorded,
             move: {
@@ -376,6 +380,7 @@ export class LedgerApiService implements LedgerApiV1 {
           type: 'win',
           allowNewCurrency: true,
           providerRef,
+          ...(args.isFinal ? { closesRound: true } : {}),
         });
         const moved = this.assertCredited(credit, round.roundId, currency);
         await this.emitMove(tx, userId, playerId, {
@@ -385,6 +390,7 @@ export class LedgerApiService implements LedgerApiV1 {
           type: 'win',
           direction: 'credit',
         });
+        await this.emitCompleted(tx, userId, currency, moved.completed ?? []);
         return {
           ...recorded,
           move: {
@@ -485,6 +491,13 @@ export class LedgerApiService implements LedgerApiV1 {
           .gamingCommands()
           .accumulateExternalRound(tx, { ...args, isFinal: true });
         await this.announceRound(tx, round, args.userId, playerId);
+        await this.closeBonusRound(
+          tx,
+          args.userId,
+          args.currency,
+          args.externalRoundId,
+          await this.betProviders(tx, args.userId, args.externalRoundId),
+        );
         return {
           status: 'closed' as const,
           roundId: round.roundId,
@@ -711,6 +724,7 @@ export class LedgerApiService implements LedgerApiV1 {
       type: 'bet_reversal',
       direction: 'credit',
     });
+    await this.emitCompleted(tx, userId, currency, moved.completed ?? []);
     return {
       transactionId: moved.transactionId,
       roundId: round.roundId,
@@ -735,7 +749,7 @@ export class LedgerApiService implements LedgerApiV1 {
     credit: Awaited<ReturnType<WalletCommands['credit']>>,
     roundId: Uuid,
     currency: string,
-  ): { transactionId: string; newBalance: string } {
+  ): { transactionId: string; newBalance: string; completed?: BonusCompletion[] } {
     if (!credit.ok) {
       if (credit.reason === 'wallet not found') {
         throw new LedgerRefusal('wallet_not_found');
@@ -768,7 +782,7 @@ export class LedgerApiService implements LedgerApiV1 {
     return readWalletBalance(tx, row.id, currency);
   }
 
-  /** The bet's own move, whatever wager tracking credited with it, and the bonuses it completed. */
+  /** The bet's own move and whatever wager tracking credited with it. */
   private async emitDebit(
     tx: DrizzleTx,
     userId: Uuid,
@@ -792,13 +806,56 @@ export class LedgerApiService implements LedgerApiV1 {
         direction: 'credit',
       });
     }
-    for (const { grantId, convertedAmount } of debit.completed ?? []) {
-      await this.emit(tx, 'promo.bonus.completed', {
+  }
+
+  /** The providers whose bets this player staked on the round, as the wallet keyed them. */
+  private async betProviders(
+    tx: DrizzleTx,
+    userId: Uuid,
+    externalRoundId: LedgerV1CloseRoundArgs['externalRoundId'],
+  ): Promise<string[]> {
+    const rows = await tx
+      .selectDistinct({ providerName: walletTransaction.providerName })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.externalRoundId, externalRoundId),
+          eq(walletTransaction.type, 'bet'),
+          eq(walletTransaction.direction, 'debit'),
+          isNotNull(walletTransaction.providerName),
+        ),
+      );
+    return rows.flatMap((row) => (row.providerName ? [row.providerName] : []));
+  }
+
+  /** A round that ended with nothing paid still settles the bonus bets staked on it. */
+  private async closeBonusRound(
+    tx: DrizzleTx,
+    userId: Uuid,
+    currency: string,
+    externalRoundId: LedgerV1CloseRoundArgs['externalRoundId'],
+    providerNames: readonly string[],
+  ): Promise<void> {
+    for (const providerName of providerNames) {
+      const closed = await this.deps.walletCommands.closeRound?.(tx, {
         userId,
-        grantId,
-        currency: debit.currency,
-        convertedAmount,
+        currency,
+        providerRef: { providerName, externalRoundId },
       });
+      await this.emitCompleted(tx, userId, currency, closed?.completed ?? []);
+    }
+  }
+
+  private async emitCompleted(
+    tx: DrizzleTx,
+    userId: Uuid,
+    currency: string,
+    completed: readonly BonusCompletion[],
+  ): Promise<void> {
+    for (const { grantId, convertedAmount } of completed) {
+      await this.emit(tx, 'promo.bonus.completed', { userId, grantId, currency, convertedAmount });
     }
   }
 

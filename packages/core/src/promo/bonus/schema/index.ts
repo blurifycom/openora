@@ -7,6 +7,7 @@ import {
   uuid,
   text,
   decimal,
+  integer,
   timestamp,
   jsonb,
   index,
@@ -23,35 +24,59 @@ import {
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
   PROMO_OFFER_STATUSES,
+  REFERENCE_EDGE_PRECISION,
+  REFERENCE_EDGE_SCALE,
+  WAGER_CONTRIBUTION_MODES,
   type BonusForfeitReason,
   type BonusGrantSource,
   type BonusGrantEntryType,
   type BonusGrantStatus,
   type BonusGrantTerms,
   type PromoOfferStatus,
+  type WagerContributionMode,
 } from '@openora/core/contracts';
 import {
   WAGER_WEIGHT_SCOPES,
   type PromoOfferRules,
+  type StakeWagerInputs,
   type WagerWeightScope,
 } from '../contract/index.js';
 import type { WagerWeightRow } from '../shared/wagering-weight.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
+export const promoContributionModeEnum = pgEnum(
+  'promo_contribution_mode',
+  WAGER_CONTRIBUTION_MODES,
+);
 
 /**
  * A named set of wagering weights. An offer points at one, so two offers can count the same
  * game differently without duplicating every row.
  */
-export const promoWeightProfile = pgTable('promo_weight_profile', {
-  id: uuid().primaryKey().defaultRandom(),
-  name: text().notNull().unique(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp({ withTimezone: true })
-    .notNull()
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-});
+export const promoWeightProfile = pgTable(
+  'promo_weight_profile',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull().unique(),
+    contributionMode: promoContributionModeEnum()
+      .$type<WagerContributionMode>()
+      .notNull()
+      .default('flat'),
+    referenceEdge: decimal({ precision: REFERENCE_EDGE_PRECISION, scale: REFERENCE_EDGE_SCALE }),
+    version: integer().notNull().default(1),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check(
+      'promo_weight_profile_reference_edge_matches_mode',
+      sql`(${t.contributionMode} = 'house_edge') = (${t.referenceEdge} is not null) AND (${t.referenceEdge} is null OR (${t.referenceEdge} > 0 AND ${t.referenceEdge} <= 1))`,
+    ),
+  ],
+);
 
 /**
  * How much a bet matching `scope`/`scopeRef` contributes toward a wagering requirement.
@@ -93,7 +118,15 @@ export const promoWeight = pgTable(
  * The terms as stored on a grant: the caller's terms plus the weight rows the profile held at
  * grant time. Wagering is scored from `weights`, never from the live profile.
  */
-export type GrantTermsSnapshot = BonusGrantTerms & { weights: WagerWeightRow[] };
+export type GrantTermsSnapshot = BonusGrantTerms & {
+  weights: WagerWeightRow[];
+  /** `funds.dustThresholdUsd` in the grant currency at grant time. Absent on older grants: zero. */
+  dustThreshold?: string;
+  /** The profile's mode at grant time. Absent on older grants: flat. */
+  contributionMode?: WagerContributionMode;
+  referenceEdge?: string;
+  weightProfileVersion?: number;
+};
 
 export const promoOfferStatusEnum = pgEnum('promo_offer_status', PROMO_OFFER_STATUSES);
 
@@ -121,7 +154,7 @@ export const promoOffer = pgTable(
     terms: jsonb().$type<BonusGrantTerms>().notNull(),
     rules: jsonb().$type<PromoOfferRules>().notNull(),
     /** Absent from a player's list until they take it; otherwise it applies to any deposit. */
-    requiresOptIn: boolean().notNull().default(false),
+    requiresOptIn: boolean().notNull().default(true),
     validFrom: timestamp({ withTimezone: true }),
     validUntil: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -157,7 +190,7 @@ export const promoOptIn = pgTable(
     accumulatedDeposit: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
       .notNull()
       .default('0'),
-    /** Set once the deposits met the minimum and the grant was created. */
+    /** Set once a deposit met the minimum and the grant was created. */
     grantId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
@@ -220,6 +253,12 @@ export const promoGrant = pgTable(
     wageringProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
       .notNull()
       .default('0'),
+    // Buckets A and B: counters over the player's real balance, not money held here. The real
+    // cash itself never leaves the wallet; these only say how much of it the grant still ties up.
+    unlinkedCash: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    linkedCash: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
     // Set to 'active' only under withGrantSlotLock, so the concurrency cap cannot be raced.
     status: promoGrantStatusEnum().$type<BonusGrantStatus>().notNull().default('active'),
     forfeitReason: promoForfeitReasonEnum().$type<BonusForfeitReason>(),
@@ -270,6 +309,10 @@ export const promoGrant = pgTable(
     // around them: a bonus balance cannot go negative and progress cannot pass its requirement.
     check('promo_grant_bonus_balance_non_negative', sql`${t.bonusBalance} >= 0`),
     check(
+      'promo_grant_cash_buckets_non_negative',
+      sql`${t.unlinkedCash} >= 0 AND ${t.linkedCash} >= 0`,
+    ),
+    check(
       'promo_grant_progress_within_requirement',
       sql`${t.wageringProgress} >= 0 AND ${t.wageringProgress} <= ${t.wageringRequired}`,
     ),
@@ -312,9 +355,19 @@ export const promoGrantEntry = pgTable(
     bonusAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     // The real-money half of the same bet. The win split needs both sides of the stake.
     realAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
+    // The parts of realAmount drawn from (or returned to) buckets A and B. The rest of realAmount
+    // is free real money.
+    unlinkedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    linkedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
     wageringDelta: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
       .notNull()
       .default('0'),
+    // On a stake: what it was scored on at acceptance, so a later profile edit cannot rescore it.
+    wagerInputs: jsonb().$type<StakeWagerInputs>(),
     balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     // The provider round, on the movements that have one. How a win finds its funding grant.
     externalRoundId: text(),
@@ -353,3 +406,60 @@ export type PromoOptIn = typeof promoOptIn.$inferSelect;
 export type PromoOptInDeposit = typeof promoOptInDeposit.$inferSelect;
 export type PromoWeightProfile = typeof promoWeightProfile.$inferSelect;
 export type PromoWeight = typeof promoWeight.$inferSelect;
+
+/**
+ * A bet a grant is waiting on. Opened by the stake, closed by its win, reversal or loss report.
+ * A grant whose requirement is met completes only once none of its rounds is still open, so a
+ * bet in flight cannot be paid out of bonus funds the grant already converted.
+ */
+export const promoGrantRound = pgTable(
+  'promo_grant_round',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    grantId: uuid().notNull(),
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    providerName: text().notNull(),
+    externalRoundId: text().notNull(),
+    // Weighted stake waiting for the round to settle before it counts toward the requirement.
+    progressPending: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    openedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    check('promo_grant_round_progress_pending_non_negative', sql`${t.progressPending} >= 0`),
+    foreignKey({
+      columns: [t.grantId, t.userId, t.currency],
+      foreignColumns: [promoGrant.id, promoGrant.userId, promoGrant.currency],
+    }).onDelete('restrict'),
+    uniqueIndex('promo_grant_round_grant_id_provider_name_external_round_id_idx').on(
+      t.grantId,
+      t.providerName,
+      t.externalRoundId,
+    ),
+    index('promo_grant_round_grant_id_open_idx')
+      .on(t.grantId)
+      .where(sql`${t.settledAt} is null`),
+    index('promo_grant_round_round_key_idx').on(
+      t.userId,
+      t.currency,
+      t.providerName,
+      t.externalRoundId,
+    ),
+  ],
+);
+
+export type PromoGrantRound = typeof promoGrantRound.$inferSelect;
+
+/** A deposit counted into a grant's buckets; the primary key stops a replay counting it twice. */
+export const promoGrantDeposit = pgTable('promo_grant_deposit', {
+  /** The wallet transaction. Cross-module id, no FK. */
+  transactionId: uuid().primaryKey(),
+  grantId: uuid()
+    .notNull()
+    .references(() => promoGrant.id, { onDelete: 'restrict' }),
+  amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});

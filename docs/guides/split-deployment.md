@@ -138,7 +138,7 @@ A main API that does not load chat runs none of chat's handlers or jobs. The cha
 
 ## Worked example: money apart from the platform
 
-The money modules (`wallet`, `bonus`, `gamification`, `gaming`, `betting`, `exchange-rate`) can run in a `money` service while a `platform` service runs the rest (ADR-0063). Set `MONEY_SERVICE_URL` on the platform and `createApp` drops the money modules and every plugin that `dependsOn` one, directly or through another dropped one, before it applies any manifest, as `CHAT_SERVICE_URL` does for chat. A platform module that should stay must require money ports, not `dependsOn` a money module. The `money-remote` plugin, part of `corePlugins()`, then binds these ports to the money service's internal API:
+The money modules (`wallet`, `bonus`, `gamification`, `gaming`, `betting`, `exchange-rate`) can run in a `money` service while a `platform` service runs the rest (ADR-0067). Set `MONEY_SERVICE_URL` on the platform and `createApp` drops the money modules and every plugin that `dependsOn` one, directly or through another dropped one, before it applies any manifest, as `CHAT_SERVICE_URL` does for chat. A platform module that should stay must require money ports, not `dependsOn` a money module. The `money-remote` plugin, part of `corePlugins()`, then binds these ports to the money service's internal API:
 
 | Port                                             | Remote methods                                                                      |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------- |
@@ -148,7 +148,7 @@ The money modules (`wallet`, `bonus`, `gamification`, `gaming`, `betting`, `exch
 | `PLAY_ELIGIBILITY_PROJECTION`                    | `write`, `reconcile`, `heartbeat`, bound with `remote: true`                        |
 | `RG_LIMIT_LEDGER`                                | `write`, `reconcile`, `drifted`, `heartbeat`, `spendFor`, bound with `remote: true` |
 
-`remote: true` makes the owners follow ADR-0062: a lift or a loosened limit reaches the ledger by its event, and a restriction still writes first and fails the change when the write fails. On the money service, a non-empty `MONEY_PORTS_CALLERS` arms the stale check: stakes, deposits and wagers refuse once the last heartbeat is older than `LEDGER_PROJECTION_STALE_MS`, or missing. A fresh split install therefore refuses until the platform's first beat, at most `LEDGER_PROJECTION_HEARTBEAT_MS`.
+`remote: true` makes the owners follow ADR-0066: a lift or a loosened limit reaches the ledger by its event, and a restriction still writes first and fails the change when the write fails. On the money service, a non-empty `MONEY_PORTS_CALLERS` arms the stale check: stakes, deposits and wagers refuse once the last heartbeat is older than `LEDGER_PROJECTION_STALE_MS`, or missing. A fresh split install therefore refuses until the platform's first beat, at most `LEDGER_PROJECTION_HEARTBEAT_MS`.
 
 Ports that take the caller's transaction cannot cross the network: `WALLET_COMMANDS`, `WAGER_TRACKING`, `BONUS_LIFECYCLE`, `BONUS_WAGERING`, `BONUS_GRANTS`, `BONUS_GRANT_LEDGER`, `GAMING_COMMANDS`, `RG_LIMITS` and `LEDGER_PLAY_ELIGIBILITY`. With `MONEY_SERVICE_URL` set, a kept module whose `requiresPorts` names one fails the boot with the module and the port in the message.
 

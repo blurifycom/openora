@@ -12,6 +12,8 @@ import {
   ADMIN_USER_DIRECTORY,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
+  BONUS_DEPOSITS,
+  BONUS_FUND_LOCKS,
   BONUS_LIFECYCLE,
   BONUS_WAGERING,
   IDENTITY_READER,
@@ -46,6 +48,7 @@ import {
   MAIL_DISPATCH,
   EXCHANGE_RATE_READER,
   resolveExchangeRatePivot,
+  resolveWalletTurnoverConfig,
   SWAP_ADAPTER,
   SWAP_WEBHOOK_VERIFIER,
   ON_RAMP_ADAPTER,
@@ -75,8 +78,12 @@ import {
   WalletService,
   WithdrawalNotFoundError,
   WithdrawalNotPendingError,
+  requireBonusFundLocks,
 } from './service/wallet.service.js';
-import { WalletCommandsService } from './service/wallet-commands.service.js';
+import {
+  WalletCommandsService,
+  cashTransferKindsWithoutTurnover,
+} from './service/wallet-commands.service.js';
 import { LedgerApiService } from './service/ledger-api.service.js';
 import { LedgerRgLimitsService } from './service/ledger-rg-limits.service.js';
 import { LedgerPlayEligibilityService } from './service/ledger-play-eligibility.service.js';
@@ -102,6 +109,11 @@ import {
   projectionDriftCheck,
 } from './service/reconciliation.service.js';
 import { SwapService } from './service/swap.service.js';
+import {
+  TURNOVER_PRICING_QUEUE,
+  TurnoverPricingJobSchema,
+  TurnoverService,
+} from './service/turnover.service.js';
 import { OnRampService } from './service/on-ramp.service.js';
 
 const logger = createLogger('wallet');
@@ -150,6 +162,11 @@ export default {
     {
       port: RG_LIMITS_SOURCE,
       without: 'reconciliation never compares the limits projection with compliance',
+    },
+    {
+      port: BONUS_FUND_LOCKS,
+      without:
+        "no bonus locks real money and a withdrawal forfeits only through BONUS_LIFECYCLE; 'block' mode fails the boot",
     },
   ],
   register(ctx) {
@@ -350,6 +367,25 @@ export default {
         platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
       }));
 
+    const bonusFundLocks = (c: TypedContainer<CoreTokenCatalog>) =>
+      requireBonusFundLocks(
+        c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+        c.has(BONUS_FUND_LOCKS) ? c.get(BONUS_FUND_LOCKS) : undefined,
+      );
+
+    let turnoverSvc: TurnoverService | null = null;
+    const turnoverService = (c: TypedContainer<CoreTokenCatalog>) => {
+      const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
+      return (turnoverSvc ??= new TurnoverService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        audit: c.get(AUDIT_WRITER),
+        config: resolveWalletTurnoverConfig(platformConfig?.wallet),
+        pivotCurrency: resolveExchangeRatePivot(platformConfig?.exchangeRate),
+        rates: c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+      }));
+    };
+
     // One instance backs the router and the agent tools; either factory may build it first.
     let walletSvc: WalletService | null = null;
     const walletService = (c: TypedContainer<CoreTokenCatalog>) =>
@@ -375,7 +411,10 @@ export default {
           : undefined,
         playEligibility: c.get(PLAY_ELIGIBILITY),
         grantLedger: c.has(BONUS_GRANT_LEDGER) ? c.get(BONUS_GRANT_LEDGER) : undefined,
+        bonusFundLocks: bonusFundLocks(c),
         bonusLifecycle: c.has(BONUS_LIFECYCLE) ? c.get(BONUS_LIFECYCLE) : undefined,
+        depositBonus: c.has(BONUS_DEPOSITS) ? c.get(BONUS_DEPOSITS) : undefined,
+        turnover: turnoverService(c),
       }));
 
     ctx.mcp.tool(walletActivityTool, (c) => {
@@ -507,6 +546,17 @@ export default {
       },
     });
 
+    ctx.jobs.worker({
+      queue: TURNOVER_PRICING_QUEUE,
+      schema: TurnoverPricingJobSchema,
+      handler: async () => {
+        if (!turnoverSvc) {
+          throw new Error('wallet turnover pricing: service not constructed yet');
+        }
+        await turnoverSvc.priceAllPending();
+      },
+    });
+
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
     ctx.provide(PAYMENT_WEBHOOK_VERIFIER, () => {
       const webhookSecret = z
@@ -546,7 +596,9 @@ export default {
           rgLimits: c.get(RG_LIMITS),
           bonusWagering: c.has(BONUS_WAGERING) ? c.get(BONUS_WAGERING) : undefined,
           bonusGrants: c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
+          bonusFundLocks: bonusFundLocks(c),
           identityReader: c.get(IDENTITY_READER),
+          turnover: () => turnoverService(c),
         }),
     );
     // The versioned surface provider bridges and the sportsbook move money through. Gaming and
@@ -576,6 +628,7 @@ export default {
           pivotCurrency: resolveExchangeRatePivot(
             c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).exchangeRate : undefined,
           ),
+          turnover: () => turnoverService(c),
         }),
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
@@ -598,6 +651,13 @@ export default {
       if (Object.keys(platformConfig?.wallet?.significantAmountThresholds ?? {}).length === 0) {
         logger.warn(
           'wallet.significantAmountThresholds is not configured - large bets and wins are not audited',
+        );
+      }
+      const untracked = cashTransferKindsWithoutTurnover(platformConfig?.wallet);
+      if (untracked.length > 0) {
+        logger.warn(
+          { kinds: untracked },
+          'wallet.transferCredits is cash but these transfer kinds carry no turnover requirement - a received transfer can be withdrawn at once',
         );
       }
       const wallet = walletService(c);
@@ -664,6 +724,17 @@ export default {
           .catch((err) => logger.error({ err }, 'wallet-ledger-invariant schedule failed'));
       }
 
+      if (turnoverService(c).enabled) {
+        void jobQueue
+          .schedule(
+            TURNOVER_PRICING_QUEUE,
+            'wallet-turnover-pricing.cron',
+            {},
+            { cron: resolveWalletTurnoverConfig(platformConfig?.wallet).pricingCron },
+          )
+          .catch((err) => logger.error({ err }, 'wallet-turnover-pricing schedule failed'));
+      }
+
       // No SWAP_ADAPTER bound is the resting state (core binds none) - the swap routes
       // then refuse rather than the module failing to load.
       const swapAdapter = c.has(SWAP_ADAPTER) ? c.get(SWAP_ADAPTER) : undefined;
@@ -676,6 +747,8 @@ export default {
             audit: c.get(AUDIT_WRITER),
             platformConfig,
             limiter: c.get(RATE_LIMITER),
+            bonusFundLocks: bonusFundLocks(c),
+            turnover: turnoverService(c),
           })
         : undefined;
       // A webhook needs BOTH: an adapter that parses the vendor's format and that same
@@ -729,6 +802,7 @@ export default {
         jobQueue,
         reconciliationQueue: WALLET_RECONCILIATION_QUEUE,
         realtime: realtimeTransport,
+        turnover: turnoverService(c),
         limiter: c.get(RATE_LIMITER),
         swap,
         swapWebhook,

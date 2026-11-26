@@ -377,7 +377,7 @@ describe('limit projection snapshot', () => {
   });
 });
 
-describe('a limits projection written from another service (ADR-0062)', () => {
+describe('a limits projection written from another service (ADR-0066)', () => {
   const unreachable = {
     remote: true,
     write: async () => {

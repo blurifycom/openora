@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import * as z from 'zod';
-import { JOB_QUEUE, MaxBetExceededError, queue } from '@openora/core/contracts';
+import {
+  JOB_QUEUE,
+  MaxBetExceededError,
+  queue,
+  type BonusFundSettings,
+} from '@openora/core/contracts';
 import { CountryRuleSchema } from '@openora/core/compliance/contract';
 import { PromoOfferSchema } from '@openora/core/promo/contracts/bonus';
 import {
@@ -34,6 +39,7 @@ import {
   listGrants,
   listOffers,
   listPublicOffers,
+  loseRound,
   money,
   newBonusPlayer,
   offerBody,
@@ -42,11 +48,12 @@ import {
   optInRows,
   parseAdminGrant,
   placeBet,
+  reverseBet,
   setWeights,
   LI_IP,
   uniqueKey,
-  waitForBankedDeposit,
   waitForGrant,
+  waitForOptInDeposits,
 } from './support/bonus.js';
 import { balanceOf, closeWalletE2e, deliverWebhook, type WalletE2e } from './support/wallet.js';
 
@@ -107,8 +114,8 @@ describe('player opts in and receives a deposit bonus', () => {
 
     await fundPlayer(e2e, player, '20');
 
-    const banked = await waitForBankedDeposit(e2e, player.userId, offer.id, '20');
-    expect(banked.grantId).toBeNull();
+    const claim = await waitForOptInDeposits(e2e, player.userId, offer.id, 1);
+    expect(claim).toMatchObject({ grantId: null, accumulatedDeposit: money('0') });
     expect(await grantRows(e2e, player.userId)).toEqual([]);
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('20'));
     const offers = await listOffers(player.client);
@@ -209,7 +216,7 @@ describe('player opts in and receives a deposit bonus', () => {
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('40'));
   });
 
-  it('a first-deposit-only offer grants nothing on a second deposit', async () => {
+  it('a first-deposit-only offer is not used up by a deposit below its minimum', async () => {
     const player = await newBonusPlayer(e2e);
     const offer = await createOffer(e2e.admin, player.currency, {
       minDeposit: '30',
@@ -218,28 +225,18 @@ describe('player opts in and receives a deposit bonus', () => {
     await optInOk(player.client, offer.id);
 
     await fundPlayer(e2e, player, '5');
-    await waitForBankedDeposit(e2e, player.userId, offer.id, '5');
-    await fundPlayer(e2e, player, '40');
-
-    await vi.waitFor(
-      async () => {
-        const rows = await dbOf(e2e)
-          .select()
-          .from(promoOptInDeposit)
-          .where(
-            eq(
-              promoOptInDeposit.optInId,
-              (await optInRows(e2e, player.userId, offer.id))[0]?.id ?? '',
-            ),
-          );
-        expect(rows).toHaveLength(2);
-      },
-      { timeout: 15_000, interval: 100 },
-    );
+    const short = await waitForOptInDeposits(e2e, player.userId, offer.id, 1);
+    expect(short).toMatchObject({ grantId: null, accumulatedDeposit: money('0') });
     expect(await grantRows(e2e, player.userId)).toEqual([]);
-    const [claim] = await optInRows(e2e, player.userId, offer.id);
-    expect(claim).toMatchObject({ grantId: null, accumulatedDeposit: money('5') });
-    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('45'));
+
+    await fundPlayer(e2e, player, '40');
+    const granted = await waitForGrant(e2e, player.userId, offer.id);
+
+    expect(granted).toMatchObject({ grantedAmount: money('20'), status: 'active' });
+    expect((await optInRows(e2e, player.userId, offer.id))[0]).toMatchObject({
+      grantId: granted.id,
+      accumulatedDeposit: money('40'),
+    });
   });
 
   it('opting in without a session is rejected as unauthorized', async () => {
@@ -544,7 +541,9 @@ describe('admin manages offers, weights and forfeits', () => {
       expect(await balanceOf(e2e, early.userId, early.currency)).toBe(money('300')),
     );
 
-    await placeBet(e2e, early.userId, early.currency, '100', gameId);
+    const firstRound = randomUUID();
+    await placeBet(e2e, early.userId, early.currency, '100', gameId, firstRound);
+    await loseRound(e2e, early.userId, early.currency, firstRound);
     const [afterFirst] = await dbOf(e2e)
       .select()
       .from(promoGrant)
@@ -561,8 +560,12 @@ describe('admin manages offers, weights and forfeits', () => {
       expect(await balanceOf(e2e, late.userId, late.currency)).toBe(money('300')),
     );
 
-    await placeBet(e2e, early.userId, early.currency, '100', gameId);
-    await placeBet(e2e, late.userId, late.currency, '100', gameId);
+    const earlyRound = randomUUID();
+    const lateRound = randomUUID();
+    await placeBet(e2e, early.userId, early.currency, '100', gameId, earlyRound);
+    await placeBet(e2e, late.userId, late.currency, '100', gameId, lateRound);
+    await loseRound(e2e, early.userId, early.currency, earlyRound);
+    await loseRound(e2e, late.userId, late.currency, lateRound);
 
     const [earlyRow] = await dbOf(e2e)
       .select()
@@ -593,7 +596,16 @@ describe('admin manages offers, weights and forfeits', () => {
     expect(untouched).toMatchObject({ wageringProgress: money('0'), bonusBalance: money('20') });
     expect(await entryRows(e2e, grantId)).toHaveLength(1);
 
-    const allowed = await placeBet(e2e, player.userId, player.currency, '5');
+    const allowedRound = randomUUID();
+    const allowed = await placeBet(
+      e2e,
+      player.userId,
+      player.currency,
+      '5',
+      'game-1',
+      allowedRound,
+    );
+    await loseRound(e2e, player.userId, player.currency, allowedRound);
 
     expect(allowed).toMatchObject({ ok: true, moved: true });
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('35'));
@@ -615,6 +627,8 @@ describe('admin manages offers, weights and forfeits', () => {
 
     await placeBet(e2e, player.userId, player.currency, '10', 'game-1', roundId);
     const replay = await placeBet(e2e, player.userId, player.currency, '10', 'game-1', roundId);
+
+    await loseRound(e2e, player.userId, player.currency, roundId);
 
     expect(replay).toMatchObject({ ok: true, moved: false });
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('30'));
@@ -761,5 +775,306 @@ describe('admin manages offers, weights and forfeits', () => {
     expect(offerRow?.name).toBe('E2E welcome bonus');
     const [grantRow] = await dbOf(e2e).select().from(promoGrant).where(eq(promoGrant.id, grantId));
     expect(grantRow).toMatchObject({ status: 'active', bonusBalance: money('20') });
+  });
+});
+
+describe('admin sets how bets contribute', () => {
+  const weights = [{ scope: 'default', scopeRef: null, contributionPercent: '100' }];
+  const createProfile = async (body: Record<string, unknown> = {}) => {
+    const res = await e2e.admin.post('/backoffice/promo/weight-profiles', {
+      name: `contribution-${randomUUID()}`,
+      ...body,
+    });
+    return z
+      .object({ id: z.string() })
+      .loose()
+      .parse(await bodyOf(res));
+  };
+  const saveWeights = (id: string, body: Record<string, unknown>) =>
+    e2e.admin.put(`/backoffice/promo/weight-profiles/${id}/weights`, { weights, ...body });
+
+  it('creates a flat profile at version 1 when no mode is named', async () => {
+    const created = await createProfile();
+
+    expect(created).toMatchObject({ contributionMode: 'flat', referenceEdge: null, version: 1 });
+  });
+
+  it('switches a profile to house edge, bumps its version and audits both sides', async () => {
+    const created = await createProfile();
+
+    const res = await saveWeights(created.id, {
+      contributionMode: 'house_edge',
+      referenceEdge: '0.04',
+    });
+
+    expect(res.status).toBe(200);
+    const saved = z
+      .object({ referenceEdge: z.string() })
+      .loose()
+      .parse(await bodyOf(res));
+    expect(saved).toMatchObject({ contributionMode: 'house_edge', version: 2 });
+    expect(Number(saved.referenceEdge)).toBe(0.04);
+    const rows = await auditFor(e2e, 'promo.weight_profile.set', created.id);
+    const latest = rows.at(-1);
+    expect(latest?.before).toMatchObject({
+      contributionMode: 'flat',
+      referenceEdge: null,
+      version: 1,
+    });
+    expect(latest?.after).toMatchObject({ contributionMode: 'house_edge', version: 2 });
+  });
+
+  it('refuses house edge without a reference edge and leaves the profile as it was', async () => {
+    const created = await createProfile();
+
+    const res = await saveWeights(created.id, { contributionMode: 'house_edge' });
+
+    expect(res.status).toBe(400);
+    const listed = z
+      .array(z.object({ id: z.string() }).loose())
+      .parse(await bodyOf(await e2e.admin.get('/backoffice/promo/weight-profiles')));
+    expect(listed.find((p) => p.id === created.id)).toMatchObject({
+      contributionMode: 'flat',
+      version: 1,
+    });
+  });
+
+  it('keeps the mode when a save names no contribution', async () => {
+    const created = await createProfile({ contributionMode: 'house_edge', referenceEdge: '0.04' });
+
+    const saved = z
+      .object({ referenceEdge: z.string() })
+      .loose()
+      .parse(await bodyOf(await saveWeights(created.id, {})));
+
+    expect(saved).toMatchObject({ contributionMode: 'house_edge', version: 2 });
+    expect(Number(saved.referenceEdge)).toBe(0.04);
+  });
+});
+
+describe('admin limits the buckets a bet class may use', () => {
+  const funds = (betClassBuckets?: BonusFundSettings['betClassBuckets']) => ({
+    terms: {
+      wageringMultiplier: '5',
+      expiryDays: 30,
+      funds: {
+        rolloverBase: 'bonus' as const,
+        existingBalance: 'free' as const,
+        freeFundsOrder: 'first' as const,
+        dustThresholdUsd: '0.01',
+        decimals: 2,
+        ...(betClassBuckets ? { betClassBuckets } : {}),
+      },
+    },
+  });
+  const createWithFunds = async (betClassBuckets?: BonusFundSettings['betClassBuckets']) => {
+    const res = await e2e.admin.post(
+      '/backoffice/promo/offers',
+      offerBody('USD', { key: uniqueKey(), ...funds(betClassBuckets) }),
+    );
+    return PromoOfferSchema.parse(await bodyOf(res));
+  };
+
+  it('stores the class rules on create and on patch', async () => {
+    const offer = await createWithFunds({ zero: ['unlinked', 'linked'] });
+    expect(offer.terms.funds?.betClassBuckets).toEqual({ zero: ['unlinked', 'linked'] });
+
+    const patched = PromoOfferSchema.parse(
+      await bodyOf(
+        await e2e.admin.patch(`/backoffice/promo/offers/${offer.id}`, funds({ pvp: ['unlinked'] })),
+      ),
+    );
+
+    expect(patched.terms.funds?.betClassBuckets).toEqual({ pvp: ['unlinked'] });
+  });
+
+  it('stores no class rules when none are given', async () => {
+    const offer = await createWithFunds();
+
+    expect(offer.terms.funds).not.toHaveProperty('betClassBuckets');
+  });
+});
+
+describe('player forfeits their own bonus', () => {
+  const forfeitable = async (allowPlayerForfeit?: boolean) => {
+    const player = await newBonusPlayer(e2e);
+    const grantId = await directGrant(e2e, player.userId, player.currency, {
+      amount: '50',
+      buckets: { linked: '50', unlinked: '10' },
+      terms: {
+        wageringMultiplier: '5',
+        expiryDays: 30,
+        ...(allowPlayerForfeit === undefined ? {} : { allowPlayerForfeit }),
+      },
+    });
+    return { player, grantId };
+  };
+
+  it('forfeits it where the terms allow, removing the bonus and releasing the linked cash', async () => {
+    const { player, grantId } = await forfeitable(true);
+    expect((await getGrant(player.client, grantId)).body).toMatchObject({
+      playerForfeitable: true,
+    });
+
+    const res = await player.client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(200);
+    expect(await bodyOf(res)).toMatchObject({
+      id: grantId,
+      status: 'forfeited',
+      forfeitReason: 'player_opt_out',
+      bonusBalance: money('0'),
+      linkedCash: money('0'),
+      unlinkedCash: money('0'),
+    });
+  });
+
+  it('is refused where the terms do not allow it, and the bonus stays live', async () => {
+    const { player, grantId } = await forfeitable();
+
+    const res = await player.client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(403);
+    expect((await getGrant(player.client, grantId)).body).toMatchObject({
+      status: 'active',
+      playerForfeitable: false,
+    });
+  });
+
+  it("cannot forfeit another player's bonus, and is told it does not exist", async () => {
+    const { player: owner, grantId } = await forfeitable(true);
+    const stranger = await newBonusPlayer(e2e);
+
+    const res = await stranger.client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(404);
+    expect((await getGrant(owner.client, grantId)).body).toMatchObject({ status: 'active' });
+  });
+
+  it('cannot forfeit a bonus twice', async () => {
+    const { player, grantId } = await forfeitable(true);
+    await player.client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    const res = await player.client.post(`/promo/grants/${grantId}/forfeit`, {});
+
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('a bet against a bonus counts when its round settles', () => {
+  async function bettor(cash: string, bonus: string, multiplier: string) {
+    const player = await newBonusPlayer(e2e);
+    const grantId = await directGrant(e2e, player.userId, player.currency, {
+      amount: bonus,
+      terms: { wageringMultiplier: multiplier, expiryDays: 30 },
+    });
+    await fundPlayer(e2e, player, cash);
+    await vi.waitFor(async () =>
+      expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money(cash)),
+    );
+    return { player, grantId };
+  }
+  const progressOf = async (grantId: string) => {
+    const [row] = await dbOf(e2e).select().from(promoGrant).where(eq(promoGrant.id, grantId));
+    return row;
+  };
+
+  it('shows an open round as pending on the player and staff reads, then as progress once it settles', async () => {
+    const { player, grantId } = await bettor('100', '100', '10');
+    const reads = async () => {
+      const own = await grantOk(player.client, grantId);
+      const staff = await e2e.admin.get(`/backoffice/promo/players/${player.userId}/grants`);
+      const listed = z
+        .array(
+          z.object({ id: z.string(), pendingWagered: z.string(), wageringProgress: z.string() }),
+        )
+        .parse(await bodyOf(staff))
+        .find((g) => g.id === grantId);
+      return [
+        own.pendingWagered,
+        own.wageringProgress,
+        listed?.pendingWagered,
+        listed?.wageringProgress,
+      ];
+    };
+    const round = randomUUID();
+
+    expect(await reads()).toEqual([money('0'), money('0'), money('0'), money('0')]);
+    await placeBet(e2e, player.userId, player.currency, '40', 'game-1', round);
+    expect(await reads()).toEqual([money('40'), money('0'), money('40'), money('0')]);
+    await loseRound(e2e, player.userId, player.currency, round);
+    expect(await reads()).toEqual([money('0'), money('40'), money('0'), money('40')]);
+  });
+
+  it('records a progress entry the player sees once the round settles', async () => {
+    const { player, grantId } = await bettor('100', '100', '10');
+    const round = randomUUID();
+    await placeBet(e2e, player.userId, player.currency, '40', 'game-1', round);
+    await loseRound(e2e, player.userId, player.currency, round);
+
+    const entries = await grantEntries(player.client, grantId);
+
+    const progress = entries.filter((e) => e.type === 'progress');
+    expect(progress).toHaveLength(1);
+    expect(progress[0]).toMatchObject({ bonusAmount: money('0'), wageringDelta: money('40') });
+  });
+
+  it('keeps a round open after a partial reversal, crediting its progress only when the rest settles', async () => {
+    const { player, grantId } = await bettor('100', '100', '10');
+    const round = randomUUID();
+    await placeBet(e2e, player.userId, player.currency, '100', 'game-1', round);
+
+    await reverseBet(e2e, player.userId, player.currency, '20', round);
+
+    expect(await grantOk(player.client, grantId)).toMatchObject({
+      pendingWagered: money('80'),
+      wageringProgress: money('0'),
+      status: 'active',
+    });
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('20'));
+
+    await loseRound(e2e, player.userId, player.currency, round);
+
+    expect(await grantOk(player.client, grantId)).toMatchObject({
+      pendingWagered: money('0'),
+      wageringProgress: money('80'),
+      status: 'active',
+    });
+  });
+
+  it('converts what is left to the real balance and closes the grant only once the round settles', async () => {
+    const { player, grantId } = await bettor('200', '100', '1');
+    const round = randomUUID();
+    await placeBet(e2e, player.userId, player.currency, '100', 'game-1', round);
+    expect((await progressOf(grantId))?.status).toBe('active');
+
+    await loseRound(e2e, player.userId, player.currency, round);
+
+    expect(await progressOf(grantId)).toMatchObject({
+      status: 'completed',
+      bonusBalance: money('0'),
+      wageringProgress: money('100'),
+    });
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('200'));
+    expect((await entryRows(e2e, grantId)).map((e) => e.type).sort()).toEqual([
+      'convert',
+      'grant',
+      'progress',
+      'stake',
+    ]);
+  });
+
+  it('takes back the progress a bet bought when the round is voided before it settles', async () => {
+    const { player, grantId } = await bettor('100', '100', '10');
+    const round = randomUUID();
+    await placeBet(e2e, player.userId, player.currency, '40', 'game-1', round);
+
+    await reverseBet(e2e, player.userId, player.currency, '40', round);
+
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(money('100'));
+    expect(await progressOf(grantId)).toMatchObject({
+      wageringProgress: money('0'),
+      bonusBalance: money('100'),
+    });
   });
 });

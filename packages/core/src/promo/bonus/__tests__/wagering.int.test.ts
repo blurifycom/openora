@@ -87,7 +87,7 @@ beforeAll(async () => {
   };
   const eligibility: PlayEligibilityPort = { isRestricted: async () => false };
   grants = new GrantService(auditPort);
-  wagering = new WageringService();
+  wagering = new WageringService(auditPort);
   lifecycle = new GrantLifecycleService(db.drizzle, auditPort, eventBus, eligibility);
   offers = new OfferService(db.drizzle, auditPort, grants, walletReader, eligibility, {
     error: () => undefined,
@@ -171,13 +171,29 @@ const wager = (
     wagering.wager(tx, {
       userId,
       currency: CURRENCY,
-      fromBonus: '0',
+      realAvailable: overrides.stake,
       context: casino(),
       providerName: PROVIDER,
       externalRoundId: randomUUID(),
       ...overrides,
     }),
   );
+
+const closeRound = (userId: string, externalRoundId: string) =>
+  db.drizzle.db.transaction((tx) =>
+    wagering.closeRound(tx, {
+      userId,
+      currency: CURRENCY,
+      providerName: PROVIDER,
+      externalRoundId,
+      realBalance: '1000000',
+    }),
+  );
+
+const shares = (outcome: { bonusShare: string; realShare: string }) => ({
+  bonusShare: money(outcome.bonusShare),
+  realShare: money(outcome.realShare),
+});
 
 const settle = (
   userId: string,
@@ -193,6 +209,7 @@ const settle = (
       providerName: PROVIDER,
       externalRoundId,
       kind,
+      realBalance: '1000000',
     }),
   );
 
@@ -237,21 +254,37 @@ describe('bonus wagering on bets', () => {
     ]);
     const { userId, grantId } = await newGrant({ weightProfileId });
 
-    const half = await wager(userId, { stake: '40', context: casino('game-1') });
+    const halfRound = randomUUID();
+    const half = await wager(userId, {
+      stake: '40',
+      context: casino('game-1'),
+      externalRoundId: halfRound,
+    });
     expect(half).toMatchObject({ ok: true, grantId, weightedAmount: money('20') });
+    expect((await grantRow(grantId)).wageringProgress).toBe(money('0'));
+    await closeRound(userId, halfRound);
     expect((await grantRow(grantId)).wageringProgress).toBe(money('20'));
 
-    const full = await wager(userId, { stake: '10', context: casino('game-2') });
+    const fullRound = randomUUID();
+    const full = await wager(userId, {
+      stake: '10',
+      context: casino('game-2'),
+      externalRoundId: fullRound,
+    });
     expect(full).toMatchObject({ ok: true, weightedAmount: money('10') });
+    await closeRound(userId, fullRound);
 
     const row = await grantRow(grantId);
     expect(row.wageringProgress).toBe(money('30'));
     expect(row.status).toBe('active');
-    const stakes = (await entriesOf(grantId)).filter((e) => e.type === 'stake');
+    const entries = await entriesOf(grantId);
+    const stakes = entries.filter((e) => e.type === 'stake');
     expect(stakes.map((e) => [e.realAmount, e.wageringDelta]).sort()).toEqual([
-      [money('10'), money('10')],
-      [money('40'), money('20')],
+      [money('10'), money('0')],
+      [money('40'), money('0')],
     ]);
+    const progress = entries.filter((e) => e.type === 'progress');
+    expect(progress.map((e) => e.wageringDelta).sort()).toEqual([money('10'), money('20')]);
   });
 
   it('a bet on a game with no weight advances nothing', async () => {
@@ -262,13 +295,13 @@ describe('bonus wagering on bets', () => {
 
     const outcome = await wager(userId, { stake: '50', context: casino('game-2') });
 
-    expect(outcome).toMatchObject({ ok: true, weightedAmount: money('0') });
+    expect(outcome).toMatchObject({ ok: true, grantId: null });
+    expect(money((outcome as { weightedAmount: string }).weightedAmount)).toBe(money('0'));
     const row = await grantRow(grantId);
     expect(row.wageringProgress).toBe(money('0'));
     expect(row.status).toBe('active');
     expect(row.bonusBalance).toBe(money('100'));
-    const [stake] = (await entriesOf(grantId)).filter((e) => e.type === 'stake');
-    expect(stake).toMatchObject({ wageringDelta: money('0'), realAmount: money('50') });
+    expect(await entryTypes(grantId)).toEqual(['grant']);
   });
 
   it('a bet above the max bet while a bonus is active is refused', async () => {
@@ -284,42 +317,61 @@ describe('bonus wagering on bets', () => {
     const split = await wager(userId, { stake: '5', externalRoundId: round });
     expect(split).toMatchObject({ ok: false, reason: 'max_bet_exceeded', maxBet: '10' });
 
+    await closeRound(userId, round);
     const row = await grantRow(grantId);
     expect(row.wageringProgress).toBe(money('6'));
-    expect(await entryTypes(grantId)).toEqual(['grant', 'stake']);
+    expect(await entryTypes(grantId)).toEqual(['grant', 'progress', 'stake']);
   });
 
   it('a bet exactly at the max bet is accepted', async () => {
     const { userId, grantId } = await newGrant({ maxBet: '10' });
 
-    const outcome = await wager(userId, { stake: '10' });
+    const round = randomUUID();
+    const outcome = await wager(userId, { stake: '10', externalRoundId: round });
 
     expect(outcome).toMatchObject({ ok: true, grantId, weightedAmount: money('10') });
+    await closeRound(userId, round);
     expect((await grantRow(grantId)).wageringProgress).toBe(money('10'));
-    expect(await entryTypes(grantId)).toEqual(['grant', 'stake']);
+    expect(await entryTypes(grantId)).toEqual(['grant', 'progress', 'stake']);
   });
 
   it('the part of a stake the real balance could not cover is drawn from the grant bonus balance', async () => {
     const { userId, grantId } = await newGrant({ amount: '100' });
 
-    const outcome = await wager(userId, { stake: '50', fromBonus: '30' });
+    const round = randomUUID();
+    const outcome = await wager(userId, {
+      stake: '50',
+      realAvailable: '20',
+      externalRoundId: round,
+    });
 
-    expect(outcome).toMatchObject({ ok: true, bonusSpent: '30', bonusBalanceAfter: money('70') });
+    expect(outcome).toMatchObject({
+      ok: true,
+      bonusSpent: money('30'),
+      bonusBalanceAfter: money('70'),
+    });
     expect((await grantRow(grantId)).bonusBalance).toBe(money('70'));
     const stake = (await entriesOf(grantId)).find((e) => e.type === 'stake');
     expect(stake).toMatchObject({
       bonusAmount: money('-30'),
       realAmount: money('20'),
-      wageringDelta: money('50'),
+      wageringDelta: money('0'),
     });
+    await closeRound(userId, round);
+    expect((await grantRow(grantId)).wageringProgress).toBe(money('50'));
   });
 
   it('completing the requirement converts the remaining bonus balance to cash once', async () => {
     const { userId, grantId } = await newGrant({ amount: '100', multiplier: '2' });
 
-    const completing = await wager(userId, { stake: '200' });
-    expect(completing).toMatchObject({
+    const round = randomUUID();
+    expect(await wager(userId, { stake: '200', externalRoundId: round })).toMatchObject({
       ok: true,
+    });
+    expect((await grantRow(grantId)).status).toBe('active');
+
+    const completing = await closeRound(userId, round);
+    expect(completing).toMatchObject({
       completed: [{ grantId, convertedAmount: money('100') }],
     });
     const closed = await grantRow(grantId);
@@ -327,24 +379,24 @@ describe('bonus wagering on bets', () => {
     expect(closed.bonusBalance).toBe(money('0'));
     expect(closed.wageringProgress).toBe(money('200'));
     expect(closed.closedAt).not.toBeNull();
-    expect(await entryTypes(grantId)).toEqual(['convert', 'grant', 'stake']);
+    expect(await entryTypes(grantId)).toEqual(['convert', 'grant', 'progress', 'stake']);
     const convert = (await entriesOf(grantId)).find((e) => e.type === 'convert');
     expect(convert?.bonusAmount).toBe(money('-100'));
 
     const after = await wager(userId, { stake: '50' });
-    expect(after).toMatchObject({ ok: true, grantId: null, completed: [] });
-    expect(await entryTypes(grantId)).toEqual(['convert', 'grant', 'stake']);
+    expect(after).toMatchObject({ ok: true, grantId: null });
+    expect(await entryTypes(grantId)).toEqual(['convert', 'grant', 'progress', 'stake']);
   });
 
   it('a win while wagering credits the bonus balance and not the real balance', async () => {
     const { userId, grantId } = await newGrant({ amount: '100', multiplier: '10' });
     const bonusRound = randomUUID();
-    await wager(userId, { stake: '40', fromBonus: '40', externalRoundId: bonusRound });
+    await wager(userId, { stake: '40', realAvailable: '0', externalRoundId: bonusRound });
     expect((await grantRow(grantId)).bonusBalance).toBe(money('60'));
 
     const win = await settle(userId, 'win', '100', bonusRound);
 
-    expect(win).toEqual({ bonusShare: money('100'), realShare: money('0') });
+    expect(shares(win)).toEqual({ bonusShare: money('100'), realShare: money('0') });
     expect((await grantRow(grantId)).bonusBalance).toBe(money('160'));
     const winEntry = (await entriesOf(grantId)).find((e) => e.type === 'win');
     expect(winEntry).toMatchObject({ bonusAmount: money('100'), balanceAfter: money('160') });
@@ -352,7 +404,7 @@ describe('bonus wagering on bets', () => {
     const cashRound = randomUUID();
     await wager(userId, { stake: '10', externalRoundId: cashRound });
     const cashWin = await settle(userId, 'win', '30', cashRound);
-    expect(cashWin).toEqual({ bonusShare: money('0'), realShare: money('30') });
+    expect(shares(cashWin)).toEqual({ bonusShare: money('0'), realShare: money('30') });
     expect((await grantRow(grantId)).bonusBalance).toBe(money('160'));
   });
 
@@ -367,22 +419,22 @@ describe('bonus wagering on bets', () => {
       weightProfileId,
     });
     const round = randomUUID();
-    await wager(userId, { stake: '40', fromBonus: '40', externalRoundId: round });
+    await wager(userId, { stake: '40', realAvailable: '0', externalRoundId: round });
     const staked = await grantRow(grantId);
     expect(staked.bonusBalance).toBe(money('60'));
-    expect(staked.wageringProgress).toBe(money('20'));
+    expect(staked.wageringProgress).toBe(money('0'));
 
     const reversed = await settle(userId, 'bet_reversal', '40', round);
 
-    expect(reversed).toEqual({ bonusShare: money('40'), realShare: money('0') });
+    expect(shares(reversed)).toEqual({ bonusShare: money('40'), realShare: money('0') });
     const restored = await grantRow(grantId);
     expect(restored.bonusBalance).toBe(money('100'));
     expect(restored.wageringProgress).toBe(money('0'));
     const reversal = (await entriesOf(grantId)).find((e) => e.type === 'reversal');
-    expect(reversal).toMatchObject({ bonusAmount: money('40'), wageringDelta: money('-20') });
+    expect(reversal).toMatchObject({ bonusAmount: money('40'), wageringDelta: money('0') });
 
     const again = await settle(userId, 'bet_reversal', '40', round);
-    expect(again).toEqual({ bonusShare: '0', realShare: '0' });
+    expect(shares(again)).toEqual({ bonusShare: money('0'), realShare: money('0') });
     const unchanged = await grantRow(grantId);
     expect(unchanged.bonusBalance).toBe(money('100'));
     expect((await entryTypes(grantId)).filter((t) => t === 'reversal')).toHaveLength(1);
@@ -393,11 +445,11 @@ describe('bonus wagering on bets', () => {
     const early = await newGrant({ userId, amount: '10', multiplier: '10', expiryDays: 5 });
     const late = await newGrant({ userId, amount: '100', multiplier: '10', expiryDays: 20 });
 
-    const outcome = await wager(userId, { stake: '150' });
+    const round = randomUUID();
+    const outcome = await wager(userId, { stake: '150', externalRoundId: round });
 
-    expect(outcome).toMatchObject({
-      ok: true,
-      weightedAmount: money('150'),
+    expect(outcome).toMatchObject({ ok: true, weightedAmount: money('150') });
+    expect(await closeRound(userId, round)).toMatchObject({
       completed: [{ grantId: early.grantId, convertedAmount: money('10') }],
     });
     const first = await grantRow(early.grantId);

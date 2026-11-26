@@ -13,7 +13,7 @@ import {
   RG_EXCLUSION_READER,
   WALLET_COMMANDS,
   WALLET_READER,
-  PromoConfigSchema,
+  resolvePromoConfig,
   UuidSchema,
   WAGER_TRACKING,
   domainEventSchemas,
@@ -180,7 +180,7 @@ const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger, c.get(IDENTITY_READER));
 
 const promoConfig = (c: TypedContainer<CoreTokenCatalog>) =>
-  PromoConfigSchema.parse(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {});
+  resolvePromoConfig(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined);
 
 const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
   new RakebackService(

@@ -5,9 +5,14 @@ import {
   BONUS_GRANT_ENTRY_TYPES,
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
+  BonusBetClassSchema,
+  BonusGrantBucketSchema,
   BonusGrantSourceSchema,
+  BonusExistingBalanceModeSchema,
+  BonusFreeFundsOrderSchema,
   BonusGrantStatusSchema,
   BonusForfeitReasonSchema,
+  BonusRolloverBaseSchema,
   ContributionPercentSchema,
   CurrencyTickerSchema,
   MoneyAmountSchema,
@@ -15,10 +20,16 @@ import {
   PageQuerySchema,
   paginated,
   PromoOfferStatusSchema,
+  ReferenceEdgeSchema,
   SignedMoneyAmountSchema,
   TimestampSchema,
+  TurnoverEntryStatusSchema,
+  TurnoverSummarySchema,
   UuidSchema,
+  WALLET_TRANSFER_CREDIT_KINDS,
+  WagerContributionModeSchema,
   WagerProductSchema,
+  type BonusGrantSource,
   type WagerProduct,
 } from '@openora/core/contracts';
 
@@ -60,6 +71,11 @@ export type WagerWeight = z.infer<typeof WagerWeightSchema>;
 export const WagerWeightProfileSchema = z.object({
   id: UuidSchema,
   name: z.string().min(1).max(120),
+  contributionMode: WagerContributionModeSchema,
+  /** The house edge a game must reach to count in full; set only in `house_edge` mode. */
+  referenceEdge: ReferenceEdgeSchema.nullable(),
+  /** Raised on every save; a grant records the version it snapshotted. */
+  version: z.number().int().positive(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -73,9 +89,21 @@ export const WagerWeightProfileDetailSchema = WagerWeightProfileSchema.extend({
 
 export type WagerWeightProfileDetail = z.infer<typeof WagerWeightProfileDetailSchema>;
 
-export const CreateWagerWeightProfileInputSchema = z.object({
-  name: z.string().min(1).max(120),
+/** Absent on create means `flat`; absent on a save keeps the profile's current mode and edge. */
+const ContributionInputSchema = z.object({
+  contributionMode: WagerContributionModeSchema.optional(),
+  referenceEdge: ReferenceEdgeSchema.optional(),
 });
+
+const edgeMatchesMode = (v: z.infer<typeof ContributionInputSchema>) =>
+  v.contributionMode === undefined
+    ? v.referenceEdge === undefined
+    : (v.contributionMode === 'house_edge') === (v.referenceEdge !== undefined);
+const EDGE_MATCHES_MODE = 'house_edge needs a referenceEdge, and flat or an absent mode takes none';
+
+export const CreateWagerWeightProfileInputSchema = ContributionInputSchema.extend({
+  name: z.string().min(1).max(120),
+}).refine(edgeMatchesMode, EDGE_MATCHES_MODE);
 
 export type CreateWagerWeightProfileInput = z.infer<typeof CreateWagerWeightProfileInputSchema>;
 
@@ -84,7 +112,7 @@ export type CreateWagerWeightProfileInput = z.infer<typeof CreateWagerWeightProf
  * profile, and a bet resolving against a half-saved profile scores at whatever happens to be
  * there. A `default` row carries no reference; every other scope needs one.
  */
-export const SetWagerWeightsInputSchema = z.object({
+export const SetWagerWeightsInputSchema = ContributionInputSchema.extend({
   id: UuidSchema,
   weights: z
     .array(
@@ -103,7 +131,7 @@ export const SetWagerWeightsInputSchema = z.object({
       (rows) => new Set(rows.map((r) => `${r.scope}:${r.scopeRef ?? ''}`)).size === rows.length,
       'two rows target the same scope and reference',
     ),
-});
+}).refine(edgeMatchesMode, EDGE_MATCHES_MODE);
 
 export type SetWagerWeightsInput = z.infer<typeof SetWagerWeightsInputSchema>;
 
@@ -133,6 +161,28 @@ export const PromoOfferRulesSchema = z.object({
 
 export type PromoOfferRules = z.infer<typeof PromoOfferRulesSchema>;
 
+const BucketListSchema = z
+  .array(BonusGrantBucketSchema)
+  .max(3)
+  .refine((buckets) => new Set(buckets).size === buckets.length, 'a bucket is listed twice');
+
+/** The grant buckets each bet class may draw on; free real money is always allowed. */
+export const BetClassBucketsSchema = z.partialRecord(BonusBetClassSchema, BucketListSchema);
+
+/** How a deposit bonus splits funds into buckets; every field defaults to today's behaviour. */
+export const BonusFundSettingsSchema = z.object({
+  rolloverBase: BonusRolloverBaseSchema.default('bonus'),
+  existingBalance: BonusExistingBalanceModeSchema.default('free'),
+  freeFundsOrder: BonusFreeFundsOrderSchema.default('first'),
+  dustThresholdUsd: MoneyAmountSchema.default('0.01'),
+  /** The currency's precision; the bucket split rounds down to it. */
+  decimals: z.number().int().min(0).max(18).default(18),
+  /** Ties A and B to the grant's currency against outflows. Absent: only a deposit grant locks. */
+  lockWithdrawals: z.boolean().optional(),
+  /** Absent, or a class left out, lets that class draw on every bucket. */
+  betClassBuckets: BetClassBucketsSchema.optional(),
+});
+
 export const BonusGrantTermsSchema = z.object({
   wageringMultiplier: MoneyAmountSchema,
   expiryDays: z.number().int().positive().max(365),
@@ -151,7 +201,23 @@ export const BonusGrantTermsSchema = z.object({
   maxWinMultiplier: MoneyAmountSchema.nullable().optional(),
   /** Products bonus funds cannot pay for. Absent or empty allows every product. */
   excludedProducts: z.array(WagerProductSchema).optional(),
+  funds: BonusFundSettingsSchema.optional(),
+  /** Lets the player forfeit the grant themselves. Absent means only an admin can. */
+  allowPlayerForfeit: z.boolean().optional(),
 });
+
+/** What a stake was scored on at acceptance, kept on its ledger row. */
+export const StakeWagerInputsSchema = z.object({
+  mode: WagerContributionModeSchema,
+  rtp: z.string().nullable(),
+  categoryPercent: z.string(),
+  referenceEdge: z.string().nullable(),
+  effectivePercent: z.string(),
+  profileVersion: z.number().int().nullable(),
+  betClass: BonusBetClassSchema,
+});
+
+export type StakeWagerInputs = z.infer<typeof StakeWagerInputsSchema>;
 
 /** An offer as an admin configures it. */
 export const PromoOfferSchema = z.object({
@@ -181,7 +247,7 @@ export const CreatePromoOfferInputSchema = PromoOfferSchema.omit({
 }).extend({
   status: PromoOfferStatusSchema.default('draft'),
   rules: PromoOfferRulesSchema.default({ firstDepositOnly: false }),
-  requiresOptIn: z.boolean().default(false),
+  requiresOptIn: z.boolean().default(true),
   validFrom: TimestampSchema.nullable().default(null),
   validUntil: TimestampSchema.nullable().default(null),
 });
@@ -235,7 +301,7 @@ export const PlayerOfferSchema = PublicOfferSchema.extend({
    * grant list, so it holds however far back that grant has been paged.
    */
   claimed: z.boolean(),
-  /** What their deposits have put toward the minimum so far. */
+  /** The deposit that earned the bonus; zero until one meets the minimum on its own. */
   accumulatedDeposit: MoneyAmountSchema,
 });
 
@@ -260,9 +326,20 @@ export const PlayerGrantSchema = z.object({
   bonusBalance: MoneyAmountSchema,
   wageringRequired: MoneyAmountSchema,
   wageringProgress: MoneyAmountSchema,
+  /**
+   * Weighted stakes on rounds still open, up to what the requirement has left; credited to
+   * `wageringProgress` as those rounds settle. Zero once the grant is no longer active.
+   */
+  pendingWagered: MoneyAmountSchema.optional(),
+  /** Real cash tied to the bonus (bucket B); part of the real balance, not on top of it. */
+  linkedCash: MoneyAmountSchema,
+  /** Real cash locked by the bonus but not linked to it (bucket A); also part of the real balance. */
+  unlinkedCash: MoneyAmountSchema,
   forfeitReason: BonusForfeitReasonSchema.nullable(),
   /** Largest total stake of a round while this bonus is active, in its currency; null for no limit. */
   maxBet: MoneyAmountSchema.nullable(),
+  /** The grant's terms let the player forfeit it themselves. */
+  playerForfeitable: z.boolean(),
   /** While `pending`, the end of the window to activate it; once active, of the time to wager it. */
   expiresAt: TimestampSchema,
   /** Null while the grant waits for a free slot. */
@@ -292,6 +369,29 @@ export const AdminGrantSchema = PlayerGrantSchema.extend({
 export type AdminGrant = z.infer<typeof AdminGrantSchema>;
 
 /**
+ * A player's balance in one currency with what live locking bonuses hold back: `locked` blocks
+ * a swap or transfer always, and a withdrawal only in `block` mode. `free` is the balance minus
+ * it, never below 0. Read from one snapshot without row locks.
+ */
+export const AdminPlayerFundsSchema = z.object({
+  activeCurrency: CurrencyTickerSchema,
+  balances: z.array(
+    z.object({
+      currency: CurrencyTickerSchema,
+      balance: MoneyAmountSchema,
+      locked: MoneyAmountSchema,
+      free: MoneyAmountSchema,
+      // The bonus lock alone, when an unmet turnover requirement makes `locked` stricter (ADR-0065).
+      bonusLocked: MoneyAmountSchema.optional(),
+    }),
+  ),
+  // Present while a turnover requirement is on.
+  turnover: TurnoverSummarySchema.optional(),
+});
+
+export type AdminPlayerFunds = z.infer<typeof AdminPlayerFundsSchema>;
+
+/**
  * A hand-issued forfeiture is always recorded as `admin`; the reason is not the caller's to pick.
  * The vocabulary also carries `self_exclusion`, `account_closed` and the two the product has not
  * scheduled, and an admin able to file their own action as a responsible-gambling one puts a
@@ -301,6 +401,68 @@ export const ForfeitGrantInputSchema = z.object({
   id: UuidSchema,
   note: z.string().trim().min(10).max(500),
 });
+
+/** Grant sources a player-to-player transfer creates, which a conversion may turn into cash. */
+export const TRANSFER_GRANT_SOURCES =
+  WALLET_TRANSFER_CREDIT_KINDS satisfies readonly BonusGrantSource[];
+export const TransferGrantSourceSchema = z.enum(TRANSFER_GRANT_SOURCES);
+export type TransferGrantSource = z.infer<typeof TransferGrantSourceSchema>;
+
+export const ConvertTransferGrantsInputSchema = z.object({
+  sources: z.array(TransferGrantSourceSchema).min(1),
+  limit: z.number().int().min(1).max(500).default(100),
+  /** Reports what would convert and writes nothing. */
+  dryRun: z.boolean().optional(),
+  /**
+   * Starts after this grant id: a previous call's `nextCursor`. A grant skipped for an open round
+   * is not revisited by the same paged pass, so a pass ends with a call without `after` while
+   * `remaining > 0`.
+   */
+  after: UuidSchema.optional(),
+});
+export type ConvertTransferGrantsInput = z.infer<typeof ConvertTransferGrantsInputSchema>;
+
+export const ConvertedTransferGrantSchema = z.object({
+  grantId: UuidSchema,
+  userId: UuidSchema,
+  currency: CurrencyTickerSchema,
+  /** Bonus balance credited to the real balance. */
+  cash: MoneyAmountSchema,
+  /** Turnover added in the grant's currency: the wagering it still had left. */
+  requiredInCurrency: MoneyAmountSchema,
+  /** Null when no turnover entry was written: a dry run, or nothing left to wager. */
+  entryStatus: TurnoverEntryStatusSchema.nullable(),
+});
+export type ConvertedTransferGrant = z.infer<typeof ConvertedTransferGrantSchema>;
+
+/** Why a grant failed to convert; it stays live and a later run retries it. */
+export const TRANSFER_GRANT_CONVERSION_FAILURES = [
+  'credit_refused',
+  'replay_mismatch',
+  'invalid_amount',
+  'failed',
+] as const;
+export const TransferGrantConversionFailureSchema = z.enum(TRANSFER_GRANT_CONVERSION_FAILURES);
+export type TransferGrantConversionFailure = z.infer<typeof TransferGrantConversionFailureSchema>;
+
+export const ConvertTransferGrantsResultSchema = z.object({
+  converted: z.array(ConvertedTransferGrantSchema),
+  /** Grants this call tried and could not convert; present only when there is one. */
+  failed: z
+    .array(z.object({ grantId: UuidSchema, reason: TransferGrantConversionFailureSchema }))
+    .optional(),
+  /** Grants left live because a bet on them is still open; a later run converts them. */
+  skippedOpenRound: z.number().int().nonnegative(),
+  /** Live grants of the requested sources still left after this call, queued ones included. */
+  remaining: z.number().int().nonnegative(),
+  /**
+   * The last grant this call looked at; pass it as `after` to go on. Null when this call returned
+   * fewer than `limit` candidates, so a full last page is followed by one empty call. `remaining > 0`
+   * can follow a null cursor: a grant skipped for an open round sits behind the cursor.
+   */
+  nextCursor: UuidSchema.nullable(),
+});
+export type ConvertTransferGrantsResult = z.infer<typeof ConvertTransferGrantsResultSchema>;
 
 /**
  * A player's bonus position in one currency. There is no balance table: the figures are the sum
@@ -327,8 +489,8 @@ export type BonusBalance = z.infer<typeof BonusBalanceSchema>;
  * and this shape only says what moved so the client refetches `GET /promo/balance`.
  *
  * It covers the changes a client cannot see coming - a deposit's bonus landing from a job, the
- * expiry sweep, an admin forfeiting, a requirement completing. Wagering progress moving on the
- * player's own bet is not on here: the debit the client just made already answers it.
+ * expiry sweep, an admin forfeiting, a requirement completing. Wagering progress is not on here:
+ * it moves when the player's own round settles, so the client refetches once a round ends.
  */
 export const BonusBalanceChangeReasonSchema = z.enum([
   'granted',
@@ -397,6 +559,13 @@ export const bonusContract = {
   },
 
   admin: {
+    players: {
+      funds: oc
+        .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/funds' })
+        .input(z.object({ userId: UuidSchema }))
+        .output(AdminPlayerFundsSchema),
+    },
+
     grants: {
       list: oc
         .route({ method: 'GET', path: '/backoffice/promo/players/{userId}/grants' })
@@ -407,6 +576,12 @@ export const bonusContract = {
         .route({ method: 'POST', path: '/backoffice/promo/grants/{id}/forfeit' })
         .input(ForfeitGrantInputSchema)
         .output(AdminGrantSchema),
+
+      /** Super-admin only: live transfer grants into real cash carrying a turnover requirement (ADR-0065). */
+      convertTransferGrants: oc
+        .route({ method: 'POST', path: '/backoffice/promo/grants/convert-transfer-grants' })
+        .input(ConvertTransferGrantsInputSchema)
+        .output(ConvertTransferGrantsResultSchema),
     },
 
     offers: {
@@ -484,6 +659,12 @@ export const bonusContract = {
       .route({ method: 'GET', path: '/promo/grants/{id}/entries' })
       .input(z.object({ id: UuidSchema, ...PageQuerySchema.shape }))
       .output(paginated(PlayerGrantEntrySchema)),
+
+    /** Gives up a live bonus: C is removed, B and A are released. Only where the terms allow it. */
+    forfeit: oc
+      .route({ method: 'POST', path: '/promo/grants/{id}/forfeit' })
+      .input(z.object({ id: UuidSchema }))
+      .output(PlayerGrantSchema),
   },
 };
 export * from './agent-tools.js';

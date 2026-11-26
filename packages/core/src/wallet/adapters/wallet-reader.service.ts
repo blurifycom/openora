@@ -12,6 +12,8 @@ import {
   type WalletTransactionStatus,
   type WalletWithdrawalRequests,
   type ExchangeRateReader,
+  type TurnoverSummary,
+  type User,
 } from '@openora/core/contracts';
 import {
   and,
@@ -24,6 +26,7 @@ import {
   isNotNull,
   like,
   lt,
+  ne,
   notInArray,
   sql,
   sum,
@@ -39,6 +42,7 @@ import {
   resolveWalletBalance,
 } from '../service/wallet.service.js';
 import { pricedInPivot } from '../service/pivot-pricing.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 type CurrencyTotal = { currency: string; total: string | null };
 
@@ -84,6 +88,7 @@ export type WalletReaderServiceDeps = {
   // then answers null for any player holding a non-pivot-currency deposit).
   exchangeRateReader?: ExchangeRateReader;
   pivotCurrency: string;
+  turnover?: () => TurnoverService;
 };
 
 export class WalletReaderService implements WalletReader {
@@ -91,8 +96,10 @@ export class WalletReaderService implements WalletReader {
   private readonly defaultCurrency: string | undefined;
   private readonly exchangeRateReader: ExchangeRateReader | undefined;
   private readonly pivotCurrency: string;
+  private readonly turnover: (() => TurnoverService) | undefined;
 
   constructor(deps: WalletReaderServiceDeps) {
+    this.turnover = deps.turnover;
     this.drizzle = deps.drizzle;
     this.defaultCurrency = deps.defaultCurrency;
     this.exchangeRateReader = deps.exchangeRateReader;
@@ -101,6 +108,13 @@ export class WalletReaderService implements WalletReader {
 
   getBalances(userId: string, tx?: unknown): Promise<WalletBalancesReading> {
     return readWalletBalances(this.on(tx), userId, this.defaultCurrency);
+  }
+
+  async readTurnover(userId: User['id'], tx?: unknown): Promise<TurnoverSummary> {
+    if (!this.turnover) {
+      throw new Error('WalletReaderService.readTurnover: no TurnoverService bound');
+    }
+    return this.turnover().summary(userId, tx);
   }
 
   // A caller already inside a transaction passes it: taking a second pool connection while
@@ -332,6 +346,42 @@ export class WalletReaderService implements WalletReader {
       )
       .limit(1);
     return !earlier;
+  }
+
+  async hasQualifyingDeposit(
+    userId: string,
+    args: { currency: string; minAmount: string; before?: string },
+    tx?: unknown,
+  ): Promise<boolean> {
+    const db = this.on(tx);
+    let cutoff: Date | null = null;
+    if (args.before !== undefined) {
+      const [txn] = await db
+        .select({ createdAt: walletTransaction.createdAt })
+        .from(walletTransaction)
+        .where(eq(walletTransaction.id, args.before));
+      if (!txn) {
+        return false;
+      }
+      cutoff = txn.createdAt;
+    }
+    const [earlier] = await db
+      .select({ id: walletTransaction.id })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+      .where(
+        and(
+          eq(wallet.userId, userId),
+          eq(walletTransaction.type, 'deposit'),
+          eq(walletTransaction.status, 'completed'),
+          eq(walletTransaction.currency, args.currency),
+          gte(walletTransaction.amount, args.minAmount),
+          cutoff === null ? undefined : lt(walletTransaction.createdAt, cutoff),
+          args.before === undefined ? undefined : ne(walletTransaction.id, args.before),
+        ),
+      )
+      .limit(1);
+    return earlier !== undefined;
   }
 
   async getLifetimeWithdrawals(userId: string): Promise<WalletLifetimeWithdrawals> {

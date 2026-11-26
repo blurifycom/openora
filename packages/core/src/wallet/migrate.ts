@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { TURNOVER_STAKE_STATES } from '@openora/core/contracts';
 import { appendOnlyTableSql, runMigrations } from '@openora/core/server/migrate';
 
 // Provider references stay updatable: a vendor that reports a different id on completion must
@@ -13,14 +14,48 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
     'provider_name',
     'provider_ref_id',
     'tx_hash',
+    // A deferred stake flips to counted when its round settles.
+    'turnover_state',
   ],
-  setOnceColumns: ['balance_after', 'real_share'],
+  setOnceColumns: ['balance_after', 'real_share', 'turnover_contribution'],
   // A finished row cannot be reopened: a rejected withdrawal put back to `pending` would be
   // rejected and refunded a second time.
   terminal: {
     column: 'status',
     values: ['completed', 'failed', 'rejected', 'cancelled', 'refunded'],
   },
+  transitions: [
+    {
+      column: 'turnover_state',
+      allowed: [
+        ...TURNOVER_STAKE_STATES.map((state) => [null, state] as const),
+        ['deferred', 'counted'],
+      ],
+    },
+  ],
+});
+
+// An entry is the record of a requirement: it is priced once and only ever cleared.
+const TURNOVER_ENTRY_SQL = appendOnlyTableSql('wallet_turnover_entry', {
+  mutableColumns: ['status'],
+  setOnceColumns: [
+    'pivot_value',
+    'required',
+    'priced_at',
+    'cleared_at',
+    'cleared_by',
+    'clear_reason',
+  ],
+  transitions: [
+    {
+      column: 'status',
+      allowed: [
+        ['pending', 'counted'],
+        ['pending', 'cleared'],
+        ['counted', 'cleared'],
+      ],
+    },
+  ],
 });
 
 // A baseline moved after the fact would hide any breach before it.
@@ -61,7 +96,7 @@ export function migrate(databaseUrl?: string) {
     // 0051 rewrites wallet_transaction twice under ACCESS EXCLUSIVE; wait on live traffic for
     // at most this long, then fail the deploy rather than stall every bet behind the lock.
     lockTimeout: '5s',
-    postSql: [LEDGER_RECORD_SQL, BALANCE_BASELINE_SQL, LEDGER_API_REQUEST_SQL],
+    postSql: [LEDGER_RECORD_SQL, BALANCE_BASELINE_SQL, LEDGER_API_REQUEST_SQL, TURNOVER_ENTRY_SQL],
     ...(databaseUrl ? { databaseUrl } : {}),
   });
 }

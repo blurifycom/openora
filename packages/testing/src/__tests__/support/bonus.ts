@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { and, asc, eq } from 'drizzle-orm';
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 import * as z from 'zod';
 import { BONUS_GRANTS, WALLET_COMMANDS, type BonusGrantArgs } from '@openora/core/contracts';
 import { auditLog } from '@openora/core/audit/schema';
@@ -21,6 +21,7 @@ import {
   promoGrant,
   promoGrantEntry,
   promoOptIn,
+  promoOptInDeposit,
   type PromoGrant,
 } from '@openora/core/promo/schema/bonus';
 import { flushAudit, type TestClient } from '../../index.js';
@@ -175,19 +176,21 @@ export async function waitForGrant(
   );
 }
 
-export async function waitForBankedDeposit(
+export async function waitForOptInDeposits(
   e2e: WalletE2e,
   userId: string,
   offerId: string,
-  amount: string,
+  count: number,
 ) {
   return vi.waitFor(
     async () => {
-      const [row] = await optInRows(e2e, userId, offerId);
-      if (!row || row.accumulatedDeposit !== money(amount)) {
-        throw new Error(`accumulated ${row?.accumulatedDeposit ?? 'none'}`);
-      }
-      return row;
+      const [claim] = await optInRows(e2e, userId, offerId);
+      const rows = await dbOf(e2e)
+        .select()
+        .from(promoOptInDeposit)
+        .where(eq(promoOptInDeposit.optInId, claim?.id ?? ''));
+      expect(rows).toHaveLength(count);
+      return claim;
     },
     { timeout: 15_000, interval: 100 },
   );
@@ -321,6 +324,45 @@ export function placeBet(
       providerRef: {
         providerName: BET_PROVIDER,
         providerRefId: `bet-${roundId}`,
+        externalRoundId: roundId,
+      },
+    }),
+  );
+}
+
+export function reverseBet(
+  e2e: WalletE2e,
+  userId: string,
+  currency: string,
+  amount: string,
+  roundId: string,
+) {
+  return dbOf(e2e).transaction((tx) =>
+    e2e.app.container.get(WALLET_COMMANDS).credit(tx, {
+      userId,
+      amount,
+      currency,
+      type: 'bet_reversal',
+      providerRef: {
+        providerName: BET_PROVIDER,
+        providerRefId: `reversal-${randomUUID()}`,
+        externalRoundId: roundId,
+      },
+    }),
+  );
+}
+
+export function loseRound(e2e: WalletE2e, userId: string, currency: string, roundId: string) {
+  return dbOf(e2e).transaction((tx) =>
+    e2e.app.container.get(WALLET_COMMANDS).debit(tx, {
+      userId,
+      amount: '0',
+      type: 'loss',
+      currency,
+      context: { provider: BET_PROVIDER, product: 'casino' },
+      providerRef: {
+        providerName: BET_PROVIDER,
+        providerRefId: `loss-${roundId}`,
         externalRoundId: roundId,
       },
     }),
