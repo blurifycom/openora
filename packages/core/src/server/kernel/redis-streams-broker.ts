@@ -23,9 +23,15 @@ const LAG_LOG_INTERVAL_MS = 60_000;
 // Deliveries (first read + reclaims) after which a still-failing entry is dead-lettered.
 const MAX_DELIVERIES = 5;
 
-export function streamStartIdFromEnv(raw: string | undefined): '$' | '0' {
+export function streamStartIdFromEnv(raw: string | undefined, splitService: boolean): '$' | '0' {
   if (raw === undefined || raw === '' || raw === '$') {
     return '$';
+  }
+  if (raw === '0' && !splitService) {
+    throw new Error(
+      'EVENT_BUS_START_ID=0 needs SERVICE_MANIFEST. Only a newly split service starts its consumer ' +
+        'groups at the oldest retained event; the main API would replay every handler it runs.',
+    );
   }
   if (raw === '0') {
     return '0';

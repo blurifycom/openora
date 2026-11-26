@@ -92,7 +92,9 @@ and each job reaches one of them.
   checks behind admin routes - is different: while your plugin list has the module that enforces
   it, a manifest that leaves it out refuses to boot. Whatever is missing, the boot fails once,
   naming all of it, with one manifest line that adds every module needed and what those need in
-  turn. A process with a manifest needs a `SERVICE_NAME` of its own.
+  turn. A process with a manifest needs a `SERVICE_NAME` of its own. Its consumer groups are new
+  and start at the stream tail; set `EVENT_BUS_START_ID=0` for its first boot to replay retained
+  events instead (every handler in it must be safe to run twice), then drop it.
 
   With the shipped modules a split ends up close to the monolith. Every manifest boot checks
   AdminGuard's ports, so every split loads iam and identity, and with them audit and mail.

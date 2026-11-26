@@ -614,7 +614,10 @@ async function bootApp(
     container.register(MESSAGE_BROKER, () => {
       const broker = new RedisStreamsBroker(redis, {
         serviceName,
-        startId: streamStartIdFromEnv(process.env['EVENT_BUS_START_ID']),
+        startId: streamStartIdFromEnv(
+          process.env['EVENT_BUS_START_ID'],
+          parseServiceManifest(process.env['SERVICE_MANIFEST']) !== null,
+        ),
       });
       container.onDispose(() => broker.close());
       return broker;
