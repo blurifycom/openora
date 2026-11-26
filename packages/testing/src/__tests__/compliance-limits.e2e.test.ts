@@ -94,8 +94,9 @@ describe('Player deposit, loss and wager limits', () => {
     expect(await depositRows(e2e, player.userId)).toHaveLength(1);
   });
 
-  it.todo('player sets a loss limit and a bet that would exceed it is refused');
-
+  it.todo(
+    'BUG: a loss limit is stored but never enforced, a second bet that takes net loss past it is accepted; the ledger offers only checkDeposit and checkWager (packages/core/src/wallet/service/ledger-rg-limits.service.ts:114)',
+  );
   it('player sets a wager limit and the next bet over it is refused', async () => {
     const player = await newRgPlayer(e2e);
     await fundPlayer(e2e, player, '100');
@@ -399,7 +400,18 @@ describe('Admin limit changes and projection', () => {
     expect((await limitRow(e2e, view.id))?.amount).toBe(scaled('50'));
   });
 
-  it.todo('admin cannot remove a player limit that would raise the effective cap');
+  it('admin cannot remove a player limit and the cap and its removal state stay', async () => {
+    const player = await newRgPlayer(e2e);
+    const view = await putLimit(player.client, player.currency, { amount: '50' });
+    const before = await limitRow(e2e, view.id);
+
+    const res = await readBody(await e2e.admin.del(`/compliance/limits/${view.id}`));
+
+    expect(res.status).toBe(403);
+    expect(await limitRow(e2e, view.id)).toEqual(before);
+    const over = await postDeposit(player.client, player.currency, '60');
+    expect(over.status).toBe(409);
+  });
 
   it('player cannot use the admin limit route', async () => {
     const player = await newRgPlayer(e2e);

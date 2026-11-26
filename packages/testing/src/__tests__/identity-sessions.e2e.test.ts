@@ -88,8 +88,28 @@ const controlsOf = async (browser: Browser) =>
   ControlsSchema.parse((await call(e2e, browser, 'GET', '/identity/security/me')).body);
 
 describe('session management', () => {
+  it('a player lists their sessions and sees the device label and the current one marked', async () => {
+    const player = await newCredentialPlayer(e2e, 'sess-list');
+    const first = await signedIn(player.email);
+    const second = await signedIn(player.email, PASSWORD, OTHER_USER_AGENT);
+
+    const fromFirst = await ownSessions(first);
+    const fromSecond = await ownSessions(second);
+
+    expect(fromFirst.filter((item) => item.current)).toHaveLength(1);
+    expect(fromSecond.filter((item) => item.current)).toHaveLength(1);
+    const seenFromFirst = fromFirst.find((item) => item.current);
+    const seenFromSecond = fromSecond.find((item) => item.current);
+    expect(seenFromFirst?.id).not.toBe(seenFromSecond?.id);
+    expect(seenFromSecond?.deviceLabel).toBe('Firefox on Linux');
+    expect(fromFirst.find((item) => item.id === seenFromSecond?.id)?.current).toBe(false);
+    expect(fromFirst.find((item) => item.id === seenFromSecond?.id)?.deviceLabel).toBe(
+      'Firefox on Linux',
+    );
+  });
+
   it.todo(
-    'a player lists their sessions and sees device label, country and the current one marked',
+    'GAP: the session list carries no country, only ipAddress and deviceLabel (packages/core/src/pam/identity/service/session.service.ts:67)',
   );
 
   it('a player revokes another session and that session is refused on its next request', async () => {
@@ -140,7 +160,9 @@ describe('session management', () => {
     expect(await alive(browser)).toBe(true);
   });
 
-  it.todo('revoke all ends every session except the current one');
+  it.todo(
+    'GAP: only an admin revoke-all for a user exists and it ends every session; the player has no revoke-all-except-current route (packages/core/src/pam/identity/router/index.ts:388)',
+  );
 
   it('a revoked session is closed on the live session stream', async () => {
     const player = await newCredentialPlayer(e2e, 'sess-stream');
@@ -350,7 +372,9 @@ describe('player security controls', () => {
     );
   });
 
-  it.todo('a player requires two factor on withdrawals and the setting persists');
+  it.todo(
+    'GAP: the only two factor requirement setting is requireTwoFactorOnLogin; there is no withdrawal-specific setting (packages/core/src/contracts/schemas/identity.ts:355)',
+  );
 
   it('a player verifies a phone with a code and a wrong code is refused', async () => {
     const player = await newCredentialPlayer(e2e, 'sec-phone');

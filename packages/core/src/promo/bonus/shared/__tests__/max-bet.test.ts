@@ -59,5 +59,7 @@ describe('maxBetTermsIssues', () => {
     );
   });
 
-  it.todo('reports an issue when a floor or ceiling is given without a rate');
+  it.todo(
+    'GAP: a floor or ceiling given without a rate is accepted and ignored, no issue reported (packages/core/src/promo/bonus/shared/max-bet.ts:34)',
+  );
 });

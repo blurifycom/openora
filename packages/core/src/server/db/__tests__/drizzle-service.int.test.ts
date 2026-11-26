@@ -7,7 +7,7 @@ import { DrizzleService } from '../drizzle.service.js';
 const marker = pgTable('replica_marker', { value: text().notNull() });
 
 const opened: TestDb[] = [];
-const envKeys = ['DATABASE_URL', 'DATABASE_REPLICA_URLS'] as const;
+const envKeys = ['DATABASE_URL', 'DATABASE_REPLICA_URLS', 'DATABASE_POOL_MAX'] as const;
 const savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
 afterEach(async () => {
@@ -87,5 +87,24 @@ describe('replicas', () => {
     }
   });
 
-  it.todo('an invalid pool size env falls back to the default');
+  it.each(['abc', '0', '-3', '2.5'])('an invalid pool size %s fails fast at boot', async (raw) => {
+    const primary = await markedDb('primary');
+    process.env['DATABASE_URL'] = primary.url;
+    process.env['DATABASE_POOL_MAX'] = raw;
+    expect(() => new DrizzleService()).toThrow(
+      `DATABASE_POOL_MAX must be a positive integer, got "${raw}"`,
+    );
+  });
+
+  it('an empty pool size env falls back to the default and opens', async () => {
+    const primary = await markedDb('primary');
+    process.env['DATABASE_URL'] = primary.url;
+    process.env['DATABASE_POOL_MAX'] = '';
+    const service = new DrizzleService();
+    try {
+      expect(await service.db.select().from(marker)).toEqual([{ value: 'primary' }]);
+    } finally {
+      await service.dispose();
+    }
+  });
 });

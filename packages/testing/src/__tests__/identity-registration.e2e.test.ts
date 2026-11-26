@@ -144,8 +144,12 @@ describe('player registration', () => {
     expect(await usersByEmail(missing)).toEqual([]);
   });
 
-  it.todo('registration with a birth date under 18 is refused and creates no user row');
-  it.todo('registration with a birth date exactly 18 years ago today succeeds');
+  it.todo(
+    'GAP: registration takes no birth date, only the acceptedAge attestation, so an under-18 date cannot be refused (packages/core/src/contracts/schemas/identity.ts:182)',
+  );
+  it.todo(
+    'GAP: registration takes no birth date, so the exactly-18 boundary has no input to test (packages/core/src/contracts/schemas/identity.ts:182)',
+  );
 
   it('registering an email that already exists returns the same neutral result as a fresh email and creates no second account', async () => {
     const email = uniqueEmail('reg-dup');
@@ -223,7 +227,9 @@ describe('player registration', () => {
     }
   });
 
-  it.todo('registering with an unsupported language is refused');
+  it.todo(
+    'GAP: registration takes no language field; unsupported languages are refused only by updateProfile (packages/core/src/contracts/schemas/identity.ts:182, packages/core/src/pam/shared/language.ts:8)',
+  );
 
   it('username availability reports a taken username as unavailable and a free one as available', async () => {
     const taken = uniqueUsername('taken');

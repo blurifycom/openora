@@ -13,6 +13,8 @@ import {
   waitForAudit,
   type WalletE2e,
 } from './support/wallet.js';
+import { promoGrant } from '@openora/core/promo/schema/bonus';
+import { directGrant, entryRows, money as bonusMoney } from './support/bonus.js';
 import {
   complianceManager,
   emailOf,
@@ -259,14 +261,37 @@ describe('Self-exclusion', () => {
   });
 
   it.todo(
-    'a custody deposit webhook for a self-excluded player is held, not credited to the balance',
+    'BUG: a custody deposit webhook for a self-excluded player is credited to the balance, no core DEPOSIT_HOLD_POLICY binds the RG state (packages/core/src/wallet/service/wallet.service.ts:4443)',
   );
 
-  it.todo(
-    'self-exclusion forfeits every active bonus and the bonus balance is zeroed with a ledger row',
-  );
+  it('self-exclusion forfeits every active bonus and the bonus balance is zeroed with a ledger row', async () => {
+    const player = await newFundedPlayer(e2e, '100');
+    const first = await directGrant(e2e, player.userId, player.currency, { amount: '20' });
+    const second = await directGrant(e2e, player.userId, player.currency, { amount: '30' });
 
-  it.todo('a self-excluded player can still withdraw their real-money balance');
+    const started = await startSelfExclusion(player);
+
+    expect(started.status).toBe(200);
+    for (const [grantId, amount] of [
+      [first, '20'],
+      [second, '30'],
+    ] as const) {
+      await vi.waitFor(async () => {
+        const [row] = await db().select().from(promoGrant).where(eq(promoGrant.id, grantId));
+        expect(row).toMatchObject({
+          status: 'forfeited',
+          forfeitReason: 'self_exclusion',
+          bonusBalance: bonusMoney('0'),
+        });
+      });
+      const entries = await entryRows(e2e, grantId);
+      expect(entries.map((entry) => [entry.type, entry.bonusAmount, entry.balanceAfter])).toEqual([
+        ['grant', bonusMoney(amount), bonusMoney(amount)],
+        ['forfeit', `-${bonusMoney(amount)}`, bonusMoney('0')],
+      ]);
+    }
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('100'));
+  });
 
   it('the ledger RG gate refuses a bet but not a withdrawal debit during self-exclusion', async () => {
     const player = await newFundedPlayer(e2e, '100');

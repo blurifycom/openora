@@ -285,8 +285,9 @@ describe('password change', () => {
     expect(await liveSessionCount(e2e, player.userId)).toBe(1);
   });
 
-  it.todo('a new password equal to the current one is refused');
-
+  it.todo(
+    'BUG: a new password equal to the current one is accepted with 200 and ends the other sessions (packages/core/src/pam/identity/service/identity.service.ts:2351)',
+  );
   it('an anonymous caller cannot change a password', async () => {
     const player = await newCredentialPlayer(e2e, 'change-anon');
 

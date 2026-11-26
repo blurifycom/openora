@@ -75,8 +75,9 @@ describe('player balances and transaction history', () => {
     expect(other.activeCurrency).not.toBe(mine.currency);
   });
 
-  it.todo('a player setting an active currency the operator does not offer is refused');
-
+  it.todo(
+    'BUG: setting an active currency the operator does not offer returns 200 and stores it, the service only updates wallet.currency (packages/core/src/wallet/service/wallet.service.ts:1762)',
+  );
   it('a player listing transactions sees their own rows with their status and none of another player', async () => {
     const mine = await newFundedPlayer(e2e, '100');
     const theirs = await newFundedPlayer(e2e, '40');
@@ -229,5 +230,7 @@ describe('ledger atomicity', () => {
     ]);
   });
 
-  it.todo('a completed ledger row cannot be reopened or deleted');
+  it.todo(
+    'GAP: ledger immutability is only the absence of a delete or reopen route, no database guard stops an UPDATE or DELETE on a completed row (packages/core/src/wallet/schema/index.ts:149)',
+  );
 });

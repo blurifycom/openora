@@ -222,7 +222,9 @@ describe('two factor login', () => {
     expect(await hasSession(e2e, browser)).toBe(false);
   });
 
-  it.todo('a code cannot be replayed after a successful login');
+  it.todo(
+    'BUG: the same TOTP code is accepted again on a second challenge within its time step (packages/core/src/pam/identity/service/two-factor-challenge.service.ts:64)',
+  );
 });
 
 describe('backup codes', () => {

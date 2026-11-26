@@ -176,7 +176,9 @@ describe('admin two factor is mandatory', () => {
     expect((await twoFactorRow(e2e, admin.userId)).enabled).toBe(true);
   });
 
-  it.todo('an admin cannot disable two factor while the policy is mandatory');
+  it.todo(
+    'BUG: an enrolled admin with a valid code disables two factor with 200 and two factor is off; the mandatory policy only forces re-enrolment afterwards (packages/core/src/pam/identity/service/identity.service.ts:2234)',
+  );
 
   it('an admin with two factor needs a code at every sign in from an untrusted device', async () => {
     const admin = await enrolledStaff('adm-code', 'super-admin');

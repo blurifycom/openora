@@ -124,7 +124,9 @@ describe('player login', () => {
     expect(errorOf(next?.body).data).toMatchObject({ attemptsRemaining: 4 });
   });
 
-  it.todo('a login records the device and country on the session');
+  it.todo(
+    'GAP: a session records ip and user agent but no country (packages/core/src/pam/identity/service/session.service.ts:67)',
+  );
 });
 
 describe('login lockout escalation', () => {
@@ -251,8 +253,12 @@ describe('login lockout escalation', () => {
     expect(lockedUntilMs(unknown[5]?.body)).toBeLessThanOrEqual(MINUTE);
   });
 
-  it.todo('the unlock route with a valid emailed code ends the lockout');
-  it.todo('the unlock route with a wrong code leaves the lockout in place');
+  it.todo(
+    'GAP: the only unlock route is the admin unlockUser; no emailed-code unlock exists (packages/core/src/pam/identity/router/index.ts:346)',
+  );
+  it.todo(
+    'GAP: no emailed-code unlock route exists, so a wrong unlock code has nothing to refuse (packages/core/src/pam/identity/router/index.ts:346)',
+  );
 
   it('two parallel wrong-password bursts on one account still lock it once at the first tier', async () => {
     const player = await newCredentialPlayer(e2e, 'lock-parallel');
@@ -318,7 +324,32 @@ describe('phone login', () => {
     expect(await me.json()).toMatchObject({ id: player.userId });
   });
 
-  it.todo('a wrong phone code is refused and counts toward the lockout');
+  it('a wrong phone code is refused, counts toward the five attempt cap and a cancelled code no longer signs in', async () => {
+    const player = await newPhonePlayer();
+    await postJson(e2e, '/identity/phone-login/request', { phone: player.phone });
+    const [code = ''] = smsCodesFor(player.phone);
+    const wrong = code === '000000' ? '111111' : '000000';
+    const verify = (attempt: string) =>
+      postJson(e2e, '/identity/phone-login/verify', { phone: player.phone, code: attempt });
+
+    const first = await verify(wrong);
+    const second = await verify(wrong);
+
+    expect(first.status).toBe(422);
+    expect(errorOf(first.body).data).toMatchObject({ attemptsRemaining: 4, reason: 'wrong_code' });
+    expect(errorOf(second.body).data).toMatchObject({ attemptsRemaining: 3 });
+    expect(first.res.headers.getSetCookie()).toEqual([]);
+    for (let i = 0; i < 2; i++) {
+      expect((await verify(wrong)).status).toBe(422);
+    }
+    const cancelled = await verify(wrong);
+    expect(cancelled.status).toBe(403);
+    expect(errorOf(cancelled.body).data).toMatchObject({ reason: 'otp_cancelled' });
+    const afterCancel = await verify(code);
+    expect(afterCancel.status).toBe(422);
+    expect(afterCancel.res.headers.getSetCookie()).toEqual([]);
+    expect((await userRow(e2e, player.userId)).failedLoginAttempts).toBe(0);
+  });
 
   it('a phone number that belongs to no player gets the same neutral response as a known one', async () => {
     const known = await newPhonePlayer();

@@ -371,8 +371,9 @@ describe('Audit log access', () => {
     );
   });
 
-  it.todo('export refuses an inverted day range');
-
+  it.todo(
+    'GAP: export with fromDate after toDate returns 200 with no rows instead of a validation error (packages/core/src/audit/contract/index.ts:72)',
+  );
   it('player cannot list or export audit logs', async () => {
     const player = await newPlayer(e2e.app, 'audit-trail-player');
 
