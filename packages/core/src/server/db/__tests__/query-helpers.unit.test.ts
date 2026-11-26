@@ -76,6 +76,10 @@ describe('money arithmetic', () => {
   });
 
   describe('moneyAdd and moneySubtract', () => {
+    it('writes a zero result without a sign', () => {
+      expect(moneySubtract('1', '1')).toBe('0.000000000000000000');
+    });
+
     it('adds without float noise', () => {
       expect(moneyEquals(moneyAdd('0.1', '0.2'), '0.3')).toBe(true);
     });
@@ -221,6 +225,10 @@ describe('money arithmetic', () => {
       ['1.25e1', '12.5'],
       ['2.5e-1', '0.25'],
       ['1e+3', '1000'],
+      ['1.23e2', '123'],
+      ['1.500e0', '1.5'],
+      ['1.000e0', '1'],
+      ['001e1', '10'],
       ['12.5', '12.5'],
       ['-1e-2', '-1e-2'],
       ['abc', 'abc'],
@@ -252,6 +260,10 @@ describe('money arithmetic', () => {
       ['0', '0.97', '0'],
     ])('stake %s at rtp %s keeps %s', (stake, rtp, expected) => {
       expect(moneyEquals(houseEdge(stake, rtp), expected)).toBe(true);
+    });
+
+    it('is the literal zero when the rtp is missing', () => {
+      expect(houseEdge('100', null)).toBe('0');
     });
   });
 });

@@ -49,7 +49,7 @@ type LimitRow = Awaited<ReturnType<typeof readLimits>>[number];
  * with no currency, which refuses every move it gates, so the snapshot always validates and no
  * bad row can block the write of a player lowering a limit.
  */
-function projectedLimit(row: LimitRow): ProjectedLimit {
+export function projectedLimit(row: LimitRow): ProjectedLimit {
   const limit = {
     limitId: row.limitId,
     type: row.type,
