@@ -315,24 +315,22 @@ describe('tag lifecycle', () => {
 
   it('an admin without the permission cannot create or delete a tag', async () => {
     const staff = await newStaff(e2e.app, 'tag-lifecycle', 'admin');
-    const deleted = await e2e.admin.del(`/tag/${CATALOG_PROBE_TAG}`);
-    expect(deleted.status).toBe(200);
-    try {
-      const create = await send(
-        await staff.client.post('/tag', { key: CATALOG_PROBE_TAG, isSticky: false }),
-      );
-      expect(create.status).toBe(403);
-      forbiddenBody(create.body);
-      expect(await catalogRows(CATALOG_PROBE_TAG)).toEqual([]);
+    await ensureInCatalog(CATALOG_PROBE_TAG);
+    const [before] = await catalogRows(CATALOG_PROBE_TAG);
 
-      await ensureInCatalog(CATALOG_PROBE_TAG);
-      const remove = await send(await staff.client.del(`/tag/${CATALOG_PROBE_TAG}`));
-      expect(remove.status).toBe(403);
-      forbiddenBody(remove.body);
-      expect(await catalogRows(CATALOG_PROBE_TAG)).toHaveLength(1);
-    } finally {
-      await ensureInCatalog(CATALOG_PROBE_TAG);
-    }
+    const create = await send(
+      await staff.client.post('/tag', { key: CATALOG_PROBE_TAG, isSticky: false }),
+    );
+    const remove = await send(await staff.client.del(`/tag/${CATALOG_PROBE_TAG}`));
+
+    expect(create.status).toBe(403);
+    forbiddenBody(create.body);
+    expect(remove.status).toBe(403);
+    forbiddenBody(remove.body);
+    const after = await catalogRows(CATALOG_PROBE_TAG);
+    expect(after).toHaveLength(1);
+    expect(after[0]?.id).toBe(before?.id);
+    expect(after[0]?.isSticky).toBe(before?.isSticky);
   });
 });
 
@@ -398,8 +396,13 @@ describe('manual assignment', () => {
     expect(await activeRows(holder.playerId, 'multi_account')).toHaveLength(1);
   });
 
-  it.todo('assigning to an unknown player returns not found');
-  it.todo('assigning a tag the player is not eligible for is refused');
+  it.todo(
+    'BUG: assigning to an unknown player returns not found (tag.service.ts:361 assignPlayerTag stores an orphan assignment with no player lookup, the route answers 200)',
+  );
+
+  it.todo(
+    'GAP: assigning a tag the player is not eligible for is refused (tag.service.ts:361 the manual route skips the check, only the agent path at :666 enforces it and no HTTP route reaches it)',
+  );
 
   it('an admin lists the tags assignable to a player without the ones already held', async () => {
     const holder = await newTagPlayer();
@@ -570,7 +573,9 @@ describe('automatic tags', () => {
     });
   });
 
-  it.todo('a manually removed automatic tag is not re-applied by the next evaluation');
+  it.todo(
+    'GAP: a manually removed automatic tag is not re-applied by the next evaluation (tag-evaluation.service.ts:105 assigns again, nothing records a manual removal)',
+  );
 
   it('a disabled rule applies no tag', async () => {
     await withRules(

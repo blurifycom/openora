@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { MAIL_DISPATCH } from '@openora/core/contracts';
@@ -40,8 +40,6 @@ afterAll(() => closeE2e(e2e));
 
 const db = () => e2e.app.container.get(DRIZZLE).db;
 const dispatch = () => e2e.app.container.get(MAIL_DISPATCH);
-const SETTLE_MS = 750;
-const settle = () => new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
 
 const verificationMails = (email: string) =>
   capturedEmailsFor(email).filter((mail) => /verify your email/i.test(mail.subject));
@@ -98,7 +96,6 @@ describe('transactional and promotional mail', () => {
       idempotencyKey: `e2e-verify:${randomUUID()}`,
     });
     await waitForEmail(email, (mail) => mail.text.includes('735104'));
-    await settle();
 
     const delivered = capturedEmailsFor(email).map((mail) => mail.text);
     expect(delivered.filter((text) => text.includes('482916'))).toHaveLength(1);
@@ -124,24 +121,25 @@ describe('transactional and promotional mail', () => {
       idempotencyKey: `e2e-sentinel:${randomUUID()}`,
     });
     await waitForEmail(sentinelEmail, (mail) => mail.text.includes('190283'));
-    await settle();
 
-    await flushAudit(e2e.app);
-    const rows = await db()
-      .select({ after: auditLog.after, actorType: auditLog.actorType })
-      .from(auditLog)
-      .where(
-        and(
-          eq(auditLog.action, 'mail.regulatory_delivery.failed'),
-          eq(auditLog.resourceId, unknownUserId),
-        ),
-      );
-    expect(rows).toEqual([
-      {
-        actorType: 'system',
-        after: { templateKey: 'rgCoolingOffLifted', reason: 'no_recipient_email', attempt: 1 },
-      },
-    ]);
+    await vi.waitFor(async () => {
+      await flushAudit(e2e.app);
+      const rows = await db()
+        .select({ after: auditLog.after, actorType: auditLog.actorType })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.action, 'mail.regulatory_delivery.failed'),
+            eq(auditLog.resourceId, unknownUserId),
+          ),
+        );
+      expect(rows).toEqual([
+        {
+          actorType: 'system',
+          after: { templateKey: 'rgCoolingOffLifted', reason: 'no_recipient_email', attempt: 1 },
+        },
+      ]);
+    });
   });
 
   it('a failing sender retries and, once exhausted, records the failure without losing the job', async () => {

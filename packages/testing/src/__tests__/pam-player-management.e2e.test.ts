@@ -170,7 +170,9 @@ describe('player directory', () => {
     expect(SearchResultsSchema.parse(await bodyOf(unrelated))).toEqual([]);
   });
 
-  it.todo('the search route matches by phone');
+  it.todo(
+    'GAP: the search route matches by phone (admin-user-directory.ts:273 matches only email and username)',
+  );
 
   it('registration stats count the players registered in the window', async () => {
     const total = async () => {
@@ -297,7 +299,9 @@ describe('player update', () => {
     expect(after.username).toBe(before.username);
   });
 
-  it.todo('an admin cannot set an invalid country or language');
+  it.todo(
+    'GAP: an admin cannot set an invalid country or language (contract/index.ts:94-96 the update takes no country or language)',
+  );
 
   it('a player cannot update another player through the admin route', async () => {
     const attacker = await newPlayer(e2e.app, `pmattacker${shortId()}`);
@@ -484,7 +488,9 @@ describe('player notes', () => {
     expect(own.items.map((n) => n.content)).toEqual([content]);
   });
 
-  it.todo('a note on an unknown player returns not found');
+  it.todo(
+    'BUG: a note on an unknown player returns not found (player-note.service.ts:60-67 inserts without a player lookup, no foreign key)',
+  );
 
   it('an admin without the permission cannot read or add notes', async () => {
     const target = await newPlayer(e2e.app, `pmnoperm${shortId()}`);
@@ -580,5 +586,7 @@ describe('player deletion', () => {
     expect(await auditRows('admin.player.removed', target.playerId)).toEqual([]);
   });
 
-  it.todo('deleting a player with a positive balance is refused');
+  it.todo(
+    'GAP: deleting a player with a positive balance is refused (player.service.ts:409-428 remove closes the account without a balance check)',
+  );
 });

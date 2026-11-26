@@ -316,7 +316,9 @@ describe('privacy between players', () => {
   });
 
   it.todo(
-    'the profile card route is refused for a player session and works for an admin with the permission',
+    'GAP: the profile card route is refused for a player session and works for an admin with the permission (player.service.ts:508 getPlayerProfile has no permission check, every session reads the masked card and an admin gets the same one)',
   );
-  it.todo('admin responses mask fields the admin has no permission to see');
+  it.todo(
+    'GAP: admin responses mask fields the admin has no permission to see (player-management/router/index.ts:31 get returns the whole row once player:view is held, no per-field masking exists)',
+  );
 });

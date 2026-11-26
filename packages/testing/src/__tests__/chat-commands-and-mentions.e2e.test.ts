@@ -2,12 +2,14 @@ import { randomInt } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import * as z from 'zod';
+import { CHAT_TRANSFER_CHECK } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import {
   ChatCommandDescriptorSchema,
   type ChatCommandType as ChatCommandKey,
 } from '@openora/core/engagement/contracts/chat-commands';
+import { chatRoom, chatRoomBan } from '@openora/core/engagement/schema/chat';
 import { chatCommandConfig } from '@openora/core/engagement/schema/chat-commands';
 import {
   asAdmin,
@@ -188,7 +190,54 @@ describe('chat command registry', () => {
     }
   });
 
-  it.todo('an unauthenticated caller cannot list commands');
+  it('an unauthenticated caller lists only enabled commands', async () => {
+    await seedCommand('mention', true);
+    await seedCommand('profile', false);
+    try {
+      const res = await e2e.app.app.request('/chat-command/commands');
+
+      expect(res.status).toBe(200);
+      const commands = CommandsSchema.parse(await res.json());
+      const keys = commands.map((command) => command.key);
+      expect(keys).toContain('mention');
+      expect(keys).not.toContain('profile');
+    } finally {
+      await removeCommand('mention');
+      await removeCommand('profile');
+    }
+  });
+
+  it('a transfer from a player banned in the room is refused and an unbanned one is allowed', async () => {
+    const slug = `ban-room-${randomInt(10 ** 8, 10 ** 9)}`;
+    const [room] = await db()
+      .insert(chatRoom)
+      .values({ name: slug, slug, isPublic: true })
+      .returning({ id: chatRoom.id });
+    if (!room) {
+      throw new Error('room not created');
+    }
+    const banned = await newPlayer(e2e.app, 'transfer-banned');
+    const bystander = await newPlayer(e2e.app, 'transfer-bystander');
+    await seedCommand('gift', true);
+    await db()
+      .insert(chatRoomBan)
+      .values({ roomId: room.id, userId: banned.userId, bannedBy: bystander.userId });
+    const transferCheck = e2e.app.container.get(CHAT_TRANSFER_CHECK);
+    const check = (actorId: string) =>
+      db().transaction((tx) =>
+        transferCheck.check(tx, { actorId, roomId: room.id, counterpartIds: [], command: 'gift' }),
+      );
+    try {
+      const refused = await check(banned.userId);
+      const allowed = await check(bystander.userId);
+
+      expect(refused).toEqual({ allowed: false, refusal: 'room_access_denied' });
+      expect(allowed).toMatchObject({ allowed: true });
+    } finally {
+      await removeCommand('gift');
+      await db().delete(chatRoom).where(eq(chatRoom.id, room.id));
+    }
+  });
 });
 
 describe('mention search', () => {
@@ -232,7 +281,9 @@ describe('mention search', () => {
     ]);
   });
 
-  it.todo('a player who blocked the caller is excluded from the results');
+  it.todo(
+    'BUG: a player who blocked the caller is excluded from the results (chat.service.ts:591 and chat-commands.service.ts:159 exclude only the caller own blocks and ignores)',
+  );
 
   it('an unauthenticated caller cannot search mentions', async () => {
     const res = await e2e.app.app.request('/chat-command/mention-search?q=abc&roomId=__global');

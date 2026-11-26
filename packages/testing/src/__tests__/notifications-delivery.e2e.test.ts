@@ -149,13 +149,19 @@ describe('player notifications', () => {
       idempotencyKey: `nt-dedupe-b:${eventId}`,
     });
 
-    await vi.waitFor(async () => expect((await listOf(owner)).total).toBeGreaterThanOrEqual(1), {
+    const sentinelEventId = randomUUID();
+    await jobs.enqueue(
+      queue('notifications-dispatch'),
+      { ...job, input: { ...job.input, eventId: sentinelEventId } },
+      { idempotencyKey: `nt-dedupe-sentinel:${sentinelEventId}` },
+    );
+
+    await vi.waitFor(async () => expect((await listOf(owner)).total).toBeGreaterThanOrEqual(2), {
       timeout: 15_000,
     });
-    await new Promise((resolve) => setTimeout(resolve, 1500));
     const rows = await db().select().from(notification).where(eq(notification.eventId, eventId));
     expect(rows).toHaveLength(1);
-    expect((await listOf(owner)).total).toBe(1);
+    expect((await listOf(owner)).total).toBe(2);
   });
 
   it('a notification arrives on the player stream and not on another player stream', async () => {
@@ -200,13 +206,20 @@ describe('player notifications', () => {
         targetUserId: target.userId,
       });
       expect(sent.status).toBe(200);
-
       await vi.waitFor(
         () => expect(targetStream.state.received).toContain('social.friend_request.received'),
         { timeout: 15_000 },
       );
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      expect(bystanderStream.state.received).not.toContain('social.friend_request.received');
+      const sentinelSender = await newPlayer(e2e.app, 'nt-stream-x');
+      const sentinel = await sentinelSender.client.post('/social/friend-requests', {
+        targetUserId: bystander.userId,
+      });
+      expect(sentinel.status).toBe(200);
+
+      await vi.waitFor(
+        () => expect(bystanderStream.state.received).toContain(sentinelSender.userId),
+        { timeout: 15_000 },
+      );
       expect(bystanderStream.state.received).not.toContain(sender.userId);
     } finally {
       await targetStream.close();

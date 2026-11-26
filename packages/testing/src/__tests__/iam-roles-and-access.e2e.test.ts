@@ -213,7 +213,7 @@ describe('role management', () => {
   });
 
   it.todo(
-    'GAP: a role name that already exists is refused with a conflict (only the role key is unique, createRole inserts the name unchecked)',
+    'GAP: a role name that already exists is refused with a conflict (only the role key is unique at iam/schema/index.ts:35, createRole at iam.service.ts:417 inserts the name unchecked)',
   );
 
   it('a super admin updates the permissions of a role and the change is audited', async () => {
@@ -242,7 +242,9 @@ describe('role management', () => {
     });
   });
 
-  it.todo('a permission change on a role binds its holders on their very next request');
+  it.todo(
+    'GAP: a permission change on a role binds its holders on their very next request (iam/plugin.ts:78-86 purges the grant cache from an event handler, so the 10s TTL at iam.service.ts:184 is the floor; the next test covers the window)',
+  );
 
   it('a permission change on a role binds its holders within the grant cache window', async () => {
     const { creator, role, holder } = await holderOf([{ resource: 'audit', level: 'read' }]);
@@ -324,8 +326,6 @@ describe('role management', () => {
     expect(stored?.name).not.toBe(name);
     expect(await storedGrants(role.id)).toEqual([{ resource: 'audit', level: 'read' }]);
   });
-
-  it.todo('an admin cannot grant a level above their own on any module');
 
   it('a non super admin cannot raise grants, promote anyone to super admin or invite into it', async () => {
     const owner = await newSuperAdmin();
@@ -491,9 +491,24 @@ describe('role assignment', () => {
   });
 
   it.todo(
-    'GAP: a role change ends the sessions of the affected admin (changeGrants revokes only MCP tokens)',
+    'GAP: a role change ends the sessions of the affected admin (iam.service.ts:287 changeGrants revokes only MCP tokens)',
   );
-  it.todo('a role change does not end the sessions of other admins');
+
+  it('a role change does not end the sessions of other admins', async () => {
+    const creator = await newSuperAdmin();
+    const { holder } = await holderOf([{ resource: 'audit', level: 'read' }]);
+    const other = await roleWith(creator.client, [{ resource: 'report', level: 'read' }]);
+    const target = await bareAdmin('iam-session-target');
+    const stillIn = async () => (await holder.client.get(READ_ROUTE)).status;
+    expect(await stillIn()).toBe(200);
+
+    expect((await assignViaApi(creator.client, target.userId, other.id)).status).toBe(200);
+    expect(await stillIn()).toBe(200);
+    expect((await unassignViaApi(creator.client, target.userId, other.id)).status).toBe(200);
+    expect(await stillIn()).toBe(200);
+    expect((await creator.client.del(`/iam/roles/${other.id}`)).status).toBe(200);
+    expect(await stillIn()).toBe(200);
+  });
 });
 
 describe('forbidden admin routes', () => {
@@ -748,7 +763,7 @@ describe('invitations', () => {
   });
 
   it.todo(
-    'GAP: inviting an email that already has an account is refused (inviteAdmin never looks the email up; only acceptInvitation fails)',
+    'GAP: inviting an email that already has an account is refused (iam.service.ts:818 inviteAdmin never looks the email up; only acceptInvitation fails)',
   );
 
   it('accepting an invitation for an email that already has an account creates no admin', async () => {
@@ -787,18 +802,18 @@ describe('invitations', () => {
 
 describe('two person approval', () => {
   it.todo(
-    'GAP: a request that needs approval stays pending until a different admin approves it (no approval request exists; the request and approval permissions are declared but unused)',
+    'GAP: a request that needs approval stays pending until a different admin approves it (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
   );
   it.todo(
-    'GAP: the requesting admin cannot approve their own request (no approval request exists; the request and approval permissions are declared but unused)',
+    'GAP: the requesting admin cannot approve their own request (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
   );
   it.todo(
-    'GAP: an admin without the approve permission cannot approve (no approval request exists; the request and approval permissions are declared but unused)',
+    'GAP: an admin without the approve permission cannot approve (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
   );
   it.todo(
-    'GAP: a request approved twice applies once (no approval request exists; the request and approval permissions are declared but unused)',
+    'GAP: a request approved twice applies once (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
   );
   it.todo(
-    'GAP: a rejected request never applies and records the reason (no approval request exists; the request and approval permissions are declared but unused)',
+    'GAP: a rejected request never applies and records the reason (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
   );
 });

@@ -267,7 +267,9 @@ describe('tag evaluation', () => {
     expect(auditOf(holder.playerId, 'tag.player.assigned', 'large_depositor')).toHaveLength(1);
   });
 
-  it.todo('a manual removal blocks automatic re-assignment');
+  it.todo(
+    'GAP: a manual removal blocks automatic re-assignment (tag-evaluation.service.ts:105 assigns again, nothing records a manual removal)',
+  );
 
   it('evaluating an unknown player throws player not found', async () => {
     const unknownUserId = randomUUID();

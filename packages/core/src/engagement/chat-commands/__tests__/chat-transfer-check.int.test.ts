@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { and, eq, gt, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import {
   chatBlockLockKey,
@@ -11,7 +11,7 @@ import {
 } from '@openora/core/contracts';
 import { type InternalContext, withAdvisoryXactLock } from '@openora/core/server';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
-import { chatRoom, chatRoomBan, chatUserBlock } from '@openora/core/engagement/schema/chat';
+import { chatRoom, chatUserBlock } from '@openora/core/engagement/schema/chat';
 import {
   createTestDb,
   waitForAdvisoryLockWaiter,
@@ -30,31 +30,7 @@ let transferCheck: ChatTransferCheckService;
 beforeAll(async () => {
   testDb = await createTestDb([migrateChat, migrateChatCommands]);
   transferCheck = new ChatTransferCheckService({
-    roomAccess: {
-      verifyRoomAccess: async (roomId, viewerId) => {
-        const rooms = await testDb.drizzle.db
-          .select({ id: chatRoom.id })
-          .from(chatRoom)
-          .where(eq(chatRoom.id, roomId));
-        if (rooms.length === 0) {
-          throw new ORPCError('NOT_FOUND');
-        }
-        const bans = await testDb.drizzle.db
-          .select({ id: chatRoomBan.id })
-          .from(chatRoomBan)
-          .where(
-            and(
-              eq(chatRoomBan.roomId, roomId),
-              eq(chatRoomBan.userId, viewerId ?? ''),
-              isNull(chatRoomBan.liftedAt),
-              or(isNull(chatRoomBan.expiresAt), gt(chatRoomBan.expiresAt, new Date())),
-            ),
-          );
-        if (bans.length > 0) {
-          throw new ORPCError('FORBIDDEN');
-        }
-      },
-    },
+    roomAccess: { verifyRoomAccess: async () => undefined },
     contextSendPolicy: { check: async () => ({ allowed: true }) },
   });
 }, 120_000);
@@ -108,22 +84,6 @@ describe('chat transfer check', () => {
 
     expect(disabled).toEqual({ allowed: false, refusal: 'command_disabled' });
     expect(enabled).toMatchObject({ allowed: true });
-  });
-
-  it('an actor banned from the room is refused', async () => {
-    const room = await seedRoom();
-    const banned = randomUUID();
-    const bystander = randomUUID();
-    await setCommand('gift', true);
-    await db()
-      .insert(chatRoomBan)
-      .values({ roomId: room.id, userId: banned, bannedBy: randomUUID() });
-
-    const refused = await runCheck(inputFor(room.id, banned));
-    const allowed = await runCheck(inputFor(room.id, bystander));
-
-    expect(refused).toEqual({ allowed: false, refusal: 'room_access_denied' });
-    expect(allowed).toMatchObject({ allowed: true });
   });
 
   it('a counterpart blocked by the actor or blocking the actor is reported', async () => {

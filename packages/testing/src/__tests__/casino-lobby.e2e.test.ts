@@ -203,7 +203,9 @@ describe('lobby catalog reads', () => {
     expect(ids).not.toContain(unrelated.gameId);
   });
 
-  it.todo('lobby search with an empty or over-long query is rejected by validation');
+  it.todo(
+    'GAP: lobby search with an empty or over-long query is rejected by validation (casino/lobby/contract/index.ts:119 q is an unbounded string)',
+  );
 
   it('a category fetched by an unknown slug returns not found', async () => {
     const res = await e2e.app.app.request(`/lobby/categories/unknown-${randomUUID()}`);
