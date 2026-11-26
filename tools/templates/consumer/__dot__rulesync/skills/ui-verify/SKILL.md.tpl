@@ -91,7 +91,8 @@ on (the repo's record switch, or `test.use({ video: 'on' })`); each lands in
 `test-results/<test>/video.webm`; copy it to `/tmp/ui-verify/<ac>-<slug>.webm`, since the next run
 wipes `test-results/`. Only an AC no spec drives gets `playwright-cli`. Use test accounts only,
 never real user data. A login is never on camera: `state-load` a saved login, or type any secret,
-before `video-start`. `video-show-actions` prints every typed value on screen, so nothing secret is
+before `video-start`; an AC that is the login itself is recorded with a test account and the
+password field masked. `video-show-actions` prints every typed value on screen, so nothing secret is
 typed after it:
 
 ```bash
@@ -105,7 +106,7 @@ playwright-cli -s=v video-stop
 
 Upload each clip as `docs/agents/forge.md` says and embed it in its cell of the Evidence table
 (`Flow | Before | Now | AC`, one row per AC). An AC with no visible flow still gets its row, with
-sample request/response output in the Now cell. A still with real user data is blurred before
+sample request/response output in the Now cell, headers and tokens removed. A still with real user data is blurred before
 upload; a clip cannot be blurred. After a fix to an open PR, record again only the ACs it touched
 and replace those cells.
 

@@ -73,7 +73,7 @@ Only when the orchestrator asks for it: after the verify pass is green and revie
 2. `playwright-cli` (`resize`, `video-start`, drive it, `video-stop`) only for an AC no spec drives.
 3. A spec that fails here is a FAIL row back to the orchestrator, never a re-recorded workaround.
 
-An API-only AC still gets its row, with sample request/response output instead of a clip. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched, and replace those cells.
+An API-only AC still gets its row, with sample request/response output instead of a clip, headers and tokens removed. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched, and replace those cells.
 
 ## Triage - the key question
 

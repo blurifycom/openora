@@ -12,8 +12,8 @@ Before the PR opens:
 1. Drive the change against the running stack. Reach for the **Playwright CLI** first
    (`playwright-cli`, or a throwaway spec that clicks through the flow) - it costs a fraction of
    the tokens a browser MCP does. Use a browser MCP only for a live console or network read the CLI
-   cannot give you. No videos in this pass, except a fix's "before" clip, taken when you reproduce
-   the bug: the code can still change before review is clean. Every changed screen gets the
+   cannot give you. No videos in this pass, except a fix's "before" clip, recorded on the base
+   branch when you reproduce the bug: the code can still change before review is clean. Every changed screen gets the
    `ui-verify` skill's screenshot review: four shots (mobile and desktop, light and dark), each
    read for layout defects and given a PASS or FAIL line. Screenshots are for the agent, videos
    for the reviewer.
