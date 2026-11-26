@@ -89,11 +89,24 @@ export const McpTokenIdInputSchema = z.object({ tokenId: UuidSchema });
 
 export const RevokeAllMcpTokensOutputSchema = z.object({ revoked: z.number().int() });
 
+/** The issuance rules this deployment applies, so a client can check a request before sending it. */
+export const McpTokenPolicySchema = z.object({
+  enabled: z.boolean(),
+  ttlDays: z.object({
+    default: z.number().int().min(1).max(MCP_TOKEN_TTL_CEILING_DAYS),
+    max: z.number().int().min(1).max(MCP_TOKEN_TTL_CEILING_DAYS),
+  }),
+});
+
 export const mcpTokenContract = {
   create: oc
     .route({ method: 'POST', path: '/iam/my-mcp-tokens' })
     .input(CreateMcpTokenInputSchema)
     .output(IssuedMcpTokenSchema),
+
+  policy: oc
+    .route({ method: 'GET', path: '/iam/my-mcp-tokens/policy' })
+    .output(McpTokenPolicySchema),
 
   listMine: oc
     .route({ method: 'GET', path: '/iam/my-mcp-tokens' })
@@ -126,3 +139,4 @@ export type IssuedMcpToken = z.infer<typeof IssuedMcpTokenSchema>;
 export type CreateMcpTokenInput = z.infer<typeof CreateMcpTokenInputSchema>;
 export type ListMyMcpTokensInput = z.infer<typeof ListMyMcpTokensInputSchema>;
 export type ListMcpTokensInput = z.infer<typeof ListMcpTokensInputSchema>;
+export type McpTokenPolicy = z.infer<typeof McpTokenPolicySchema>;

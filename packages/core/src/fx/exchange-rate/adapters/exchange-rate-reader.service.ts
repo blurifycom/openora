@@ -25,7 +25,7 @@ const MAX_FAILURE_ENTRIES = 512;
 
 type StoredQuote = { rate: string; providerAsOf: Date };
 
-export function selectProvider(
+function selectProvider(
   currency: string,
   cryptoProvider: ExchangeRateProvider | undefined,
   fiatProvider: ExchangeRateProvider | undefined,
@@ -75,7 +75,10 @@ export type ExchangeRateReaderServiceDeps = {
  *   - fresh (age < freshTtlMs): return the stored value, no provider call.
  *   - soft-stale (freshTtlMs <= age < hardMaxAgeMs): return the stored value
  *     immediately, kick a single-flight background refresh that is invisible to
- *     the caller (its failure is logged, never thrown).
+ *     the caller (its failure is logged, never thrown, and starts the same failure cooldown
+ *     as a synchronous fetch, so a rate-limited vendor is not re-called on every read; a
+ *     refresh that brings nothing newer than the stored quote, from a provider serving its
+ *     own cache, starts it too).
  *   - hard-stale (age >= hardMaxAgeMs) or no row at all: fetch synchronously
  *     through the same single-flight path; on success return it and persist it in
  *     the background; on failure return `null`.
@@ -184,18 +187,31 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       return { rate: row.rate, asOf: row.providerAsOf.toISOString() };
     }
 
+    const coolingDown = (this.failedUntil.get(currency) ?? 0) > Date.now();
+
     if (row && ageMs < this.hardMaxAgeMs) {
-      void this.fetchLeg(currency).catch((err: unknown) => {
-        logger.warn(
-          { err, currency, pivot: this.pivot },
-          'background exchange rate refresh failed',
+      if (!coolingDown) {
+        void this.fetchLeg(currency).then(
+          (quote) => {
+            if (new Date(quote.asOf).getTime() > row.providerAsOf.getTime()) {
+              this.failedUntil.delete(currency);
+            } else {
+              this.rememberFailure(currency);
+            }
+          },
+          (err: unknown) => {
+            this.rememberFailure(currency);
+            logger.warn(
+              { err, currency, pivot: this.pivot },
+              'background exchange rate refresh failed',
+            );
+          },
         );
-      });
+      }
       return { rate: row.rate, asOf: row.providerAsOf.toISOString() };
     }
 
-    const cooldownUntil = this.failedUntil.get(currency);
-    if (cooldownUntil !== undefined && Date.now() < cooldownUntil) {
+    if (coolingDown) {
       return null;
     }
 

@@ -10,6 +10,7 @@ export const GEO_IP_FIXTURE: Record<string, string> = {
   '203.0.113.10': 'DE',
   '203.0.113.20': 'PL',
   '203.0.113.30': 'TR',
+  '203.0.113.40': 'LI',
 };
 
 export default {

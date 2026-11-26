@@ -77,7 +77,7 @@ export function kycStatusChannel(userId: User['id']): string {
   return `compliance:kyc-status:${userId}`;
 }
 
-export function createKycStatusStream(
+function createKycStatusStream(
   realtime: RealtimeTransport,
   userId: User['id'],
   signal: AbortSignal | undefined,

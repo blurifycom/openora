@@ -21,7 +21,7 @@ const RETRY_DELAY_MS = 2_000;
 const PENDING_LAG_THRESHOLD = 100;
 const LAG_LOG_INTERVAL_MS = 60_000;
 // Deliveries (first read + reclaims) after which a still-failing entry is dead-lettered.
-export const MAX_DELIVERIES = 5;
+const MAX_DELIVERIES = 5;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

@@ -80,6 +80,10 @@ re-authenticated actions. A wrong code counts towards the account's second-facto
 right one resets it, and every attempt, a wrong password included, counts towards the hourly
 issue limit. Each refusal is audited as a denied MCP access.
 
+`GET /iam/my-mcp-tokens/policy` returns what this deployment applies to a new token: whether the
+transport is enabled, and the default and maximum lifetime in days (`tokenTtlDays`). A screen
+reads it to state the real limit and check the lifetime before it sends the request.
+
 ## Connect Claude Code
 
 ```bash

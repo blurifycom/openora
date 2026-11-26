@@ -10,7 +10,7 @@ import {
   type PlayEligibilityPort,
   type Uuid,
 } from '@openora/core/contracts';
-import { makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
+import { makeAuditWriter, makeEventBus } from './support/doubles.js';
 import { migrate } from '../migrate.js';
 import { promoGrant, promoGrantEntry, promoWeight, promoWeightProfile } from '../schema/index.js';
 import { FundLockService } from '../service/fund-lock.service.js';

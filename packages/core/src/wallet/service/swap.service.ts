@@ -57,7 +57,7 @@ export const SwapPairUnsupportedError = createDomainError<[from: string, to: str
 // The vendor reported a fill but not what it filled. Nothing may be credited off a
 // missing number, so the swap stays `processing` for the webhook (or an operator) to
 // finish rather than guessing at the quoted amount.
-export const SwapFillAmountMissingError = createDomainError<[externalId: string]>(
+const SwapFillAmountMissingError = createDomainError<[externalId: string]>(
   'SwapFillAmountMissingError',
   (externalId) => `swap ${externalId} completed without a fill amount`,
 );

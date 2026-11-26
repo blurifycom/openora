@@ -26,6 +26,8 @@ import {
   DEFAULT_RANK_PERK_PRODUCTS,
   RAKEBACK_ACCRUAL_STATUSES,
   RAKEBACK_CLAIM_OUTCOMES,
+  RANK_PERIODIC_REWARD_KINDS,
+  RANK_PERIODIC_REWARD_STATUSES,
   STREAK_CURRENCY,
   STREAK_RAKEBACK_MODES,
 } from '../contract/index.js';
@@ -35,6 +37,8 @@ import type {
   RankConfig,
   RankPayoutAnchors,
   RankPayoutKind,
+  RankPeriodicRewardTerms,
+  RankRewardTerms,
   StreakFixedReward,
   StreakGrantOutcome,
   StreakRakebackMilestone,
@@ -144,7 +148,7 @@ export const promoPlayerRank = pgTable(
 export type PromoPlayerRank = typeof promoPlayerRank.$inferSelect;
 
 export type RankRewards = RankConfig['rewards'];
-export type RankRewardTerms = NonNullable<RankRewards[keyof RankRewards]>;
+export type { RankRewardTerms };
 
 /**
  * Ladder-wide settings, one row. Absent means the ladder pays nothing and counts nothing: an
@@ -847,4 +851,85 @@ export const promoRakebackClaimPayout = pgTable(
     index('promo_rakeback_claim_payout_user_id_currency_idx').on(t.userId, t.currency),
     check('promo_rakeback_claim_payout_amount_positive', sql`${t.amount} > 0`),
   ],
+);
+
+export const promoRankPeriodicRewardKindEnum = pgEnum(
+  'promo_rank_periodic_reward_kind',
+  RANK_PERIODIC_REWARD_KINDS,
+);
+export const promoRankPeriodicRewardStatusEnum = pgEnum(
+  'promo_rank_periodic_reward_status',
+  RANK_PERIODIC_REWARD_STATUSES,
+);
+
+/**
+ * A daily, weekly or monthly rank reward left for the player to claim, one per player, kind and
+ * period. Converted into the paid currency when the period settles, so the amount owed does not
+ * move with the rate. It never expires: a closed or self-excluded account is paid out instead.
+ */
+export const promoRankPeriodicReward = pgTable(
+  'promo_rank_periodic_reward',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    kind: promoRankPeriodicRewardKindEnum().notNull(),
+    periodKey: text().notNull(),
+    periodStart: timestamp({ withTimezone: true }).notNull(),
+    periodEnd: timestamp({ withTimezone: true }).notNull(),
+    // No foreign key, as on promoRankLevelUp: the reward outlives a removed tier.
+    tierId: uuid().notNull(),
+    ladderCurrency: text().notNull(),
+    ladderAmount: money().notNull(),
+    currency: text().notNull(),
+    amount: money().notNull(),
+    status: promoRankPeriodicRewardStatusEnum().notNull().default('claimable'),
+    idempotencyKey: text(),
+    transactionId: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('promo_rank_periodic_reward_user_id_kind_period_key_idx').on(
+      t.userId,
+      t.kind,
+      t.periodKey,
+    ),
+    uniqueIndex('promo_rank_periodic_reward_user_id_idempotency_key_idx')
+      .on(t.userId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} is not null`),
+    index('promo_rank_periodic_reward_user_id_status_idx').on(t.userId, t.status),
+    index('promo_rank_periodic_reward_claimable_idx')
+      .on(t.currency, t.userId)
+      .where(sql`${t.status} = 'claimable'`),
+    index('promo_rank_periodic_reward_created_at_idx').on(t.createdAt),
+    index('promo_rank_periodic_reward_settled_at_idx')
+      .on(t.settledAt)
+      .where(sql`${t.status} <> 'claimable'`),
+    check(
+      'promo_rank_periodic_reward_amounts_positive',
+      sql`${t.amount} > 0 AND ${t.ladderAmount} > 0`,
+    ),
+    check(
+      'promo_rank_periodic_reward_settlement',
+      sql`(${t.status} = 'claimable') = (${t.settledAt} is null) AND (${t.status} = 'claimable') = (${t.transactionId} is null)`,
+    ),
+  ],
+);
+
+export type PromoRankPeriodicReward = typeof promoRankPeriodicReward.$inferSelect;
+
+/**
+ * The terms a period is paid under, fixed by its first run. A retry finishes the period in the
+ * mode it started in, so switching a kind between bonus and claim never pays a period twice.
+ */
+export const promoRankPeriodPayout = pgTable(
+  'promo_rank_period_payout',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    kind: promoRankPeriodicRewardKindEnum().notNull(),
+    periodKey: text().notNull(),
+    terms: jsonb().$type<RankPeriodicRewardTerms>().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('promo_rank_period_payout_kind_period_key_idx').on(t.kind, t.periodKey)],
 );

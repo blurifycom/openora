@@ -25,7 +25,7 @@ import type {
   RankPlayersEntry,
 } from '../contract/index.js';
 import { openPeriodKey, RANK_PERIOD_KINDS } from '../shared/rank-period.js';
-import { TIER_COLUMNS, toLadder } from '../shared/rank-ladder.js';
+import { TIER_COLUMNS, readPeriodicPayout, toLadder } from '../shared/rank-ladder.js';
 import {
   promoPlayerRank,
   promoRankConfig,
@@ -329,7 +329,12 @@ export class RankService implements WagerTrackingCommands {
     if (!lowest) {
       throw new RankLadderNotConfiguredError('default');
     }
-    return toLadder(lowest.currency, tiers, this.periodicBasis);
+    return toLadder(
+      lowest.currency,
+      tiers,
+      this.periodicBasis,
+      await readPeriodicPayout(this.drizzle.db),
+    );
   }
 
   /**
@@ -381,6 +386,7 @@ export class RankService implements WagerTrackingCommands {
     return {
       currency: ladder.currency,
       periodicBasis: ladder.periodicBasis,
+      periodicPayout: ladder.periodicPayout,
       lifetimeWagered,
       tierId: row?.tierId ?? tierFor(ladder.tiers, lifetimeWagered)?.id ?? null,
       tiers: ladder.tiers,

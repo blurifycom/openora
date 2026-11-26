@@ -182,6 +182,50 @@ Paying in the player's own currency is not a courtesy. A bonus can only be wager
 currency it was granted in, so a reward paid in a coin the player never bets with is a promise
 they cannot spend.
 
+## Claiming a periodic reward instead
+
+Each periodic kind in the ladder's `rewards` takes a `payout`: `bonus`, the default, grants it
+under the kind's wagering terms as above; `claim` pays it as real cash with no wagering, once the
+player claims it. Level-up is always a bonus: a level-up sent with `payout: 'claim'` is refused,
+with or without terms beside it. A claim-mode kind carries no terms: a wagering multiplier, expiry,
+max bet or max win sent with it is dropped. The public ladder (`GET /promo/ranks/ladder`) and the
+player's rank (`GET /promo/ranks`) carry `periodicPayout: { daily, weekly, monthly }`, each `bonus`
+or `claim`, a kind with no terms configured reading as `bonus`, so a client can say which rewards
+are claimed and paid without wagering.
+
+Who is owed what does not change between the two: the activity rule, the minimum wager, the
+`flat` or `margin` basis and the currency resolution all run first. Claim mode then leaves one
+`promo_rank_periodic_reward` row per player, kind and period, converted into the paid currency at
+that moment, so the amount owed does not move with the rate. The period's key is unique per player
+and kind, so a rerun leaves nothing twice. No row is left for a player who could not claim it now:
+an account that is missing, closed, suspended or self-excluded, or under a responsible-gambling
+block, checked under the player row's lock in the transaction that would write the row. Such a
+player is settled for the period, not retried, and the skip is logged at info level. Each row announces `promo.rank.reward.claimable`, which
+notifications turn into a `rank.reward.claimable` message; `promo.bonus.granted` is not sent.
+
+A period's terms, bonus or claim, are fixed by its first run in `promo_rank_period_payout`. A retry
+finishes the period in the mode it started in, so switching a kind while a period is still
+unsettled never pays it twice; the new mode applies from the next period, and the switch is logged
+as a warning when a retry meets it. Saving a switch, or dropping the kind, also pins its last complete period, when
+it is not yet settled, to the terms it was earned under, so a period that has not run yet, or one
+that started paying before this table existed, still pays in its old mode. A period pinned as a bonus
+while no bonus grant port is bound is skipped with a warning, as an unbound bonus always was. The claimable list is capped at the 100 oldest rows.
+
+`GET /promo/ranks/rewards` lists the claimable rows, the 20 most recently paid, and what blocks a
+claim. `POST /promo/ranks/rewards/{rewardId}/claim` pays one row in one transaction: a `cashback`
+wallet credit keyed by the reward id, the row flipped to `claimed` with the claim's idempotency key
+and the wallet transaction, an audit record, the balance event and `promo.rank.reward.claimed`. A
+retry with the same key replays the first result; any other claim of a paid row is refused as
+`already_claimed`, and a key that already paid another reward as `idempotency_key_reused`. The row
+lock serializes two claims of one reward. Claims are refused, as rakeback's are, while a
+responsible-gambling block is active (`restricted`) or the account is suspended or closed
+(`account_blocked`).
+
+A row never expires. A player who self-excludes or closes the account is paid every row left, as
+`auto_paid`, by the same event and daily sweep that pay out rakeback; a cooling-off keeps them for
+when it ends. `GET /backoffice/promo/ranks/rewards`, under `bonus:view`, lists rows by player,
+status and kind with the wallet transaction each was paid by.
+
 ## Responsible gambling
 
 A player under a responsible-gambling block is paid nothing, and the reward is not held for them
@@ -196,8 +240,8 @@ The bonus module's own grant path does not check this. It is checked here, befor
 - **A ladder with no settings row, or no ranks.** Both are fail-closed: wagering is not counted
   and nothing is paid. An operator that migrates without seeding gets an inert module, not a
   wrong one.
-- **A reward priced with no terms.** An amount without a wagering multiplier and an expiry is not
-  paid at all, because nobody decided what the player has to do with it.
+- **A bonus-mode reward priced with no terms.** An amount without a wagering multiplier and an
+  expiry is not paid at all, because nobody decided what the player has to do with it.
 - **The wagering engine returning before it reports the bet.** Then only players holding a bonus
   ever advance, and the ladder is quietly dead for everyone else.
 - **A missing exchange rate.** Wagering in that currency is not counted, and a payout that needs
@@ -262,7 +306,9 @@ would succeed. A player found below the minimum is checked again only once new r
 assert - gives per currency the unclaimed rakeback now, which is the operator's liability, and over
 whole UTC days what accrued and what players claimed, by when they claimed it, each with the
 accruals and players behind it, never converted across currencies. A partial index on the claimed
-accruals' `settled_at` serves the claimed-in-range read. It is served only through the MCP kernel
+accruals' `settled_at` serves the claimed-in-range read. Its `rankRewards` reports the claim-mode
+periodic rank rewards the same way, apart from rakeback: unclaimed now, created over the range, and
+paid, claimed or auto-paid, by when they were paid. It is served only through the MCP kernel
 (ADR-0042).
 
 ## The daily streak

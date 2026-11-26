@@ -24,8 +24,7 @@ Stance: assume the change lets a player or a staff member get around a regulated
 
 ## Mode
 
-- `confirm` (the precheck found no compliance keyword in the change): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a balance, a limit, a KYC or age check, a staff action on player state. Nothing: `DIMENSION: compliance - n/a - <what you checked>`. Something: `DIMENSION: compliance - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
-- `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines.
+Always `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines. The precheck's `ROSTER:` already decided you are needed.
 
 ## Budget and handoff
 
@@ -76,4 +75,4 @@ Follow §3c of the `review` skill. A UI-only diff still reaches regulated routes
 
 ## Output
 
-Max 10 findings, most severe first. Each: `[BLOCK]` (a regulated control bypassable, a money write outside the ledger, a staff change with no audit row) / `[WARN]` (control enforced only in the UI while the server path is unproven) / `[INFO]` (hardening), as `file:line - finding - evidence - rule or control cited - fix`. Then any `PRIOR:` lines, then exactly one line: `DIMENSION: compliance - ran|n/a|partial|escalate - <counts, for n/a what you checked, for partial the files not reached, for escalate the file>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.
+Max 10 findings, most severe first. Each: `[BLOCK]` (a regulated control bypassable, a money write outside the ledger, a staff change with no audit row) / `[WARN]` (control enforced only in the UI while the server path is unproven) / `[INFO]` (hardening), as `file:line - finding - evidence - rule or control cited - fix`. Then any `PRIOR:` lines, then exactly one line: `DIMENSION: compliance - ran|n/a|partial - <counts, for n/a what you checked, for partial the files not reached>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.

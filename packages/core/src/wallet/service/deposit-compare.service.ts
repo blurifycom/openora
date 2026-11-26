@@ -50,7 +50,7 @@ export type DepositCompareDeps = {
 };
 
 /** `change` as a percentage of `depositsA` to one decimal; null when there is nothing to compare to. */
-export function changePercent({ depositsA, change }: PricedPlayer): number | null {
+function changePercent({ depositsA, change }: PricedPlayer): number | null {
   if (moneyCompare(depositsA, '0') === 0) {
     return null;
   }
@@ -61,7 +61,7 @@ export function changePercent({ depositsA, change }: PricedPlayer): number | nul
  * The players whose deposits moved the way `order` asks, largest change first and ties by
  * player id, at most `limit` of them.
  */
-export function rankDepositChanges(
+function rankDepositChanges(
   players: readonly PricedPlayer[],
   order: DepositCompareOrder,
   limit: number,

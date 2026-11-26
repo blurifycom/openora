@@ -1,16 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { findOneOrThrow } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import type {
-  BonusGrantArgs,
-  PlayEligibilityPort,
-  Uuid,
-  WagerContext,
-  WalletReader,
-} from '@openora/core/contracts';
-import { mock, makeAuditWriter, makeEventBus } from '../../../testing/mock.js';
+import type { BonusGrantArgs, Uuid, WagerContext } from '@openora/core/contracts';
+import {
+  makeAuditWriter,
+  makeEventBus,
+  makeWalletReader,
+  unrestricted,
+} from './support/doubles.js';
 import { migrate } from '../migrate.js';
 import { promoGrant, promoGrantEntry, promoOffer, promoOptIn } from '../schema/index.js';
 import { seedDefaultWeightProfile } from '../seed/index.js';
@@ -98,7 +97,7 @@ describe('completion', () => {
 
     expect(await bet(userId, '10', '10', round)).toMatchObject({ ok: true, grantId });
     expect(await rowOf(grantId)).toMatchObject({ status: 'active' });
-    expect(n((await rowOf(grantId)).wageringProgress)).toBe(10);
+    expect(n((await rowOf(grantId)).wageringProgress)).toBe(0);
 
     const { completed } = await lose(userId, round, '0');
 
@@ -161,12 +160,7 @@ describe('depletion', () => {
 
 describe('forfeit and expiry', () => {
   const lifecycle = () =>
-    new GrantLifecycleService(
-      db.drizzle,
-      makeAuditWriter(),
-      makeEventBus(),
-      mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => false) }),
-    );
+    new GrantLifecycleService(db.drizzle, makeAuditWriter(), makeEventBus(), unrestricted);
 
   it('removes C and releases B on an admin forfeit', async () => {
     const grantId = await grant({ buckets: { linked: '10', unlinked: '5' } });
@@ -199,15 +193,11 @@ describe('deposit grant', () => {
       db.drizzle,
       makeAuditWriter(),
       grants,
-      mock<WalletReader>({
-        getLifetimeDeposit: vi.fn(async () => '0'),
-        isFirstDeposit: vi.fn(async () => true),
-        getBalances: vi.fn(async () => ({
-          activeCurrency: 'USD',
-          balances: [{ currency: 'USD', balance: realBalance }],
-        })),
-      }),
-      mock<PlayEligibilityPort>({ isRestricted: vi.fn(async () => false) }),
+      makeWalletReader(async () => ({
+        activeCurrency: 'USD',
+        balances: [{ currency: 'USD', balance: realBalance }],
+      })),
+      unrestricted,
       { error: () => undefined },
     );
 

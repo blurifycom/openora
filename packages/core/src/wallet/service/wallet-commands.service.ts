@@ -448,6 +448,9 @@ export class WalletCommandsService implements WalletCommands {
           if (wagered.reason === 'max_bet_exceeded') {
             throw new MaxBetExceededError(amount, wagered.maxBet, wagered.roundStake);
           }
+          if (wagered.reason === 'restricted_funds') {
+            throw new DebitRefused(wagered.permitted);
+          }
           throw new DebitRefused(moneyAdd(available, wagered.bonusAvailable));
         }
         const realPart = wagered ? moneySubtract(amount, wagered.bonusSpent) : amount;

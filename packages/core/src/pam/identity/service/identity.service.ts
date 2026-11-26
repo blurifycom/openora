@@ -130,7 +130,7 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
 // `deadline` (captured once the change is known committed), so this catches it while
 // sparing anything created afterwards.
 // Exported for direct testing; the service schedules it via setTimeout.
-export async function sweepRacedSessionsAfterPasswordChange(
+async function sweepRacedSessionsAfterPasswordChange(
   db: DrizzleService['db'],
   params: { userId: User['id']; sparedToken: Session['token']; deadline: Date },
 ): Promise<Session['id'][]> {
@@ -378,8 +378,19 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   });
 }
 
+// better-auth answers FAILED_TO_CREATE_USER when its user insert throws, e.g. on the email unique index.
+async function isUserInsertFailure(res: globalThis.Response) {
+  const body = BetterAuthErrorBodySchema.safeParse(
+    await res
+      .clone()
+      .json()
+      .catch(() => null),
+  );
+  return body.success && body.data.code === 'FAILED_TO_CREATE_USER';
+}
+
 const MINUTE_MS = 60 * 1000;
-export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
 // token/session), NOT IP. The lockout above is a per-account credential-failure
 // counter; these bound raw request volume on each brute-force surface. An overlay
@@ -468,6 +479,11 @@ function loginShadowKey(email: string): string {
 
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
+
+// A `player` role is a casino account; every other role is staff.
+function matchesAudience(role: string, audience: 'staff' | 'player'): boolean {
+  return (role === 'player') === (audience === 'player');
+}
 
 // Gate input for a caller whose account could not be resolved: never exempt as staff.
 const NO_ROLE = { role: 'player' };
@@ -833,6 +849,17 @@ export class IdentityService {
       asResponse: true,
     });
     if (!authResponse.ok) {
+      const existingUserId = (await isUserInsertFailure(authResponse))
+        ? await this.findUserIdByEmail(input.email)
+        : null;
+      if (existingUserId) {
+        identityLogger.warn(
+          { existingUserId, status: authResponse.status },
+          'sign-up lost a concurrent same-email race - answered as a known address',
+        );
+        this.emitRegistrationFailed('email_already_registered', input, meta);
+        return { status: 'check-email' as const };
+      }
       // The `lower(username)` unique index is the only arbiter - a pre-flight check
       // could not close the race anyway, so the taken handle is read off the failure.
       if (await this.findUserIdByUsername(input.username)) {
@@ -1211,6 +1238,23 @@ export class IdentityService {
         },
       );
 
+      // Same placement as the country gate: after the credential, before any cookie, so a
+      // player never holds a backoffice session (or a pending 2FA challenge) and a staff
+      // account never gets a player profile and wallet from the casino.
+      if (input.audience && existingUser && !matchesAudience(existingUser.role, input.audience)) {
+        await this.expireSessionToken(body.token);
+        this.events.emit('identity.user.login.failed', {
+          email,
+          reason: 'audience_mismatch',
+          ip,
+          userAgent,
+        });
+        throw new ORPCError('FORBIDDEN', {
+          message: 'This account cannot sign in here.',
+          data: { code: 'AUDIENCE_MISMATCH' },
+        });
+      }
+
       this.forwardCookies(authResponse, resHeaders);
 
       if (body.twoFactorRedirect || !body.user || !body.token) {
@@ -1275,7 +1319,8 @@ export class IdentityService {
         (hasErrorCode(error, 'RG_BLOCKED') ||
           hasErrorCode(error, 'ACCOUNT_SUSPENDED') ||
           hasErrorCode(error, 'ACCOUNT_INACTIVE') ||
-          hasErrorCode(error, 'GEO_BLOCKED'))
+          hasErrorCode(error, 'GEO_BLOCKED') ||
+          hasErrorCode(error, 'AUDIENCE_MISMATCH'))
       ) {
         throw error;
       }

@@ -7,8 +7,8 @@ import { promoGrant } from '@openora/core/promo/schema/bonus';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment, adminRolePermission } from '@openora/core/iam/schema';
 import { readJson, type TestClient } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
-import { TEST_LOCKED_FUNDS_MESSAGE } from './fixtures/test-bonus-withdrawal-block-config-plugin.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
+import { TEST_LOCKED_FUNDS_MESSAGE } from './support/test-bonus-withdrawal-block-config-plugin.js';
 
 const {
   admin,

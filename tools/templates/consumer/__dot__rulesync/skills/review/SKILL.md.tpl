@@ -17,7 +17,7 @@ Checklist - tick as you go:
 - [ ] 3. Collect task context (ticket AC + MR discussion)
 - [ ] 3a. Paired OSS change? Review the OSS diff by the OSS rules + cross-check the contract (§2c)
 - [ ] 3c. Trace each changed entry point end to end + check the blast radius
-- [ ] 4. Cover all seven dimensions; spawn the two-lens roster in ONE message, whatever the diff size
+- [ ] 4. Cover all seven dimensions; spawn only the lenses `ROSTER:` names (after one classifier call on `ROSTER-ASK:`), in ONE message
 - [ ] 5. Dedup + apply the evidence gate
 - [ ] 6. Report one DIMENSION line per dimension + one verdict (+ apply fixes only if --fix)
 - [ ] 7. Draft the comments + summary for a person to post (§8)
@@ -44,7 +44,8 @@ Checklist - tick as you go:
 - `REVIEWABLE:` - the only file list reviewers get. Group these by app/package so reviewers and any file split share one map.
 - `SKIPPED:` - lockfiles, locale data, tests, generated files. No reviewer opens them; the precheck's i18n facts and CI's frozen-lockfile install stand in. List them in the report so nothing is silently dropped.
 - `PRECHECK:` - mechanical hits on added lines (casts, widened maps, hardcoded limits, hand memo, banned classes, locale parity, missing keys). Reviewers judge these; they never re-derive them.
-- `DOMAIN:` / `DOMAIN-HIT:` - security and compliance keyword hits; they pick each reviewer's mode in §5.
+- `DOMAIN:` / `DOMAIN-HIT:` - security and compliance keyword hits; the starting points of the risk lens.
+- `ROSTER:` / `ROSTER-ASK:` - which lens reviewers this diff needs (§4): `quality` when a runtime file changed, `risk` when `RISK:` is `high` or `critical`, `none` when neither; `ROSTER-ASK: risk` when domain keywords sit only outside server and logic code, for the classifier in §4 to settle.
 - `NEW-ENV:` - env vars read literally on added code lines and absent at the base ref (a name mentioned anywhere at the base, docs included, is not listed). The orchestrator checks each against the deploy env contract and docs for the `rollout` dimension.
 
 No `REVIEWABLE:` and no `SKIPPED:` lines: fall back to `git status -s`; if still empty, ask (under `--ci`: APPROVED, zero findings).
@@ -57,7 +58,7 @@ A pull request is reviewed round after round; re-reading the whole change each r
 
 1. Read `.claude/reviews/<pr>.json` in the main checkout (`{ "sha", "base", "verdict", "findings": [...], "dimensions": [...] }`; no PR number: key it by branch name). Absent and a PR number given: find the latest note carrying `<!-- review:sha=<sha> -->` per `docs/agents/forge.md` and take its SHA; its findings are the inline threads still unresolved.
 2. Found: run the precheck with `--since <sha>`. `mode incremental` narrows `REVIEWABLE:`, its line counts, `PRECHECK:`, and `DOMAIN-HIT:` to what changed since that review (base-branch merges excluded). A `NOTE: --since ... not an ancestor` (force push, rebase) means a full review - say so.
-3. Split the prior findings: those on a file in the new `REVIEWABLE:` set go to the owning reviewer to re-verify; the rest carry over unchanged.
+3. Split the prior findings: those on a file in the new `REVIEWABLE:` set go to the owning reviewer to re-verify; the rest carry over unchanged. An open finding whose owning lens the new roster leaves out adds that lens for this round, so a fix is never left unchecked.
 
 ## 2b. Collect task context (mandatory - this is the spec axis)
 
@@ -142,13 +143,13 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 
 **Prove with tests.** The orchestrator may run the tests of a touched module, never the full gate: `pnpm vitest related <path>` for each caller in the blast radius, plus any existing `apps/e2e` spec that already drives the changed route. A failing test is a `[BLOCK]` with the test name as evidence; a caller with no test is `[INFO]`, not a request to write one. Tests that could not run are reported as `TESTS: not run - <reason>`, never skipped silently, and forbid APPROVED on `high` or `critical` risk.
 
-**A feature or fix PR ships its own tests** (`docs/standards/testing.md`) - a changed behaviour with no test at the right tier is a `[WARN]`, NEVER a `[BLOCK]`. Check too that the description carries the manual-verification evidence (one walkthrough video with its chapter list: a clip per acceptance criterion, before/after on a fix, then the shots of every changed screen; or the request/response trace for an API-only change). Missing evidence on a user-visible change is a `[WARN]`; a list of test files in the description is noise to drop (`docs/standards/git-delivery.md`). When the caller hands you a tester's verdict table (`ship` step 4), a money, KYC, responsible-gambling or authz change needs a mutation row per changed check (`docs/standards/testing.md`): a SURVIVED or UNCHECKED row, or a changed check with no row, is a `[BLOCK]` and forbids APPROVED.
+**A feature or fix PR ships its own tests** (`docs/standards/testing.md`) - a changed behaviour with no test at the right tier is a `[WARN]`, NEVER a `[BLOCK]`. Check too that the description carries the manual-verification evidence (the Evidence table: a row per acceptance criterion, each clip the whole flow; or the request/response sample for an API-only criterion). Missing evidence on a user-visible change is a `[WARN]`; a bare list of test files in the description (names without the behaviour each proves) is noise to drop (`docs/standards/git-delivery.md`). When the caller hands you a tester's verdict table (`ship` step 4), a money, KYC, responsible-gambling or authz change needs a mutation row per changed check (`docs/standards/testing.md`): a SURVIVED or UNCHECKED row, or a changed check with no row, is a `[BLOCK]` and forbids APPROVED.
 
 **Report the trace.** One `TRACE:` line per entry point (format in §7). A missing hop, an unfiltered query, a write outside the transaction, or a caller that no longer holds is a `[BLOCK]`. A hop that could not be traced is a finding, not a silent pass.
 
 ## 4. Dimensions - all seven, every review
 
-Every review covers every dimension below, whatever the diff touches. Relevance is decided by looking, not by guessing from file names: a dimension that does not apply still runs its search and reports `n/a` with what it checked. Owners - never `general-purpose`:
+Every review covers every dimension below, whatever the diff touches. Which lens runs is the precheck roster's call; within a lens, relevance is decided by looking: a dimension that does not apply still runs its search and reports `n/a` with what it checked. Owners - never `general-purpose`:
 
 | Dimension     | Owner                                     | Covers                                                                                  |
 | ------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -164,24 +165,25 @@ Every review covers every dimension below, whatever the diff touches. Relevance 
 
 Reviewers split by what they read, never by checklist. An agent's cost is its tool calls times its context: a checklist adds a few thousand tokens, while two reviewers reading the same files pay for those files twice.
 
-**No inline fast path.** Every diff, however small, goes to the two lens reviewers in §5. One reviewer working every checklist finds about half of what two focused lenses find, for most of their cost; a small diff is cheap for them anyway.
+**Roster from the precheck, never by judgment.** Spawn exactly the lenses the `ROSTER:` lines name; the same diff always spawns the same reviewers. A lens the roster leaves out still has its dimensions reported: you write each one as `DIMENSION: <name> - n/a - ROSTER: <its reason>`. `ROSTER: none` (docs or copy only) spawns no reviewer: you cover every dimension yourself from the precheck and the diff and report each as `ran` with what you checked. `ROSTER-ASK: risk` gets one classifier call before any reviewer: an `Explore` agent on Haiku, at most 5 tool calls, given the `ROSTER-ASK:` and `DOMAIN-HIT:` lines, the base ref and `git diff <base>...HEAD` of each hit file. It opens each hit in context and answers `risk: yes - <file:line> <why>` or `risk: no - <why>`; `yes` adds the risk lens, `no` becomes the `n/a` reason of `security` and `compliance`. Under `--ci` there is no classifier: `ROSTER-ASK` adds the risk lens. You may add a lens after reading the diff (a component that renders untrusted HTML, a hook that moves money), never drop one the roster names; say why in the report.
 
 ## 5. Allocate to `--agents N`
 
-- N unset or 2: `quality-reviewer` with no focus - the correctness lens (failure branches, races, rollout, blast radius, performance, conventions; owns `conventions`, `performance`, `reliability`) - and `security-reviewer` with focus `risk` - the risk lens (guards, money, regulated gates, and whether the change does what its title claims; also runs the `compliance-reviewer` checklist; owns `security` and `compliance`).
-- N = 3: a second `quality-reviewer`, the file groups split between the two (state the split; never silently drop files). The default when `REVIEWABLE:` changed lines exceed 1500.
+- N unset: the lenses `ROSTER:` names (§4). `quality` is `quality-reviewer` with no focus - the correctness lens (failure branches, races, rollout, blast radius, performance, conventions; owns `conventions`, `performance`, `reliability`). `risk` is `security-reviewer` with focus `risk` - the risk lens (guards, money, regulated gates, and whether the change does what its title claims; also runs the `compliance-reviewer` checklist; owns `security` and `compliance`).
+- N = 2: both lenses, whatever the roster says.
+- N = 3: both lenses and a second `quality-reviewer`, the file groups split between the two (state the split; never silently drop files). A roster with `quality` gets the split by default when `REVIEWABLE:` changed lines exceed 1500.
 - N = 4: also split `risk` back into `security-reviewer` and `compliance-reviewer`.
-- N < 2: refuse the reduction - run the two and say so in the report.
+- N < 2: refused; run the roster and say so in the report.
 
-**Mode per reviewer, from the precheck.** `RISK: high` or `critical` always runs `full`. Otherwise, the `risk` reviewer with `DOMAIN: security hits 0` and `DOMAIN: compliance hits 0` (or, split, each reviewer with zero hits in its own domain) runs in `confirm` mode: 5 tool calls to confirm no sensitive path is touched, returning `n/a` - or `escalate` with the file that is. On `escalate`, spawn that reviewer again in `full` mode. With hits, `full` mode, the `DOMAIN-HIT:` lines as starting points.
+**Mode per reviewer:** every spawned reviewer runs `full`, with the `DOMAIN-HIT:` lines as the risk lens's starting points.
 
-**Tool-call budget per reviewer** (the reviewer stops and reports `partial` when it runs out): `quality-reviewer` 40 (30 each when split), `risk` 30 (20 each when split), `confirm` mode 5. Budgets scale with the change: double them when `REVIEWABLE:` changed lines exceed 3000.
+**Tool-call budget per reviewer** (the reviewer stops and reports `partial` when it runs out): `quality-reviewer` 40 (30 each when split), `risk` 30 (20 each when split). Budgets scale with the change: double them when `REVIEWABLE:` changed lines exceed 3000.
 
 **Model and effort per reviewer:** every reviewer runs on Opus; the `RISK:` tier sets the effort - `low` low, `medium` medium, `high` high, `critical` xhigh. Where the runner cannot set effort per call, the session effort applies. A cheaper model misses findings a human then catches; save on effort and tool calls instead.
 
 Spawn all reviewers in a SINGLE message (parallel). Pass each, and nothing more:
 
-- its focus, mode, budget, and the `DIMENSION:` names it owns (§4);
+- its focus, budget, and the `DIMENSION:` names it owns (§4);
 - its `REVIEWABLE:` lines, copied verbatim from the precheck (pre-grouped - reviewers never re-scope; never hand-typed paths or globs);
 - `quality-reviewer`: every `PRECHECK:` line; `risk`: the `DOMAIN-HIT:` lines of both domains;
 - the prior findings on its files to re-verify (§2a);
@@ -202,7 +204,7 @@ Every reviewer applies this before returning; re-apply it yourself when synthesi
 
 Dedup by `file:line`, order BLOCK -> WARN -> INFO.
 
-**Coverage gate first.** Collect one `DIMENSION:` line per dimension in §4 - from each reviewer's output, plus `rollout` and `spec` from you. A reviewer that returned no `DIMENSION:` line, or an `n/a` with no stated check, did not cover it: resume that reviewer once asking for the missing line; if it still has none, write the line as `DIMENSION: <name> - missing - <reviewer> returned no coverage` and the verdict is CHANGES REQUESTED. A `partial` line names the files the reviewer did not reach: list them in the report; `partial` on `security` or `compliance` forbids APPROVED - resume that reviewer with only the unreached files.
+**Coverage gate first.** Collect one `DIMENSION:` line per dimension in §4 - from each reviewer's output, plus `rollout` and `spec` from you, plus the `n/a - ROSTER: <reason>` lines you write for a lens the roster left out (the precheck reason is their stated check). A reviewer that returned no `DIMENSION:` line, or an `n/a` with no stated check, did not cover it: resume that reviewer once asking for the missing line; if it still has none, write the line as `DIMENSION: <name> - missing - <reviewer> returned no coverage` and the verdict is CHANGES REQUESTED. A `partial` line names the files the reviewer did not reach: list them in the report; `partial` on `security` or `compliance` forbids APPROVED - resume that reviewer with only the unreached files.
 
 **Prior findings.** One `PRIOR:` line each: `fixed`, `still open`, or `obsolete` from the reviewer that re-verified it, `carried` for the rest. `still open` and `carried` findings count toward the verdict like new ones.
 
@@ -270,5 +272,5 @@ An agent re-reads its whole context on every tool call, so a long session, or on
 - Never `git stash`, never `git checkout` another branch in the working tree: read MR sources with `git fetch` + `git show <sha>:<path>` / `git diff <base> <head>`. The stash stack and the worktree are shared with other sessions.
 - NEVER edit `node_modules` or the main `{{ossDir}}` checkout. Under `--fix`, an `[oss]` finding is fixed in the OSS worktree only.
 - Every finding cites a rule doc or a named principle with a traced trigger - no ungrounded opinions.
-- Two reviewers minimum on every diff, four maximum; seven `DIMENSION:` lines on every review.
+- The reviewers the roster names, four maximum; seven `DIMENSION:` lines on every review.
 - Precheck first, reviewers second: no reviewer spends tokens on what `review-precheck` already printed.

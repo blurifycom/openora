@@ -282,7 +282,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * from a broker that does not mint uuids) as the sha1-based uuid of its text, so a redelivery
  * maps to the same id and still dedups.
  */
-export function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry['eventId'] {
+function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry['eventId'] {
   if (UUID_PATTERN.test(eventId)) {
     return eventId;
   }

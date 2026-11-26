@@ -9,7 +9,7 @@ const MAX_NESTING = 64;
  * object or array nested more than 64 levels deep as the string "[TooDeep]", so values that
  * differ only below that depth serialize alike.
  */
-export function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown): string {
   return serialize(value, new Set()) ?? 'null';
 }
 

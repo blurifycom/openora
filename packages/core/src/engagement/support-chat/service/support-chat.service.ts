@@ -62,7 +62,7 @@ export const SupportTicketEmailNotVerifiedError = createDomainError<[]>(
   { reason: 'email_not_verified' },
 );
 
-export type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'syncedAt'> & {
+type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'syncedAt'> & {
   playerStatus: PlayerStatus;
 };
 
@@ -75,7 +75,7 @@ function accountStatusOf({ playerStatus, isSelfExcluded }: SupportCustomerReadin
   return isSelfExcluded ? 'self_excluded' : playerStatus;
 }
 
-export function toSupportCustomerContext(
+function toSupportCustomerContext(
   reading: SupportCustomerReading,
   now: Date,
 ): SupportCustomerContext {
@@ -103,9 +103,9 @@ export const SupportChatSyncFailedError = createDomainError<[reason: ProviderFai
 );
 
 /** Extra writes a sync makes when the context moved under it, before it gives up to the job's retry. */
-export const MAX_EXTRA_SYNC_ROUNDS = 2;
+const MAX_EXTRA_SYNC_ROUNDS = 2;
 
-export class SupportContextNotSettledError extends Error {
+class SupportContextNotSettledError extends Error {
   constructor() {
     super(`support context still changing after ${MAX_EXTRA_SYNC_ROUNDS} extra sync rounds`);
     this.name = 'SupportContextNotSettledError';
@@ -122,7 +122,7 @@ const withoutSyncedAt = (context: SupportCustomerContext) =>
  * each other therefore converge on the latest state whichever write lands last. Stops quietly
  * when `read` finds nothing; throws once the cap is spent so the job retries later.
  */
-export async function syncUntilSettled(
+async function syncUntilSettled(
   first: SupportCustomerContext,
   read: () => Promise<SupportCustomerContext | null>,
   write: (context: SupportCustomerContext) => Promise<void>,

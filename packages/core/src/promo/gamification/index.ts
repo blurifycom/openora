@@ -42,6 +42,14 @@ export {
   type RakebackClaimed,
 } from './service/rakeback-claim.service.js';
 export {
+  RankRewardAccountBlockedError,
+  RankRewardAlreadyClaimedError,
+  RankRewardClaimRestrictedError,
+  RankRewardClaimService,
+  RankRewardIdempotencyKeyReusedError,
+  RankRewardNotFoundError,
+} from './service/rank-reward-claim.service.js';
+export {
   RakebackAccrualNotFoundError,
   RakebackAccrualNotVoidableError,
   RakebackAdminService,

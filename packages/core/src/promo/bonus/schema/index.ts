@@ -7,6 +7,7 @@ import {
   uuid,
   text,
   decimal,
+  integer,
   timestamp,
   jsonb,
   index,
@@ -23,35 +24,59 @@ import {
   BONUS_GRANT_SOURCES,
   BONUS_GRANT_STATUSES,
   PROMO_OFFER_STATUSES,
+  REFERENCE_EDGE_PRECISION,
+  REFERENCE_EDGE_SCALE,
+  WAGER_CONTRIBUTION_MODES,
   type BonusForfeitReason,
   type BonusGrantSource,
   type BonusGrantEntryType,
   type BonusGrantStatus,
   type BonusGrantTerms,
   type PromoOfferStatus,
+  type WagerContributionMode,
 } from '@openora/core/contracts';
 import {
   WAGER_WEIGHT_SCOPES,
   type PromoOfferRules,
+  type StakeWagerInputs,
   type WagerWeightScope,
 } from '../contract/index.js';
 import type { WagerWeightRow } from '../shared/wagering-weight.js';
 
 export const promoWeightScopeEnum = pgEnum('promo_weight_scope', WAGER_WEIGHT_SCOPES);
+export const promoContributionModeEnum = pgEnum(
+  'promo_contribution_mode',
+  WAGER_CONTRIBUTION_MODES,
+);
 
 /**
  * A named set of wagering weights. An offer points at one, so two offers can count the same
  * game differently without duplicating every row.
  */
-export const promoWeightProfile = pgTable('promo_weight_profile', {
-  id: uuid().primaryKey().defaultRandom(),
-  name: text().notNull().unique(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp({ withTimezone: true })
-    .notNull()
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-});
+export const promoWeightProfile = pgTable(
+  'promo_weight_profile',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull().unique(),
+    contributionMode: promoContributionModeEnum()
+      .$type<WagerContributionMode>()
+      .notNull()
+      .default('flat'),
+    referenceEdge: decimal({ precision: REFERENCE_EDGE_PRECISION, scale: REFERENCE_EDGE_SCALE }),
+    version: integer().notNull().default(1),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check(
+      'promo_weight_profile_reference_edge_matches_mode',
+      sql`(${t.contributionMode} = 'house_edge') = (${t.referenceEdge} is not null) AND (${t.referenceEdge} is null OR (${t.referenceEdge} > 0 AND ${t.referenceEdge} <= 1))`,
+    ),
+  ],
+);
 
 /**
  * How much a bet matching `scope`/`scopeRef` contributes toward a wagering requirement.
@@ -97,6 +122,10 @@ export type GrantTermsSnapshot = BonusGrantTerms & {
   weights: WagerWeightRow[];
   /** `funds.dustThresholdUsd` in the grant currency at grant time. Absent on older grants: zero. */
   dustThreshold?: string;
+  /** The profile's mode at grant time. Absent on older grants: flat. */
+  contributionMode?: WagerContributionMode;
+  referenceEdge?: string;
+  weightProfileVersion?: number;
 };
 
 export const promoOfferStatusEnum = pgEnum('promo_offer_status', PROMO_OFFER_STATUSES);
@@ -337,6 +366,8 @@ export const promoGrantEntry = pgTable(
     wageringDelta: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
       .notNull()
       .default('0'),
+    // On a stake: what it was scored on at acceptance, so a later profile edit cannot rescore it.
+    wagerInputs: jsonb().$type<StakeWagerInputs>(),
     balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     // The provider round, on the movements that have one. How a win finds its funding grant.
     externalRoundId: text(),
@@ -390,10 +421,15 @@ export const promoGrantRound = pgTable(
     currency: text().notNull(),
     providerName: text().notNull(),
     externalRoundId: text().notNull(),
+    // Weighted stake waiting for the round to settle before it counts toward the requirement.
+    progressPending: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
     openedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp({ withTimezone: true }),
   },
   (t) => [
+    check('promo_grant_round_progress_pending_non_negative', sql`${t.progressPending} >= 0`),
     foreignKey({
       columns: [t.grantId, t.userId, t.currency],
       foreignColumns: [promoGrant.id, promoGrant.userId, promoGrant.currency],
@@ -406,6 +442,12 @@ export const promoGrantRound = pgTable(
     index('promo_grant_round_grant_id_open_idx')
       .on(t.grantId)
       .where(sql`${t.settledAt} is null`),
+    index('promo_grant_round_round_key_idx').on(
+      t.userId,
+      t.currency,
+      t.providerName,
+      t.externalRoundId,
+    ),
   ],
 );
 

@@ -104,7 +104,7 @@ async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promi
  * also throws before any append while the main database still holds an old chain that `chainDb`
  * lacks the last row of.
  */
-export async function shipAuditBatch(
+async function shipAuditBatch(
   db: DrizzleDb,
   { wait = false, chainDb = db }: { wait?: boolean; chainDb?: DrizzleDb } = {},
 ): Promise<number | null> {

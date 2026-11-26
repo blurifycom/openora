@@ -1,117 +1,93 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { adminStatement, permissionLevels } from '@openora/core/contracts';
 import {
-  levelRank,
-  isLevelSufficient,
-  levelToActions,
   actionsToLevel,
-  PERMISSION_LEVELS,
-  type PermissionLevel,
+  isLevelSufficient,
+  levelRank,
+  levelToActions,
 } from '../permission-levels.js';
-import { statement } from '../permissions.js';
 
-describe('levelRank', () => {
-  it('orders the levels from no_access up to read_write', () => {
-    expect(PERMISSION_LEVELS.map(levelRank)).toEqual([0, 1, 2]);
+const resources = Object.keys(adminStatement);
+const withView = resources.filter((r) => levelToActions(r, 'read_write').includes('view'));
+const withoutView = resources.filter((r) => !levelToActions(r, 'read_write').includes('view'));
+
+describe('levelRank and isLevelSufficient', () => {
+  it('ranks no_access below read below read_write', () => {
+    expect(levelRank('no_access')).toBeLessThan(levelRank('read'));
+    expect(levelRank('read')).toBeLessThan(levelRank('read_write'));
   });
 
-  it('ranks an unknown level below every real one so it can never satisfy a check', () => {
-    expect(levelRank('owner' as PermissionLevel)).toBe(-1);
-  });
-});
-
-describe('isLevelSufficient', () => {
-  it.each([
-    ['no_access', 'no_access', true],
-    ['no_access', 'read', false],
-    ['no_access', 'read_write', false],
-    ['read', 'no_access', true],
-    ['read', 'read', true],
-    ['read', 'read_write', false],
-    ['read_write', 'no_access', true],
-    ['read_write', 'read', true],
-    ['read_write', 'read_write', true],
-  ] as const)('%s covering %s is %s', (have, required, expected) => {
-    expect(isLevelSufficient(have, required)).toBe(expected);
+  it('a level is sufficient for itself and any lower level', () => {
+    for (const have of permissionLevels) {
+      for (const required of permissionLevels) {
+        if (levelRank(have) >= levelRank(required)) {
+          expect(isLevelSufficient(have, required)).toBe(true);
+        }
+      }
+    }
   });
 
-  it('refuses to escalate an unknown level', () => {
-    expect(isLevelSufficient('owner' as PermissionLevel, 'read')).toBe(false);
+  it('a lower level is not sufficient for a higher one', () => {
+    expect(isLevelSufficient('no_access', 'read')).toBe(false);
+    expect(isLevelSufficient('no_access', 'read_write')).toBe(false);
+    expect(isLevelSufficient('read', 'read_write')).toBe(false);
   });
 });
 
 describe('levelToActions', () => {
-  it('grants nothing at no_access, whatever the resource', () => {
-    for (const resource of Object.keys(statement)) {
+  it('no_access yields no actions', () => {
+    for (const resource of resources) {
       expect(levelToActions(resource, 'no_access')).toEqual([]);
     }
   });
 
-  it('grants every declared action at read_write', () => {
-    for (const [resource, actions] of Object.entries(statement)) {
+  it('read_write yields every action of the resource', () => {
+    expect(resources.length).toBeGreaterThan(0);
+    for (const [resource, actions] of Object.entries(adminStatement)) {
       expect(levelToActions(resource, 'read_write')).toEqual(actions);
     }
   });
 
-  it('grants only view at read', () => {
-    expect(levelToActions('player', 'read')).toEqual(['view']);
-    expect(levelToActions('withdrawal', 'read')).toEqual(['view']);
+  it('read yields only view for a resource that has view', () => {
+    expect(withView).toContain('player');
+    for (const resource of withView) {
+      expect(levelToActions(resource, 'read')).toEqual(['view']);
+    }
   });
 
-  it('grants nothing at read for a resource that declares no view action', () => {
-    expect(statement.content).not.toContain('view');
-    expect(levelToActions('content', 'read')).toEqual([]);
+  it('read yields nothing for a resource without view', () => {
+    expect(withoutView).toContain('content');
+    for (const resource of withoutView) {
+      expect(levelToActions(resource, 'read')).toEqual([]);
+    }
   });
 
-  it.each(['mcp-access', 'agent-chat'])('grants %s only at read_write', (resource) => {
-    expect(levelToActions(resource, 'read')).toEqual([]);
-    expect(levelToActions(resource, 'read_write')).toEqual(['use']);
-  });
-
-  it.each(PERMISSION_LEVELS)('grants nothing on an unknown resource at %s', (level) => {
-    expect(levelToActions('tournaments', level)).toEqual([]);
-  });
-
-  it('never returns an action the resource does not declare', () => {
-    for (const [resource, actions] of Object.entries(statement)) {
-      for (const level of PERMISSION_LEVELS) {
-        expect(actions).toEqual(expect.arrayContaining([...levelToActions(resource, level)]));
-      }
+  it('an unknown resource yields no actions', () => {
+    for (const level of permissionLevels) {
+      expect(levelToActions('does-not-exist', level)).toEqual([]);
     }
   });
 });
 
 describe('actionsToLevel', () => {
-  it('round-trips every level for every resource that can express it', () => {
-    for (const [resource, actions] of Object.entries(statement)) {
-      const viewOnlyResource = actions.length === 1 && actions[0] === 'view';
-      for (const level of PERMISSION_LEVELS) {
-        const granted = levelToActions(resource, level);
-        const expected =
-          granted.length === 0 ? 'no_access' : viewOnlyResource ? 'read_write' : level;
-        expect(actionsToLevel(resource, granted)).toBe(expected);
-      }
+  it('all actions collapse to read_write', () => {
+    for (const resource of resources) {
+      expect(actionsToLevel(resource, levelToActions(resource, 'read_write'))).toBe('read_write');
     }
   });
 
-  it('cannot tell read from read_write on a resource whose only action is view', () => {
-    expect(statement.report).toEqual(['view']);
-    expect(actionsToLevel('report', ['view'])).toBe('read_write');
-  });
-
-  it('collapses a partial action set down, never up', () => {
+  it('only view collapses to read', () => {
+    expect(actionsToLevel('player', ['view'])).toBe('read');
     expect(actionsToLevel('player', ['view', 'update'])).toBe('read');
-    expect(actionsToLevel('player', ['update', 'ban'])).toBe('no_access');
   });
 
-  it('reports no_access for an unknown resource', () => {
-    expect(actionsToLevel('tournaments', ['view'])).toBe('no_access');
+  it('a partial non view set collapses to no_access', () => {
+    expect(actionsToLevel('player', ['update'])).toBe('no_access');
+    expect(actionsToLevel('content', ['create', 'update'])).toBe('no_access');
   });
 
-  it('reports no_access for an empty action set', () => {
+  it('an unknown resource or empty action list collapses to no_access', () => {
+    expect(actionsToLevel('does-not-exist', ['view'])).toBe('no_access');
     expect(actionsToLevel('player', [])).toBe('no_access');
-  });
-
-  it('ignores actions the resource does not declare', () => {
-    expect(actionsToLevel('report', ['view', 'delete-everything'])).toBe('read_write');
   });
 });

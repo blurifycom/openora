@@ -32,7 +32,7 @@ type GameMembershipSnapshot = {
 };
 
 /** What one game update could have moved for a rule, or null when no rule could care. */
-export function membershipChangeForGameUpdate(
+function membershipChangeForGameUpdate(
   before: GameMembershipSnapshot,
   after: GameMembershipSnapshot,
 ): GameCategoryRuleChange | null {
