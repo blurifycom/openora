@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql, type SQL } from 'drizzle-orm';
-import { RgLimitsSnapshotSchema, type RgLimitsSnapshot, type Uuid } from '@openora/core/contracts';
+import {
+  RgLimitsSnapshotSchema,
+  type RgLimitLedgerPort,
+  type RgLimitsSnapshot,
+  type Uuid,
+} from '@openora/core/contracts';
 import { createTestDb, waitForRowLockWaiter, type TestDb } from '../../../testing/real-infra.js';
 import { migrate } from '../../migrate.js';
 import { rgLimitVersion, userLimit } from '../../schema/index.js';
@@ -47,6 +52,7 @@ class LedgerDouble {
   constructor(
     private readonly scope: ReadonlySet<string>,
     private readonly onWrite: () => void = () => undefined,
+    readonly remote = false,
   ) {}
 
   async write(snapshot: RgLimitsSnapshot, tx: unknown): Promise<void> {
@@ -368,5 +374,66 @@ describe('limit projection snapshot', () => {
       written.push(await storedSnapshot(userId));
     }
     expect(written.filter((snapshot) => snapshot !== null)).toHaveLength(1);
+  });
+});
+
+describe('a limits projection written from another service (ADR-0062)', () => {
+  const unreachable = {
+    remote: true,
+    write: async () => {
+      throw new Error('ledger unreachable');
+    },
+  } satisfies Pick<RgLimitLedgerPort, 'write' | 'remote'>;
+
+  const remotePublisher = (userId: Uuid) => {
+    const ledger = new LedgerDouble(new Set([userId]), undefined, true);
+    return { ledger, publisher: new RgLimitsPublisher(ledger, new EventsDouble()) };
+  };
+
+  const loosening = (publisher: RgLimitsPublisher, userId: Uuid) =>
+    db().transaction((tx) => publisher.publish(tx, userId, { loosening: true }));
+
+  it('fails the change and commits nothing when the remote ledger write throws', async () => {
+    const userId = randomUUID();
+    await seedLimit(userId);
+    const publisher = new RgLimitsPublisher(unreachable, new EventsDouble());
+
+    await expect(publish(publisher, userId)).rejects.toThrow('ledger unreachable');
+
+    expect(await versionOf(userId)).toBeNull();
+    expect(await storedEvents(userId)).toEqual([]);
+  });
+
+  it('writes a tightening to a remote ledger in the caller transaction', async () => {
+    const userId = randomUUID();
+    await seedLimit(userId);
+    const { publisher } = remotePublisher(userId);
+
+    await publish(publisher, userId);
+
+    expect((await storedSnapshot(userId))?.version).toBe(1);
+    expect((await storedEvents(userId)).map((event) => event.version)).toEqual([1]);
+  });
+
+  it('leaves a loosening to the event on a remote ledger, so the ledger never loosens first', async () => {
+    const userId = randomUUID();
+    await seedLimit(userId);
+    const { publisher } = remotePublisher(userId);
+
+    await loosening(publisher, userId);
+
+    expect(await storedSnapshot(userId)).toBeNull();
+    expect(await versionOf(userId)).toBe(1);
+    expect((await storedEvents(userId)).map((event) => event.version)).toEqual([1]);
+  });
+
+  it('still writes a loosening to a local ledger in the same transaction', async () => {
+    const userId = randomUUID();
+    await seedLimit(userId);
+    const { publisher } = publisherFor([userId]);
+
+    await loosening(publisher, userId);
+
+    expect((await storedSnapshot(userId))?.version).toBe(1);
   });
 });

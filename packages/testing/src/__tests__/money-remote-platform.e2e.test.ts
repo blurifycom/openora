@@ -4,15 +4,18 @@ import { sql } from 'drizzle-orm';
 import { ORPCError } from '@orpc/server';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import {
+  LEDGER_PLAY_ELIGIBILITY,
   MONEY_PORTS_ROUTE,
   MONEY_REPORTING,
   PLAYER_RANK_READER,
   PLAY_ELIGIBILITY_PROJECTION,
+  RG_LIMITS,
   RG_LIMIT_LEDGER,
   RgRateUnavailableError,
   WALLET_COMMANDS,
   WALLET_READER,
 } from '@openora/core/contracts';
+import { ledgerProjectionHeartbeat } from '@openora/core/wallet/schema';
 import { bootTestApp, newPlayer, setupTestDb, type TestApp, type TestDb } from '../index.js';
 
 const MONEY_SERVICE_URL = 'http://money.internal';
@@ -245,5 +248,30 @@ describe('a platform service with money-remote', () => {
     } finally {
       mode = 'up';
     }
+  });
+});
+
+describe('a money service whose remote projection writer stopped beating', () => {
+  it('refuses the gates as stale until each projection beats again', async () => {
+    const player = await newPlayer(money, 'money-stale');
+    const db = money.container.get(DRIZZLE).db;
+    const gate = money.container.get(LEDGER_PLAY_ELIGIBILITY);
+    const limits = money.container.get(RG_LIMITS);
+    const stale = { code: 'ledger_projection_stale' };
+    await db.delete(ledgerProjectionHeartbeat);
+
+    await expect(gate.checkPlay(player.userId)).rejects.toMatchObject(stale);
+    await expect(gate.statesOf([player.userId])).rejects.toMatchObject(stale);
+    await money.container.get(PLAY_ELIGIBILITY_PROJECTION).heartbeat();
+
+    expect(await gate.checkPlay(player.userId)).toBeNull();
+    await expect(limits.checkDeposit(db, player.userId, '1', 'USD')).rejects.toMatchObject({
+      ...stale,
+      projection: 'rg_limits',
+    });
+    await money.container.get(RG_LIMIT_LEDGER).heartbeat();
+    await expect(limits.checkDeposit(db, player.userId, '1', 'USD')).resolves.toEqual({
+      allowed: true,
+    });
   });
 });
