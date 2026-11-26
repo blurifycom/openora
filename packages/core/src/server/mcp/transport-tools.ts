@@ -8,7 +8,7 @@ import type {
   RunContext,
 } from '@openora/core/contracts';
 
-export const CORRELATION_ID_META_KEY = 'openora/correlationId';
+const CORRELATION_ID_META_KEY = 'openora/correlationId';
 
 const READ_TOOL_ANNOTATIONS = {
   readOnlyHint: true,
@@ -91,7 +91,7 @@ export function exposedTools(
     });
 }
 
-export function projectOutput(output: Record<string, unknown>, keys: readonly string[]) {
+function projectOutput(output: Record<string, unknown>, keys: readonly string[]) {
   return Object.fromEntries(
     keys
       .filter((key) => Object.hasOwn(output, key) && output[key] !== undefined)

@@ -22,7 +22,7 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
 ## What is real, what is doubled
 
 - **Anything that touches the database is tested against real Postgres** - `createTestDb([migrate])` (`@openora/core/testing`) gives the file its own ephemeral database; `createTestRedis()` gives it a per-worker Redis logical DB. Never fake a query builder: a mocked chain proves a call order, not a result, so it misses the regressions that matter (unique-index dedupe, `FOR UPDATE` under concurrency, conditional atomic updates, cache invalidation).
-- **What stays mocked:** external vendors (PSP, KYC, email, SMS, better-auth) and cross-module ports (`WALLET_COMMANDS`, `IdentityReader`, `EventBus`, `Logger`) - via the shared doubles in `packages/core/src/testing/mock.ts` (`mock`, `makeEventBus`, `makeAuditWriter`, `makeAdminGuard`, `testContext`), never a hand-rolled one in the test file. Engine (`server/**`) tests cannot import a domain schema (ADR-0024/0025), so they use the in-process implementations re-exported from `@openora/core/testing`.
+- **What stays mocked:** external vendors (PSP, KYC, email, SMS, better-auth) and cross-module ports (`WALLET_COMMANDS`, `IdentityReader`, `EventBus`, `Logger`) - via one shared doubles module in `packages/core/src/testing/` (the `mock` helper plus event bus, audit writer and admin guard doubles, added back with the first test that needs them), never a hand-rolled one in the test file. Engine (`server/**`) tests cannot import a domain schema (ADR-0024/0025), so they use the in-process implementations re-exported from `@openora/core/testing`.
 - Every tier binds the drivers production binds (ADR-0039) - there are no in-process broker/queue/cache/rate-limiter doubles to fall back to.
 
 ## How to write them
@@ -42,8 +42,6 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
   const svc = new TagService(db.drizzle, makeEventBus());
   await expect(svc.assign(assignment)).rejects.toThrow(TagNotFoundError);
   ```
-
-  Canonical integration test to copy: `packages/core/src/pam/tag/__tests__/tag.service.int.test.ts` (ephemeral db, seeded rows, event assertions). Pure-logic reference: `packages/core/src/wallet/__tests__/rail-for.test.ts`.
 
 - **Cover new logic as part of the change** - unit for pure fns; always include authz negatives, in the route's E2E.
 - **Every test catches a regression no other test catches.** Before adding one, name the bug it fails on; if an existing test already fails on that bug, do not add it. Cover a behaviour once, at the outermost tier that reaches it: an E2E that proves a refusal makes a unit or integration test of the same refusal redundant. Add the inner-tier test only for a branch, input or side effect (event, audit, ledger row) the outer one cannot reach. Pure-function tests stay branch-complete; this rule is about repeating one outcome across tiers.

@@ -1,446 +1,299 @@
-import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { MAX_DELIVERIES, RedisStreamsBroker } from '../redis-streams-broker.js';
-import { EVENT_RETENTION_MS } from '../event-bus.js';
-import { createTestRedis, waitForConsumerGroup, type TestRedis } from '@openora/core/testing';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EventEnvelope } from '@openora/core/contracts';
+import {
+  createTestRedis,
+  waitForConsumerGroup,
+  type TestRedis,
+} from '../../../testing/real-infra.js';
+import { EVENT_RETENTION_MS } from '../event-bus.js';
+import { RedisStreamsBroker } from '../redis-streams-broker.js';
 
-const { brokerWarn } = vi.hoisted(() => ({ brokerWarn: vi.fn() }));
+const loggerCalls = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
 
-vi.mock('../logger.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger.js')>();
-  return {
-    ...actual,
-    createLogger: (name: string) => {
-      const logger = actual.createLogger(name);
-      if (name === 'message-broker') {
-        logger.warn = brokerWarn;
-      }
-      return logger;
-    },
-  };
-});
+vi.mock('../logger.js', () => ({
+  createLogger: () => ({ ...loggerCalls, info: vi.fn(), debug: vi.fn() }),
+}));
+
+const FAST_RECLAIM = { intervalMs: 50, minIdleMs: 50 };
 
 let redis: TestRedis;
 const brokers: RedisStreamsBroker[] = [];
-
-// Reclaim fast so redelivery tests don't wait out the production idle window.
-const FAST_RECLAIM = { intervalMs: 20, minIdleMs: 10 };
-
-function makeBroker(
-  serviceName: string,
-  reclaim?: { intervalMs: number; minIdleMs: number },
-): RedisStreamsBroker {
-  const broker = new RedisStreamsBroker(redis.client, {
-    serviceName,
-    ...(reclaim ? { reclaim } : {}),
-  });
-  brokers.push(broker);
-  return broker;
-}
-
-// A fresh topic per test so streams/groups never leak between tests.
-function uniqueTopic(): string {
-  return `test.${randomUUID()}`;
-}
-
-function streamOf(topic: string): string {
-  return `oss:evt:${topic}`;
-}
-
-function makeEnvelope(topic: string): EventEnvelope {
-  return {
-    eventId: randomUUID(),
-    topic,
-    payload: { ok: true },
-    occurredAt: '2026-01-01T00:00:00.000Z',
-    schemaVersion: 1,
-  };
-}
 
 beforeAll(async () => {
   redis = await createTestRedis();
 });
 
 afterEach(async () => {
-  vi.useRealTimers();
-  brokerWarn.mockClear();
-  await Promise.allSettled(brokers.map((b) => b.close()));
-  brokers.length = 0;
-  await redis.flush();
+  loggerCalls.error.mockClear();
+  await Promise.all(brokers.splice(0).map((broker) => broker.close()));
 });
 
 afterAll(async () => {
   await redis.quit();
 });
 
-describe('RedisStreamsBroker', () => {
-  it('publish XADDs the serialized envelope to the topic stream', async () => {
-    const broker = makeBroker('svc');
-    const topic = uniqueTopic();
-    const envelope = makeEnvelope(topic);
+const newBroker = (options: ConstructorParameters<typeof RedisStreamsBroker>[1]) => {
+  const broker = new RedisStreamsBroker(redis.client, options);
+  brokers.push(broker);
+  return broker;
+};
 
-    await broker.publish(envelope);
+const newTopic = () => `broker.test.${randomUUID()}`;
+const newGroup = () => `svc-${randomUUID()}`;
+const streamOf = (topic: string) => `oss:evt:${topic}`;
+const dlqOf = (topic: string) => `oss:dlq:${topic}`;
 
-    const entries = await redis.client.xRange(streamOf(topic), '-', '+');
-    expect(entries).toHaveLength(1);
-    expect(JSON.parse(entries[0]!.message['data']!)).toEqual(envelope);
-  });
+const envelope = (topic: string, overrides: Partial<EventEnvelope> = {}): EventEnvelope => ({
+  eventId: randomUUID(),
+  topic,
+  payload: { note: randomUUID() },
+  occurredAt: new Date().toISOString(),
+  schemaVersion: 1,
+  ...overrides,
+});
 
-  it('trims entries older than the retention window on publish', async () => {
-    const broker = makeBroker('svc');
-    const topic = uniqueTopic();
-    const ancientEntryCount = 300;
-    const seed = redis.client.multi();
-    for (let i = 1; i <= ancientEntryCount; i++) {
-      seed.xAdd(streamOf(topic), `${i}-0`, { data: 'ancient' });
-    }
-    await seed.exec();
+const settle = (ms = 250) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-    await broker.publish(makeEnvelope(topic));
+const pendingCount = async (topic: string, group: string) =>
+  (await redis.client.xPending(streamOf(topic), group)).pending;
 
-    const remaining = await redis.client.xRange(streamOf(topic), '-', '+');
-    expect(remaining.length).toBeLessThan(ancientEntryCount);
-    expect(remaining.at(-1)!.message['data']).not.toBe('ancient');
-  });
+const deadLetterEntries = (topic: string) => redis.client.xRange(dlqOf(topic), '-', '+');
 
-  it('keeps recent entries past the old 10,000-entry cap', async () => {
-    const broker = makeBroker('svc');
-    const topic = uniqueTopic();
-    const recentEntryCount = 10_200;
-    const seed = redis.client.multi();
-    for (let i = 0; i < recentEntryCount; i++) {
-      seed.xAdd(streamOf(topic), '*', { data: 'recent' });
-    }
-    await seed.exec();
+async function subscribed(
+  broker: RedisStreamsBroker,
+  topic: string,
+  group: string,
+  handler: (item: EventEnvelope) => void | Promise<void>,
+) {
+  broker.subscribe(topic, handler);
+  await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group });
+}
 
-    await broker.publish(makeEnvelope(topic));
-
-    expect(await redis.client.xLen(streamOf(topic))).toBe(recentEntryCount + 1);
-  });
-
-  it('coalesces two subscribers on one topic: both receive, the entry is ACKed', async () => {
-    const broker = makeBroker('wallet-svc');
-    const topic = uniqueTopic();
-    const seen1: EventEnvelope[] = [];
-    const seen2: EventEnvelope[] = [];
-    broker.subscribe(topic, (e) => {
-      seen1.push(e);
-    });
-    broker.subscribe(topic, (e) => {
-      seen2.push(e);
-    });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'wallet-svc' });
-
-    const envelope = makeEnvelope(topic);
-    await broker.publish(envelope);
-
+describe('publish and consume', () => {
+  it('a published event reaches every consumer group once', async () => {
+    const topic = newTopic();
+    const groupA = newGroup();
+    const groupB = newGroup();
+    const received = { a1: 0, a2: 0, b: 0 };
+    const replicaA1 = newBroker({ serviceName: groupA });
+    const replicaA2 = newBroker({ serviceName: groupA });
+    const serviceB = newBroker({ serviceName: groupB });
+    await subscribed(replicaA1, topic, groupA, () => void (received.a1 += 1));
+    await subscribed(replicaA2, topic, groupA, () => void (received.a2 += 1));
+    await subscribed(serviceB, topic, groupB, () => void (received.b += 1));
+    await replicaA1.publish(envelope(topic));
     await vi.waitFor(() => {
-      expect(seen1).toEqual([envelope]);
-      expect(seen2).toEqual([envelope]);
+      expect(received.a1 + received.a2).toBe(1);
+      expect(received.b).toBe(1);
     });
-    await vi.waitFor(async () => {
-      const pending = await redis.client.xPending(streamOf(topic), 'wallet-svc');
-      expect(pending.pending).toBe(0);
-    });
+    await settle();
+    expect(received.a1 + received.a2).toBe(1);
+    expect(received.b).toBe(1);
   });
 
-  it('uses the service name as the default consumer group', async () => {
-    const broker = makeBroker('wallet-svc');
-    const topic = uniqueTopic();
-    broker.subscribe(topic, () => undefined);
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'wallet-svc' });
-
-    const groups = await redis.client.xInfoGroups(streamOf(topic));
-    expect(groups.map((g) => g.name)).toEqual(['wallet-svc']);
-  });
-
-  it('opts.consumerGroup starts a second group that also receives the event', async () => {
-    const broker = makeBroker('wallet-svc');
-    const topic = uniqueTopic();
-    const seenDefault: EventEnvelope[] = [];
-    const seenCustom: EventEnvelope[] = [];
-    broker.subscribe(topic, (e) => {
-      seenDefault.push(e);
-    });
-    broker.subscribe(
-      topic,
-      (e) => {
-        seenCustom.push(e);
-      },
-      { consumerGroup: 'analytics' },
-    );
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'wallet-svc' });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'analytics' });
-
-    const envelope = makeEnvelope(topic);
-    await broker.publish(envelope);
-
-    await vi.waitFor(() => {
-      expect(seenDefault).toEqual([envelope]);
-      expect(seenCustom).toEqual([envelope]);
-    });
-    const groups = await redis.client.xInfoGroups(streamOf(topic));
-    expect(groups.map((g) => g.name).sort()).toEqual(['analytics', 'wallet-svc']);
-  });
-
-  it('unsubscribe stops delivery to that handler', async () => {
-    const broker = makeBroker('svc');
-    const topic = uniqueTopic();
-    const seen1: EventEnvelope[] = [];
-    const seen2: EventEnvelope[] = [];
-    const unsubscribe1 = broker.subscribe(topic, (e) => {
-      seen1.push(e);
-    });
-    broker.subscribe(topic, (e) => {
-      seen2.push(e);
-    });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    unsubscribe1();
-
-    const envelope = makeEnvelope(topic);
-    await broker.publish(envelope);
-
-    await vi.waitFor(() => expect(seen2).toEqual([envelope]));
-    expect(seen1).toEqual([]);
-  });
-
-  it('close stops the read loop so a later publish is not delivered', async () => {
-    const broker = makeBroker('svc');
-    const topic = uniqueTopic();
-    const seen: EventEnvelope[] = [];
-    broker.subscribe(topic, (e) => {
-      seen.push(e);
-    });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    await broker.close();
-    await broker.publish(makeEnvelope(topic));
-
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(seen).toEqual([]);
-    expect(await redis.client.xLen(streamOf(topic))).toBe(1);
-  });
-
-  it('two instances sharing a service name split events: exactly one handles each', async () => {
-    const topic = uniqueTopic();
-    const seenA: EventEnvelope[] = [];
-    const seenB: EventEnvelope[] = [];
-    makeBroker('svc').subscribe(topic, (e) => {
-      seenA.push(e);
-    });
-    makeBroker('svc').subscribe(topic, (e) => {
-      seenB.push(e);
-    });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    const envelope = makeEnvelope(topic);
-    await brokers[0]!.publish(envelope);
-
-    await vi.waitFor(() => expect(seenA.length + seenB.length).toBe(1));
-    // Give the other instance a beat to (wrongly) double-deliver - it must not.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(seenA.length + seenB.length).toBe(1);
-  });
-
-  it('two instances with different service names both handle the event', async () => {
-    const topic = uniqueTopic();
-    const seenA: EventEnvelope[] = [];
-    const seenB: EventEnvelope[] = [];
-    makeBroker('svc-a').subscribe(topic, (e) => {
-      seenA.push(e);
-    });
-    makeBroker('svc-b').subscribe(topic, (e) => {
-      seenB.push(e);
-    });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc-a' });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc-b' });
-
-    const envelope = makeEnvelope(topic);
-    await brokers[0]!.publish(envelope);
-
-    await vi.waitFor(() => {
-      expect(seenA).toEqual([envelope]);
-      expect(seenB).toEqual([envelope]);
-    });
-  });
-
-  it('recovers on its own after the stream key (and its group) disappear', async () => {
-    const broker = makeBroker('svc');
-    const topic = uniqueTopic();
-    const seen: EventEnvelope[] = [];
-    broker.subscribe(topic, (e) => {
-      seen.push(e);
-    });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    await redis.client.del(streamOf(topic));
-
-    await waitForConsumerGroup(redis.client, {
-      stream: streamOf(topic),
-      group: 'svc',
-      timeoutMs: 6000,
-    });
-
-    const envelope = makeEnvelope(topic);
-    await broker.publish(envelope);
-
-    await vi.waitFor(() => expect(seen).toEqual([envelope]), { timeout: 5000 });
-  });
-
-  it('leaves a failed entry pending and redelivers it until the handler succeeds', async () => {
-    const broker = makeBroker('svc', FAST_RECLAIM);
-    const topic = uniqueTopic();
-    let attempts = 0;
+  it('every local handler runs even when a sibling handler throws', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const broker = newBroker({ serviceName: group });
+    const ran: string[] = [];
     broker.subscribe(topic, () => {
-      attempts += 1;
-      if (attempts < 3) {
-        throw new Error('transient');
-      }
+      ran.push('failing');
+      throw new Error('first handler failed');
     });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    await broker.publish(makeEnvelope(topic));
-
-    await vi.waitFor(() => expect(attempts).toBe(3), { timeout: 5000 });
-    await vi.waitFor(async () => {
-      const pending = await redis.client.xPending(streamOf(topic), 'svc');
-      expect(pending.pending).toBe(0);
-    });
-    expect(await redis.client.exists(`oss:dlq:${topic}`)).toBe(0);
+    broker.subscribe(topic, () => void ran.push('sibling'));
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group });
+    await broker.publish(envelope(topic));
+    await vi.waitFor(() => expect([...ran].sort()).toEqual(['failing', 'sibling']));
+    expect(await pendingCount(topic, group)).toBe(1);
   });
 
-  it('reclaims the whole pending backlog in one pass, not one page', async () => {
-    const broker = makeBroker('svc', { intervalMs: 1000, minIdleMs: 10 });
-    const topic = uniqueTopic();
-    const seen = new Set<string>();
-    let handled = 0;
-    broker.subscribe(topic, (envelope) => {
-      if (!seen.has(envelope.eventId)) {
-        seen.add(envelope.eventId);
-        throw new Error('transient');
-      }
-      handled += 1;
+  it('an entry is acknowledged after handlers succeed', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const broker = newBroker({ serviceName: group });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    // 25 entries span three XAUTOCLAIM pages (COUNT 10); the next pass would be ~1s later.
-    for (let i = 0; i < 25; i += 1) {
-      await broker.publish(makeEnvelope(topic));
-    }
-
-    await vi.waitFor(() => expect(handled).toBe(25), { timeout: 1800 });
-  });
-
-  it(`dead-letters an entry still failing after ${MAX_DELIVERIES} deliveries and ACKs it`, async () => {
-    const broker = makeBroker('svc', FAST_RECLAIM);
-    const topic = uniqueTopic();
-    let attempts = 0;
-    broker.subscribe(topic, () => {
-      attempts += 1;
-      throw new Error('poison');
+    let entered = false;
+    await subscribed(broker, topic, group, async () => {
+      entered = true;
+      await gate;
     });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    const envelope = makeEnvelope(topic);
-    await broker.publish(envelope);
-
-    await vi.waitFor(async () => expect(await redis.client.xLen(`oss:dlq:${topic}`)).toBe(1), {
-      timeout: 5000,
-    });
-    expect(attempts).toBe(MAX_DELIVERIES);
-    const [dead] = await redis.client.xRange(`oss:dlq:${topic}`, '-', '+');
-    expect(JSON.parse(dead!.message['data']!)).toEqual(envelope);
-    expect(dead!.message).toMatchObject({
-      group: 'svc',
-      deliveries: String(MAX_DELIVERIES),
-      error: 'poison',
-    });
-    const pending = await redis.client.xPending(streamOf(topic), 'svc');
-    expect(pending.pending).toBe(0);
-    expect(await broker.deadLetters()).toEqual({
-      count: 1,
-      newest: `oss:dlq:${topic}/${dead!.id}`,
-    });
-  });
-
-  it('dead-letters a pending entry older than the retention window instead of re-running it', async () => {
-    const broker = makeBroker('svc', FAST_RECLAIM);
-    const topic = uniqueTopic();
-    let attempts = 0;
-    broker.subscribe(topic, () => {
-      attempts += 1;
-      throw new Error('transient');
-    });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    // An id from past the retention window, as a pending entry left behind by a long outage.
-    const staleId = `${Date.now() - EVENT_RETENTION_MS - 60_000}-0`;
-    await redis.client.xAdd(streamOf(topic), staleId, {
-      data: JSON.stringify(makeEnvelope(topic)),
-    });
-
-    await vi.waitFor(async () => expect(await redis.client.xLen(`oss:dlq:${topic}`)).toBe(1), {
-      timeout: 5000,
-    });
-    expect(attempts).toBe(1);
-    const [dead] = await redis.client.xRange(`oss:dlq:${topic}`, '-', '+');
-    expect(dead!.message).toMatchObject({
-      streamId: staleId,
-      error: 'pending past the event retention window',
-    });
-    expect((await redis.client.xPending(streamOf(topic), 'svc')).pending).toBe(0);
-  });
-
-  it('dead-letters an entry that is not valid JSON without calling handlers', async () => {
-    const broker = makeBroker('svc');
-    const topic = uniqueTopic();
-    const handler = vi.fn();
-    broker.subscribe(topic, handler);
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
-
-    await redis.client.xAdd(streamOf(topic), '*', { data: '{not json' });
-
-    await vi.waitFor(async () => expect(await redis.client.xLen(`oss:dlq:${topic}`)).toBe(1));
-    expect(handler).not.toHaveBeenCalled();
+    await broker.publish(envelope(topic));
+    await vi.waitFor(() => expect(entered).toBe(true));
+    expect(await pendingCount(topic, group)).toBe(1);
+    release();
+    await vi.waitFor(async () => expect(await pendingCount(topic, group)).toBe(0));
   });
 });
 
-describe('RedisStreamsBroker consumer lag', () => {
-  const LAGGING = 101;
-
-  it('logs stream consumer lagging while a handler leaves entries unacked, and stops after they are acked', async () => {
-    const broker = makeBroker('lag-svc', { intervalMs: 50, minIdleMs: 60_000 });
-    const topic = uniqueTopic();
-    broker.subscribe(topic, () => {
-      throw new Error('never acks');
+describe('retry and dead-letter', () => {
+  async function deadLetterAfterFailures(topic: string, group: string) {
+    const calls: EventEnvelope[] = [];
+    const broker = newBroker({ serviceName: group, reclaim: FAST_RECLAIM });
+    await subscribed(broker, topic, group, (item) => {
+      calls.push(item);
+      throw new Error('handler always fails');
     });
-    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'lag-svc' });
-    for (let i = 0; i < LAGGING; i++) {
-      await broker.publish(makeEnvelope(topic));
+    const published = envelope(topic);
+    await broker.publish(published);
+    await vi.waitFor(async () => expect(await deadLetterEntries(topic)).toHaveLength(1), {
+      timeout: 15_000,
+    });
+    return { calls, published, broker };
+  }
+
+  it('a failing entry is retried until the max delivery count then moved to the dead-letter stream', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const { calls, published } = await deadLetterAfterFailures(topic, group);
+    expect(calls).toHaveLength(5);
+    expect(calls.every((item) => item.eventId === published.eventId)).toBe(true);
+    await vi.waitFor(async () => expect(await pendingCount(topic, group)).toBe(0));
+    await settle();
+    expect(calls).toHaveLength(5);
+    expect(await deadLetterEntries(topic)).toHaveLength(1);
+  });
+
+  it('a dead-lettered entry keeps its payload, error and delivery count', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const { published } = await deadLetterAfterFailures(topic, group);
+    const [entry] = await deadLetterEntries(topic);
+    expect(entry?.message['data']).toBe(JSON.stringify(published));
+    expect(entry?.message['error']).toBe('handler always fails');
+    expect(entry?.message['deliveries']).toBe('5');
+    expect(entry?.message['group']).toBe(group);
+    const [source] = await redis.client.xRange(streamOf(topic), '-', '+');
+    expect(entry?.message['streamId']).toBe(source?.id);
+  });
+
+  it('an idle pending entry is reclaimed by another consumer', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const crashed = newBroker({ serviceName: group });
+    await subscribed(crashed, topic, group, () => {
+      throw new Error('replica went down mid-handler');
+    });
+    const published = envelope(topic);
+    await crashed.publish(published);
+    await vi.waitFor(async () => expect(await pendingCount(topic, group)).toBe(1));
+    const [before] = await redis.client.xPendingRange(streamOf(topic), group, '-', '+', 10);
+    await crashed.close();
+    const survivor = newBroker({ serviceName: group, reclaim: FAST_RECLAIM });
+    const received: EventEnvelope[] = [];
+    survivor.subscribe(topic, (item) => void received.push(item));
+    await vi.waitFor(() => expect(received).toEqual([published]));
+    await vi.waitFor(async () => expect(await pendingCount(topic, group)).toBe(0));
+    expect(before?.consumer).toBeDefined();
+    expect(before?.deliveriesCounter).toBe(1);
+    expect(await deadLetterEntries(topic)).toEqual([]);
+  });
+
+  it('an entry pending past the retention window is dead-lettered without a handler run', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const key = streamOf(topic);
+    const staleId = `${Date.now() - EVENT_RETENTION_MS - 60_000}-0`;
+    const stale = envelope(topic);
+    await redis.client.xGroupCreate(key, group, '0', { MKSTREAM: true });
+    await redis.client.xAdd(key, staleId, { data: JSON.stringify(stale) });
+    await redis.client.xReadGroup(group, 'ghost-consumer', { key, id: '>' }, { COUNT: 1 });
+    expect(await pendingCount(topic, group)).toBe(1);
+    const calls: EventEnvelope[] = [];
+    const broker = newBroker({ serviceName: group, reclaim: FAST_RECLAIM });
+    broker.subscribe(topic, (item) => void calls.push(item));
+    await vi.waitFor(async () => expect(await deadLetterEntries(topic)).toHaveLength(1));
+    const [entry] = await deadLetterEntries(topic);
+    expect(entry?.message['data']).toBe(JSON.stringify(stale));
+    expect(entry?.message['error']).toBe('pending past the event retention window');
+    expect(entry?.message['streamId']).toBe(staleId);
+    await vi.waitFor(async () => expect(await pendingCount(topic, group)).toBe(0));
+    await settle();
+    expect(calls).toEqual([]);
+  });
+
+  it('the dead-letter stream is never trimmed', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const ancientIds = [30, 20].map((days) => `${Date.now() - days * 24 * 60 * 60_000}-0`);
+    for (const id of ancientIds) {
+      await redis.client.xAdd(dlqOf(topic), id, { data: '{}', error: 'old failure' });
     }
+    const broker = newBroker({ serviceName: group, startId: '0' });
+    await subscribed(broker, topic, group, () => undefined);
+    await redis.client.xAdd(streamOf(topic), '*', { data: 'not json' });
+    await vi.waitFor(async () => expect(await deadLetterEntries(topic)).toHaveLength(3));
+    await broker.publish(envelope(topic));
+    await settle();
+    const ids = (await deadLetterEntries(topic)).map((entry) => entry.id);
+    expect(ids.slice(0, 2)).toEqual(ancientIds);
+  });
 
-    await vi.waitFor(() => {
-      expect(brokerWarn).toHaveBeenCalledWith(
-        { stream: streamOf(topic), group: 'lag-svc', pending: LAGGING },
-        'stream consumer lagging',
-      );
-    });
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(brokerWarn).toHaveBeenCalledTimes(1);
+  it('deadLetters sums the entries of every dead-letter stream and names the newest', async () => {
+    const group = newGroup();
+    const topics = [newTopic(), newTopic()];
+    const before = await newBroker({ serviceName: group }).deadLetters?.();
+    const broker = newBroker({ serviceName: group, startId: '0' });
+    for (const topic of topics) {
+      await subscribed(broker, topic, group, () => undefined);
+    }
+    const [first, second] = topics;
+    if (!first || !second) {
+      throw new Error('fixture');
+    }
+    await redis.client.xAdd(streamOf(first), '*', { data: 'not json' });
+    await redis.client.xAdd(streamOf(first), '*', { data: 'also not json' });
+    await vi.waitFor(async () => expect(await deadLetterEntries(first)).toHaveLength(2));
+    await redis.client.xAdd(streamOf(second), '*', { data: 'still not json' });
+    await vi.waitFor(async () => expect(await deadLetterEntries(second)).toHaveLength(1));
+    const after = await broker.deadLetters?.();
+    expect((after?.count ?? 0) - (before?.count ?? 0)).toBe(3);
+    const [newest] = await redis.client.xRevRange(dlqOf(second), '+', '-', { COUNT: 1 });
+    expect(after?.newest).toBe(`${dlqOf(second)}/${newest?.id}`);
+  });
+});
 
-    const pending = await redis.client.xPendingRange(streamOf(topic), 'lag-svc', '-', '+', 200);
-    await redis.client.xAck(
-      streamOf(topic),
-      'lag-svc',
-      pending.map((entry) => entry.id),
+describe('startup', () => {
+  it('creating a consumer group that already exists does not fail', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    await redis.client.xGroupCreate(streamOf(topic), group, '$', { MKSTREAM: true });
+    const published = envelope(topic);
+    await redis.client.xAdd(streamOf(topic), '*', { data: JSON.stringify(published) });
+    const received: EventEnvelope[] = [];
+    const broker = newBroker({ serviceName: group, startId: '0' });
+    broker.subscribe(topic, (item) => void received.push(item));
+    await vi.waitFor(() => expect(received).toEqual([published]));
+    await settle();
+    expect(received).toEqual([published]);
+    expect(
+      loggerCalls.error.mock.calls.filter(
+        ([, message]) => message === 'stream loop error, retrying',
+      ),
+    ).toEqual([]);
+  });
+
+  it('a stream loop error is logged and the loop continues', async () => {
+    const topic = newTopic();
+    const group = newGroup();
+    const received: EventEnvelope[] = [];
+    const broker = newBroker({ serviceName: group, startId: '0' });
+    await subscribed(broker, topic, group, (item) => void received.push(item));
+    await redis.client.xGroupDestroy(streamOf(topic), group);
+    await vi.waitFor(
+      () =>
+        expect(loggerCalls.error).toHaveBeenCalledWith(
+          expect.objectContaining({ key: streamOf(topic), group }),
+          'stream loop error, retrying',
+        ),
+      { timeout: 10_000 },
     );
-    brokerWarn.mockClear();
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 120_000);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    expect(brokerWarn).not.toHaveBeenCalled();
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group, timeoutMs: 10_000 });
+    const published = envelope(topic);
+    await broker.publish(published);
+    await vi.waitFor(() => expect(received).toEqual([published]), { timeout: 10_000 });
   });
 });

@@ -19,7 +19,7 @@ If the orchestrator passed a base ref + changed-file list, use them - do not re-
 
 ## Focus
 
-`risk` (the default two-lens roster, where `contract-reviewer` is not spawned): also read `contract-reviewer.md` next to this file IN FULL and run its checklist - boundaries, contracts, Drizzle and migrations, barrel exports, tests and audit. You own `security` and `contracts`; report findings from both, each citing its rule.
+`risk` (the risk lens of the precheck's `ROSTER:`, where `contract-reviewer` is not spawned): also read `contract-reviewer.md` next to this file IN FULL and run its checklist - boundaries, contracts, Drizzle and migrations, barrel exports, tests and audit. You own `security` and `contracts`; report findings from both, each citing its rule.
 
 ## Request trace
 

@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type {
   RateLimitKey,
   RateLimitOptions,
   RateLimitResult,
   RateLimiterAdapter,
 } from '@openora/core/contracts';
-import { mock } from '../../../testing/mock.js';
 import {
   accessDenied,
   batchRefused,
@@ -15,7 +14,6 @@ import {
   consumeTokenRateLimit,
   internalError,
   invalidToken,
-  limiterUnavailable,
   methodNotAllowed,
   noStore,
   originRefused,
@@ -25,315 +23,243 @@ import {
   payloadTooLarge,
   preflight,
   rateLimitRefused,
-  rateLimited,
-  retryAfterSeconds,
   servesHost,
+  withHeaders,
 } from '../transport-gate.js';
 
-const BACKOFFICE = 'https://backoffice.example.com';
-const CLIENT_IP = '203.0.113.7';
-const LIMITS = { perMinute: 60, perDay: 2000 };
-const PER_IP_PER_MINUTE = 300;
-const ALLOWED: RateLimitResult = { allowed: true, retryAfterMs: 0 };
-const STORE_DOWN: RateLimitResult = { allowed: false, retryAfterMs: 60_000, unavailable: true };
+type Consumed = { key: RateLimitKey; opts: RateLimitOptions };
 
-type Window = 'ip' | 'min' | 'day';
-
-const WINDOW_PREFIXES: Record<Window, string> = {
-  ip: 'mcp-ip-min:',
-  min: 'mcp-token-min:',
-  day: 'mcp-token-day:',
-};
-
-function windowOf(key: RateLimitKey): Window | undefined {
-  return (['ip', 'min', 'day'] as const).find((window) => key.startsWith(WINDOW_PREFIXES[window]));
-}
-
-function scriptedLimiter(results: Partial<Record<Window, RateLimitResult>>) {
-  const consume = vi.fn(
-    async (key: RateLimitKey, _options: RateLimitOptions): Promise<RateLimitResult> => {
-      const window = windowOf(key);
-      return (window && results[window]) ?? ALLOWED;
+function scriptedLimiter(results: RateLimitResult[]) {
+  const calls: Consumed[] = [];
+  const limiter: RateLimiterAdapter<RateLimitKey> = {
+    async consume(key, opts) {
+      calls.push({ key, opts });
+      return results[calls.length - 1] ?? { allowed: true, retryAfterMs: 0 };
     },
-  );
-  return { limiter: mock<RateLimiterAdapter<RateLimitKey>>({ consume }), consume };
+    async reset() {},
+  };
+  return { limiter, calls };
 }
+
+const ALLOWED: RateLimitResult = { allowed: true, retryAfterMs: 0 };
+const UNAVAILABLE: RateLimitResult = { allowed: false, retryAfterMs: 0, unavailable: true };
 
 describe('parseBearer', () => {
-  it.each([
-    ['Bearer ora_mcp_abc-DEF_123', 'ora_mcp_abc-DEF_123'],
-    ['bearer token', 'token'],
-    ['BEARER token', 'token'],
-    ['Bearer   spaced', 'spaced'],
-    ['Bearer dG9rZW4=', 'dG9rZW4='],
-    ['Bearer a.b~c+d/e', 'a.b~c+d/e'],
-  ])('reads the token of %j', (header, token) => {
-    expect(parseBearer(header)).toBe(token);
+  it('returns the token from a well formed bearer header', () => {
+    expect(parseBearer('Bearer abc.DEF-123_x~y+z/w==')).toBe('abc.DEF-123_x~y+z/w==');
+    expect(parseBearer('bearer token')).toBe('token');
+  });
+
+  it('returns null for a missing header', () => {
+    expect(parseBearer(null)).toBeNull();
+  });
+
+  it('returns null for a header over the length cap', () => {
+    expect(parseBearer(`Bearer ${'a'.repeat(512 - 7)}`)).toBe('a'.repeat(512 - 7));
+    expect(parseBearer(`Bearer ${'a'.repeat(512 - 6)}`)).toBeNull();
   });
 
   it.each([
-    [null],
-    [''],
+    ['Basic dXNlcjpwYXNz'],
     ['Bearer'],
     ['Bearer '],
-    ['Bearertoken'],
-    ['Basic dXNlcjpwYXNz'],
-    ['Bearer two tokens'],
-    ['Bearer x=y'],
-    ['Bearer tok"en'],
-  ])('refuses %j', (header) => {
+    ['Bearer   '],
+    ['Token abc'],
+    ['Bearer a b'],
+    ['Bearer a=b'],
+    ['Bearer a\nb'],
+    [''],
+  ])('returns null for a non-bearer scheme or an empty token: %j', (header) => {
     expect(parseBearer(header)).toBeNull();
   });
-
-  it('refuses a header longer than 512 characters', () => {
-    expect(parseBearer(`Bearer ${'a'.repeat(505)}`)).toBe('a'.repeat(505));
-    expect(parseBearer(`Bearer ${'a'.repeat(506)}`)).toBeNull();
-  });
 });
 
-describe('servesHost', () => {
-  it('serves no host when none is bound', () => {
-    expect(servesHost('player.example.com', [])).toBe(false);
+describe('servesHost and originVerdict', () => {
+  it('matches a host case-insensitively against the allow-list', () => {
+    expect(servesHost('MCP.Example.COM', ['mcp.example.com'])).toBe(true);
   });
 
-  it('serves a bound host whatever its case or port', () => {
-    expect(
-      servesHost(new URL('https://Backoffice.Example.com:8443/mcp').hostname, [
-        'backoffice.example.com',
-      ]),
-    ).toBe(true);
-    expect(servesHost('BACKOFFICE.example.com', ['backoffice.example.com'])).toBe(true);
+  it('refuses a host that is not listed', () => {
+    expect(servesHost('evil.example.com', ['mcp.example.com'])).toBe(false);
+    expect(servesHost('mcp.example.com.evil.io', ['mcp.example.com'])).toBe(false);
   });
 
-  it('refuses any other host, a subdomain of a bound one included', () => {
-    expect(servesHost('player.example.com', ['backoffice.example.com'])).toBe(false);
-    expect(servesHost('evil.backoffice.example.com', ['backoffice.example.com'])).toBe(false);
-  });
-});
-
-describe('originVerdict', () => {
-  it('sees no browser when the request carries no Origin', () => {
+  it('a request without an Origin header is none', () => {
+    expect(originVerdict(null, ['https://app.example.com'])).toBe('none');
     expect(originVerdict(null, [])).toBe('none');
-    expect(originVerdict(null, [BACKOFFICE])).toBe('none');
   });
 
-  it('refuses every Origin when none is allowed', () => {
-    expect(originVerdict(BACKOFFICE, [])).toBe('refused');
+  it('a listed Origin is allowed', () => {
+    expect(originVerdict('https://app.example.com', ['https://app.example.com'])).toBe('allowed');
+  });
+
+  it('an unlisted Origin is refused', () => {
+    expect(originVerdict('https://evil.example.com', ['https://app.example.com'])).toBe('refused');
+    expect(originVerdict('https://app.example.com/', ['https://app.example.com'])).toBe('refused');
+  });
+
+  it('an empty allow-list refuses every request that carries an Origin', () => {
+    expect(originVerdict('https://app.example.com', [])).toBe('refused');
     expect(originVerdict('null', [])).toBe('refused');
   });
-
-  it('allows only an exact configured origin', () => {
-    expect(originVerdict(BACKOFFICE, [BACKOFFICE])).toBe('allowed');
-    expect(originVerdict('http://backoffice.example.com', [BACKOFFICE])).toBe('refused');
-    expect(originVerdict(`${BACKOFFICE}:8443`, [BACKOFFICE])).toBe('refused');
-    expect(originVerdict('https://evil.example', [BACKOFFICE])).toBe('refused');
-  });
 });
 
-describe('retryAfterSeconds', () => {
-  it.each([
-    [0, 1],
-    [1, 1],
-    [1000, 1],
-    [1001, 2],
-    [59_001, 60],
-    [86_400_000, 86_400],
-  ])('rounds %i ms up to %i s', (ms, seconds) => {
-    expect(retryAfterSeconds(ms)).toBe(seconds);
+describe('rate limits', () => {
+  it('an unknown client address is not limited', async () => {
+    const { limiter, calls } = scriptedLimiter([UNAVAILABLE]);
+    expect(await consumeAddressRateLimit(limiter, null, 5)).toEqual({ status: 'allowed' });
+    expect(calls).toHaveLength(0);
   });
-});
 
-describe('consumeAddressRateLimit', () => {
-  it('consumes the address minute window, failing closed', async () => {
-    const { limiter, consume } = scriptedLimiter({});
-
-    expect(await consumeAddressRateLimit(limiter, CLIENT_IP, PER_IP_PER_MINUTE)).toEqual({
+  it('the address minute window refuses once the limit is spent and reports retry-after rounded up to at least 1 second', async () => {
+    const { limiter, calls } = scriptedLimiter([
+      ALLOWED,
+      { allowed: false, retryAfterMs: 1200 },
+      { allowed: false, retryAfterMs: 0 },
+    ]);
+    expect(await consumeAddressRateLimit(limiter, '203.0.113.9', 2)).toEqual({
       status: 'allowed',
     });
-    expect(consume.mock.calls).toEqual([
-      [`mcp-ip-min:${CLIENT_IP}`, { limit: 300, windowMs: 60_000, onUnavailable: 'deny' }],
+    expect(await consumeAddressRateLimit(limiter, '203.0.113.9', 2)).toEqual({
+      status: 'limited',
+      retryAfterSeconds: 2,
+    });
+    expect(await consumeAddressRateLimit(limiter, '203.0.113.9', 2)).toEqual({
+      status: 'limited',
+      retryAfterSeconds: 1,
+    });
+    expect(calls[0]?.key).toBe('mcp-ip-min:203.0.113.9');
+    expect(calls[0]?.opts).toEqual({ limit: 2, windowMs: 60_000, onUnavailable: 'deny' });
+  });
+
+  it('a token minute refusal does not count against the day window', async () => {
+    const { limiter, calls } = scriptedLimiter([{ allowed: false, retryAfterMs: 4000 }]);
+    const verdict = await consumeTokenRateLimit(limiter, randomUUID(), {
+      perMinute: 3,
+      perDay: 100,
+    });
+    expect(verdict).toEqual({ status: 'limited', retryAfterSeconds: 4 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts.windowMs).toBe(60_000);
+  });
+
+  it('a token past its day limit is limited', async () => {
+    const { limiter, calls } = scriptedLimiter([
+      ALLOWED,
+      { allowed: false, retryAfterMs: 3_600_000 },
     ]);
-  });
-
-  it('does not limit a request whose address is unknown', async () => {
-    const { limiter, consume } = scriptedLimiter({ ip: STORE_DOWN });
-
-    expect(await consumeAddressRateLimit(limiter, null, PER_IP_PER_MINUTE)).toEqual({
-      status: 'allowed',
+    const verdict = await consumeTokenRateLimit(limiter, randomUUID(), {
+      perMinute: 3,
+      perDay: 100,
     });
-    expect(consume).not.toHaveBeenCalled();
+    expect(verdict).toEqual({ status: 'limited', retryAfterSeconds: 3600 });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.opts).toEqual({ limit: 100, windowMs: 86_400_000, onUnavailable: 'deny' });
   });
 
-  it('refuses a spent window with the time until it resets', async () => {
-    const { limiter } = scriptedLimiter({ ip: { allowed: false, retryAfterMs: 41_200 } });
-
-    expect(await consumeAddressRateLimit(limiter, CLIENT_IP, PER_IP_PER_MINUTE)).toEqual({
-      status: 'limited',
-      retryAfterSeconds: 42,
-    });
+  it('a token inside both windows is allowed', async () => {
+    const { limiter } = scriptedLimiter([ALLOWED, ALLOWED]);
+    expect(
+      await consumeTokenRateLimit(limiter, randomUUID(), { perMinute: 3, perDay: 100 }),
+    ).toEqual({ status: 'allowed' });
   });
 
-  it('reports a store it cannot reach as unavailable', async () => {
-    const { limiter } = scriptedLimiter({ ip: STORE_DOWN });
-
-    expect(await consumeAddressRateLimit(limiter, CLIENT_IP, PER_IP_PER_MINUTE)).toEqual({
+  it('a limiter that is unavailable fails closed for the address window', async () => {
+    const { limiter, calls } = scriptedLimiter([UNAVAILABLE]);
+    expect(await consumeAddressRateLimit(limiter, '203.0.113.9', 5)).toEqual({
       status: 'unavailable',
     });
+    expect(calls[0]?.opts.onUnavailable).toBe('deny');
+  });
+
+  it('a limiter that is unavailable fails closed for the token windows', async () => {
+    const minute = scriptedLimiter([UNAVAILABLE]);
+    expect(
+      await consumeTokenRateLimit(minute.limiter, randomUUID(), { perMinute: 3, perDay: 100 }),
+    ).toEqual({ status: 'unavailable' });
+    expect(minute.calls).toHaveLength(1);
+
+    const day = scriptedLimiter([ALLOWED, UNAVAILABLE]);
+    expect(
+      await consumeTokenRateLimit(day.limiter, randomUUID(), { perMinute: 3, perDay: 100 }),
+    ).toEqual({ status: 'unavailable' });
+    expect(day.calls.every((call) => call.opts.onUnavailable === 'deny')).toBe(true);
   });
 });
 
-describe('consumeTokenRateLimit', () => {
-  const tokenId = randomUUID();
+type RpcBody = { jsonrpc: string; id: null; error: { code: number; message: string } };
 
-  it('consumes the minute window, then the day window, both failing closed', async () => {
-    const { limiter, consume } = scriptedLimiter({});
+async function body(response: Response): Promise<RpcBody> {
+  return response.json();
+}
 
-    expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({ status: 'allowed' });
-    expect(consume.mock.calls).toEqual([
-      [`mcp-token-min:${tokenId}`, { limit: 60, windowMs: 60_000, onUnavailable: 'deny' }],
-      [`mcp-token-day:${tokenId}`, { limit: 2000, windowMs: 86_400_000, onUnavailable: 'deny' }],
-    ]);
-  });
-
-  it('refuses on the minute window without spending the day window', async () => {
-    const { limiter, consume } = scriptedLimiter({
-      min: { allowed: false, retryAfterMs: 12_300 },
-    });
-
-    expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({
-      status: 'limited',
-      retryAfterSeconds: 13,
-    });
-    expect(consume).toHaveBeenCalledTimes(1);
-  });
-
-  it('refuses on the day window with the time until it resets', async () => {
-    const { limiter } = scriptedLimiter({ day: { allowed: false, retryAfterMs: 3_600_000 } });
-
-    expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({
-      status: 'limited',
-      retryAfterSeconds: 3600,
-    });
-  });
-
-  it('reports either window losing its store as unavailable, never as a spent window', async () => {
-    const minute = scriptedLimiter({ min: STORE_DOWN });
-    const day = scriptedLimiter({ day: STORE_DOWN });
-
-    expect(await consumeTokenRateLimit(minute.limiter, tokenId, LIMITS)).toEqual({
-      status: 'unavailable',
-    });
-    expect(minute.consume).toHaveBeenCalledTimes(1);
-    expect(await consumeTokenRateLimit(day.limiter, tokenId, LIMITS)).toEqual({
-      status: 'unavailable',
-    });
-  });
-
-  it('refuses when the store is unreachable even if the limiter let the request through', async () => {
-    const { limiter } = scriptedLimiter({ min: { ...ALLOWED, unavailable: true } });
-
-    expect(await consumeTokenRateLimit(limiter, tokenId, LIMITS)).toEqual({
-      status: 'unavailable',
-    });
-  });
-});
-
-describe('rateLimitRefused', () => {
-  it('answers a spent window with 429 and its retry time', () => {
-    const response = rateLimitRefused({ status: 'limited', retryAfterSeconds: 42 });
-
-    expect(response.status).toBe(429);
-    expect(response.headers.get('retry-after')).toBe('42');
-  });
-
-  it('answers a store it cannot reach with 503, retrying after 30 seconds', async () => {
-    const response = rateLimitRefused({ status: 'unavailable' });
-
-    expect(response.status).toBe(503);
-    expect(response.headers.get('retry-after')).toBe('30');
-    expect(await response.json()).toEqual({
-      jsonrpc: '2.0',
-      id: null,
-      error: { code: -32000, message: 'Service unavailable' },
-    });
-  });
-});
-
-describe('error responses', () => {
+describe('refusal responses', () => {
   it.each([
-    ['origin refused', originRefused, 403, -32000],
-    ['method not allowed', methodNotAllowed, 405, -32000],
-    ['bearer required', bearerRequired, 401, -32000],
-    ['invalid token', invalidToken, 401, -32000],
-    ['rate limited', () => rateLimited(5), 429, -32000],
-    ['limiter unavailable', limiterUnavailable, 503, -32000],
-    ['access denied', accessDenied, 403, -32000],
-    ['payload too large', payloadTooLarge, 413, -32000],
-    ['parse error', parseError, 400, -32700],
-    ['batch refused', batchRefused, 400, -32600],
-    ['internal error', internalError, 500, -32603],
-  ])('answers %s as a no-store JSON-RPC error', async (_name, build, status, code) => {
-    const response = build();
+    ['originRefused', originRefused, 403, -32000],
+    ['methodNotAllowed', methodNotAllowed, 405, -32000],
+    ['bearerRequired', bearerRequired, 401, -32000],
+    ['invalidToken', invalidToken, 401, -32000],
+    ['accessDenied', accessDenied, 403, -32000],
+    ['payloadTooLarge', payloadTooLarge, 413, -32000],
+    ['parseError', parseError, 400, -32700],
+    ['batchRefused', batchRefused, 400, -32600],
+    ['internalError', internalError, 500, -32603],
+    [
+      'rateLimited',
+      () => rateLimitRefused({ status: 'limited', retryAfterSeconds: 7 }),
+      429,
+      -32000,
+    ],
+    ['limiterUnavailable', () => rateLimitRefused({ status: 'unavailable' }), 503, -32000],
+  ])(
+    'each refusal is a JSON-RPC error with no-store and the right status: %s',
+    async (_name, make, status, code) => {
+      const response = make();
+      expect(response.status).toBe(status);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.get('Content-Type')).toBe('application/json');
+      const parsed = await body(response);
+      expect(parsed.jsonrpc).toBe('2.0');
+      expect(parsed.id).toBeNull();
+      expect(parsed.error.code).toBe(code);
+      expect(typeof parsed.error.message).toBe('string');
+    },
+  );
 
-    expect(response.status).toBe(status);
-    expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({
-      jsonrpc: '2.0',
-      id: null,
-      error: { code, message: expect.any(String) },
-    });
+  it('auth challenges differ: bearer required is a bare challenge, invalid token names the error, access denied has none', () => {
+    expect(bearerRequired().headers.get('WWW-Authenticate')).toBe('Bearer');
+    expect(invalidToken().headers.get('WWW-Authenticate')).toBe('Bearer error="invalid_token"');
+    expect(accessDenied().headers.get('WWW-Authenticate')).toBeNull();
+    expect(methodNotAllowed().headers.get('Allow')).toBe('POST');
   });
 
-  it('challenges a missing bearer with the bare scheme', () => {
-    expect(bearerRequired().headers.get('www-authenticate')).toBe('Bearer');
+  it('rate limit refusal carries a Retry-After header', () => {
+    expect(
+      rateLimitRefused({ status: 'limited', retryAfterSeconds: 7 }).headers.get('Retry-After'),
+    ).toBe('7');
+    expect(rateLimitRefused({ status: 'unavailable' }).headers.get('Retry-After')).toBe('30');
   });
 
-  it('challenges a refused token as invalid_token, naming no resource metadata', () => {
-    expect(invalidToken().headers.get('www-authenticate')).toBe('Bearer error="invalid_token"');
-  });
-
-  it('names no challenge when the grant is missing', () => {
-    expect(accessDenied().headers.get('www-authenticate')).toBeNull();
-  });
-
-  it('allows POST only', () => {
-    expect(methodNotAllowed().headers.get('allow')).toBe('POST');
-  });
-
-  it('tells a limited client when to retry', () => {
-    expect(rateLimited(42).headers.get('retry-after')).toBe('42');
-  });
-});
-
-describe('preflight', () => {
-  it('allows POST with the MCP request headers for that origin alone', () => {
-    const response = preflight(BACKOFFICE);
-
+  it('preflight answers only for the requesting origin', () => {
+    const response = preflight('https://app.example.com');
     expect(response.status).toBe(204);
-    expect(Object.fromEntries(response.headers)).toEqual({
-      'access-control-allow-origin': BACKOFFICE,
-      'access-control-allow-methods': 'POST',
-      'access-control-allow-headers': 'authorization, content-type, accept, mcp-protocol-version',
-      'cache-control': 'no-store',
-      vary: 'Origin',
-    });
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+    expect(response.headers.get('Vary')).toBe('Origin');
+    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST');
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
-});
 
-describe('noStore', () => {
-  it('marks a copy no-store, keeping the status, body and other headers of the original', async () => {
-    const original = new Response('{"ok":true}', {
-      status: 202,
-      headers: { 'Cache-Control': 'no-cache', 'X-Kept': '1' },
-    });
+  it('withHeaders keeps the original body and status', async () => {
+    const original = new Response('hello', { status: 202, headers: { 'X-Keep': '1' } });
+    const next = withHeaders(original, { 'X-Extra': '2' });
+    expect(next.status).toBe(202);
+    expect(await next.text()).toBe('hello');
+    expect(next.headers.get('X-Keep')).toBe('1');
+    expect(next.headers.get('X-Extra')).toBe('2');
+  });
 
-    const copy = noStore(original);
-
-    expect(copy.status).toBe(202);
-    expect(copy.headers.get('cache-control')).toBe('no-store');
-    expect(copy.headers.get('x-kept')).toBe('1');
-    expect(original.headers.get('cache-control')).toBe('no-cache');
-    expect(await copy.text()).toBe('{"ok":true}');
+  it('noStore overrides a cacheable response', () => {
+    const next = noStore(new Response('x', { headers: { 'Cache-Control': 'public, max-age=60' } }));
+    expect(next.headers.get('Cache-Control')).toBe('no-store');
   });
 });

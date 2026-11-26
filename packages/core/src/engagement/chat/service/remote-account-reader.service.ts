@@ -12,7 +12,7 @@ import {
 import { mapConcurrent, TtlCache, type InternalClient } from '@openora/core/server';
 
 // How stale a role, status or exclusion may be on a read that does not ask for `fresh`.
-export const ACCOUNT_CACHE_TTL_MS = 30_000;
+const ACCOUNT_CACHE_TTL_MS = 30_000;
 const ACCOUNT_CACHE_MAX_ENTRIES = 10_000;
 // Batches of one big read in flight at once, so a large roster does not queue them one by one.
 const BATCH_CONCURRENCY = 4;

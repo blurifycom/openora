@@ -10,9 +10,6 @@ const INFRA_HINT = 'integration tests need redis - run `docker compose up -d`';
  *
  * This tier's 8 are split per worker, because the counter below is module state: every
  * worker would otherwise start at 15 and flush a database another worker was using.
- * `wallet-ledger-auto-withdrawal.e2e.test.ts` keeps three apps alive at once, so a
- * worker needs at least that many - which, on a default 16-database Redis, is what caps
- * `maxWorkers` at 2 in vitest.config.ts. Raising one without the other collides.
  */
 const HIGHEST_DATABASE = 15;
 const LOWEST_DATABASE = 8;

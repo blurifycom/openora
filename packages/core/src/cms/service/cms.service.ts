@@ -11,7 +11,13 @@ import {
   invalidate,
   withAdvisoryXactLock,
 } from '@openora/core/server';
-import type { CacheAdapter, ClientMeta, User, Uuid } from '@openora/core/contracts';
+import type {
+  BannerImageCountBoundsOverrides,
+  CacheAdapter,
+  ClientMeta,
+  User,
+  Uuid,
+} from '@openora/core/contracts';
 import { eq, ne, and, or, asc, desc, isNotNull, inArray, sql, gt, lt, gte, lte } from 'drizzle-orm';
 import {
   page as pageTable,
@@ -78,6 +84,8 @@ const pageCacheKey = (slug: string) => `cms:page:${slug}`;
 const publicBannerCacheEpochKey = (placement: string) => `cms:banner-placement:${placement}:epoch`;
 const publicBannerCacheKey = (placement: string, epoch: string, locale: string) =>
   `cms:banner-placement:${placement}:${epoch}:${locale}`;
+const bannerConfigurationCreateLockKey = (placement: string) =>
+  `cms:banner-configuration-create:${placement}`;
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
 const bannerConfigurationMutationLockKey = (bannerConfigurationId: Uuid) =>
   `cms:banner-configuration:${bannerConfigurationId}`;
@@ -173,6 +181,8 @@ function toBannerImage(record: {
   };
 }
 
+type ImageCountBounds = { min: number; max: number };
+
 function toBannerConfiguration(
   record: {
     id: string;
@@ -183,6 +193,7 @@ function toBannerConfiguration(
     createdAt: Date;
   },
   images: ReturnType<typeof toBannerImage>[],
+  imageCountBounds: ImageCountBounds,
 ) {
   return {
     id: record.id,
@@ -191,6 +202,7 @@ function toBannerConfiguration(
     isDefault: record.isDefault,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
+    imageCountBounds,
     images,
   };
 }
@@ -205,6 +217,7 @@ function toBannerConfigurationSummary(
     createdAt: Date;
   },
   imageCount: number,
+  imageCountBounds: ImageCountBounds,
 ) {
   return {
     id: record.id,
@@ -213,6 +226,7 @@ function toBannerConfigurationSummary(
     isDefault: record.isDefault,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
+    imageCountBounds,
     imageCount,
   };
 }
@@ -241,6 +255,7 @@ export class CmsService {
     private readonly events: EventBus,
     private readonly cache?: CacheAdapter,
     private readonly allowedBannerImageHosts: readonly string[] = [],
+    private readonly bannerImageCountBounds: BannerImageCountBoundsOverrides = {},
   ) {}
 
   // Public routes (no adminGuard, HTTP-cacheable) - published-only. There is no
@@ -460,6 +475,7 @@ export class CmsService {
           defaultConfiguration: toBannerConfiguration(
             defaultRow,
             (imagesByConfig.get(defaultRow.id) ?? []).map(toBannerImage),
+            this.imageCountBounds(defaultRow),
           ),
           updatedAt: defaultRow.updatedAt.toISOString(),
         };
@@ -495,7 +511,11 @@ export class CmsService {
     const countByConfig = new Map(counts.map((c) => [c.bannerConfigurationId, c.count]));
 
     return configs.map((record) =>
-      toBannerConfigurationSummary(record, countByConfig.get(record.id) ?? 0),
+      toBannerConfigurationSummary(
+        record,
+        countByConfig.get(record.id) ?? 0,
+        this.imageCountBounds(record),
+      ),
     );
   }
 
@@ -512,33 +532,61 @@ export class CmsService {
       .from(bannerImageTable)
       .where(eq(bannerImageTable.bannerConfigurationId, id))
       .orderBy(asc(bannerImageTable.sortOrder));
-    return toBannerConfiguration(record, images.map(toBannerImage));
+    return toBannerConfiguration(record, images.map(toBannerImage), this.imageCountBounds(record));
   }
 
   async createConfiguration(
-    input: { placement: string; layout: BannerLayout },
+    input: { placement: string; layout: BannerLayout; reuseExisting?: boolean },
     actorId: User['id'],
     meta?: ClientMeta,
   ) {
-    const record = findOneOrThrow(
-      await this.drizzle.db
-        .insert(bannerConfigurationTable)
-        .values({
-          placement: input.placement,
-          layout: input.layout,
-          isDefault: false,
-          createdBy: actorId,
-        })
-        .returning(),
-      new BannerConfigurationNotFoundError(input.placement),
+    const { record, images, created } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, bannerConfigurationCreateLockKey(input.placement), async () => {
+        if (input.reuseExisting) {
+          // The default configuration, else the newest, returned as it is whatever its layout.
+          const [existing] = await tx
+            .select()
+            .from(bannerConfigurationTable)
+            .where(eq(bannerConfigurationTable.placement, input.placement))
+            .orderBy(
+              desc(bannerConfigurationTable.isDefault),
+              desc(bannerConfigurationTable.createdAt),
+              desc(bannerConfigurationTable.id),
+            )
+            .limit(1);
+          if (existing) {
+            const existingImages = await tx
+              .select()
+              .from(bannerImageTable)
+              .where(eq(bannerImageTable.bannerConfigurationId, existing.id))
+              .orderBy(asc(bannerImageTable.sortOrder));
+            return { record: existing, images: existingImages.map(toBannerImage), created: false };
+          }
+        }
+        const inserted = findOneOrThrow(
+          await tx
+            .insert(bannerConfigurationTable)
+            .values({
+              placement: input.placement,
+              layout: input.layout,
+              isDefault: false,
+              createdBy: actorId,
+            })
+            .returning(),
+          new BannerConfigurationNotFoundError(input.placement),
+        );
+        return { record: inserted, images: [], created: true };
+      }),
     );
-    this.events.emit('cms.banner.configuration.created', {
-      bannerConfigurationId: record.id,
-      actorId,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent ?? null,
-    });
-    return toBannerConfiguration(record, []);
+    if (created) {
+      this.events.emit('cms.banner.configuration.created', {
+        bannerConfigurationId: record.id,
+        actorId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    return toBannerConfiguration(record, images, this.imageCountBounds(record));
   }
 
   async deleteConfiguration(
@@ -1163,6 +1211,7 @@ export class CmsService {
       configuration: toBannerConfigurationSummary(
         r.configuration,
         countByConfig.get(r.configuration.id) ?? 0,
+        this.imageCountBounds(r.configuration),
       ),
     }));
   }
@@ -1197,9 +1246,17 @@ export class CmsService {
     }
   }
 
+  /** The placement's override for the layout, else the layout default. */
+  private imageCountBounds(configuration: { placement: string; layout: BannerLayout }) {
+    return (
+      this.bannerImageCountBounds[configuration.placement]?.[configuration.layout] ??
+      BANNER_IMAGE_COUNT_BOUNDS[configuration.layout]
+    );
+  }
+
   private async assertBannerConfigurationImageCount(
     tx: DrizzleTx,
-    configuration: { id: Uuid; layout: BannerLayout },
+    configuration: { id: Uuid; placement: string; layout: BannerLayout },
   ) {
     // Slot count is measured against base-locale rows only: locale overrides replace
     // a slot rather than adding a publishable slot.
@@ -1213,7 +1270,7 @@ export class CmsService {
         ),
       );
     const slotCount = new Set(slotRows.map((row) => row.sortOrder)).size;
-    const bounds = BANNER_IMAGE_COUNT_BOUNDS[configuration.layout];
+    const bounds = this.imageCountBounds(configuration);
     if (slotCount < bounds.min || slotCount > bounds.max) {
       throw new BannerConfigurationImageCountError(
         configuration.layout,
@@ -1246,7 +1303,11 @@ export class CmsService {
       return {
         placement,
         defaultConfigurationId: defaultRow.id,
-        defaultConfiguration: toBannerConfiguration(defaultRow, images.map(toBannerImage)),
+        defaultConfiguration: toBannerConfiguration(
+          defaultRow,
+          images.map(toBannerImage),
+          this.imageCountBounds(defaultRow),
+        ),
         updatedAt: defaultRow.updatedAt.toISOString(),
       };
     }

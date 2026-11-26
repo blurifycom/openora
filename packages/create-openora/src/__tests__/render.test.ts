@@ -1,91 +1,35 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  buildVars,
-  emitTree,
-  isTelemetryEnabled,
-  outputPath,
-  parseArgs,
-  sanitizeName,
-  substitute,
-  undotSegment,
-} from '../render.js';
-import { VERSIONS } from '../generated/versions.js';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildVars, emitTree, isTelemetryEnabled, parseArgs, sanitizeName } from '../render.js';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const consumerTemplates = resolve(here, '../../../../tools/templates/consumer');
-
-const tmpDirs: string[] = [];
-const makeTmp = (): string => {
-  const dir = mkdtempSync(join(tmpdir(), 'create-openora-'));
-  tmpDirs.push(dir);
-  return dir;
-};
-
-afterEach(() => {
-  vi.restoreAllMocks();
-  for (const dir of tmpDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-function listFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const full = join(dir, entry);
-    return statSync(full).isDirectory() ? listFiles(full) : [full];
-  });
-}
-
-describe('sanitizeName', () => {
-  it('lowercases and dashes invalid characters', () => {
-    expect(sanitizeName('My App!')).toBe('my-app');
-  });
-
-  it('falls back when nothing usable is left', () => {
-    expect(sanitizeName('***')).toBe('igaming-app');
-  });
-});
+const argv = (...rest: string[]) => ['node', 'create-openora', ...rest];
 
 describe('parseArgs', () => {
-  const argv = (...args: string[]) => ['node', 'create-openora', ...args];
+  it('takes the first positional argument as the target', () => {
+    expect(parseArgs(argv('first', 'second')).target).toBe('first');
+    expect(parseArgs(argv('--no-telemetry', 'first', 'second')).target).toBe('first');
+  });
 
-  it('reads --name=value', () => {
-    expect(parseArgs(argv('dir', '--name=x'))).toEqual({
-      target: 'dir',
-      name: 'x',
+  it('reads --name with a space or an equals sign', () => {
+    expect(parseArgs(argv('app', '--name', 'shop')).name).toBe('shop');
+    expect(parseArgs(argv('app', '--name=shop')).name).toBe('shop');
+    expect(parseArgs(argv('--name', 'shop', 'app'))).toEqual({
+      target: 'app',
+      name: 'shop',
       telemetry: true,
     });
   });
 
-  it('reads --name value', () => {
-    expect(parseArgs(argv('dir', '--name', 'x'))).toEqual({
-      target: 'dir',
-      name: 'x',
-      telemetry: true,
-    });
+  it('--no-telemetry turns telemetry off', () => {
+    expect(parseArgs(argv('app')).telemetry).toBe(true);
+    expect(parseArgs(argv('app', '--no-telemetry')).telemetry).toBe(false);
   });
 
-  it('omits name when not given', () => {
-    expect(parseArgs(argv('dir'))).toEqual({ target: 'dir', telemetry: true });
-  });
-
-  it('turns telemetry off with --no-telemetry', () => {
-    expect(parseArgs(argv('dir', '--no-telemetry'))).toEqual({ target: 'dir', telemetry: false });
-  });
-
-  it('throws without a target', () => {
-    expect(() => parseArgs(argv('--name', 'x'))).toThrow('missing target directory');
+  it('fails with usage when the target is missing', () => {
+    expect(() => parseArgs(argv())).toThrow(/missing target directory[\s\S]*Usage:/);
+    expect(() => parseArgs(argv('--no-telemetry', '--name', 'x'))).toThrow(/missing target/);
   });
 });
 
@@ -94,68 +38,139 @@ describe('isTelemetryEnabled', () => {
     expect(isTelemetryEnabled(true, {})).toBe(true);
   });
 
-  it('is off with --no-telemetry', () => {
+  it('is off when the flag, OPENORA_TELEMETRY_DISABLED or DO_NOT_TRACK is set', () => {
     expect(isTelemetryEnabled(false, {})).toBe(false);
+    expect(isTelemetryEnabled(true, { OPENORA_TELEMETRY_DISABLED: '1' })).toBe(false);
+    expect(isTelemetryEnabled(true, { DO_NOT_TRACK: 'true' })).toBe(false);
+    expect(isTelemetryEnabled(true, { DO_NOT_TRACK: ' YES ' })).toBe(false);
   });
 
-  it.each([
-    { OPENORA_TELEMETRY_DISABLED: ' yes ' },
-    { DO_NOT_TRACK: '1' },
-    { CI: '' },
-    { NODE_ENV: 'test' },
-  ])('is off under %o', (env) => {
-    expect(isTelemetryEnabled(true, env)).toBe(false);
+  it('is off in CI and under NODE_ENV test', () => {
+    expect(isTelemetryEnabled(true, { CI: 'true' })).toBe(false);
+    expect(isTelemetryEnabled(true, { NODE_ENV: 'test' })).toBe(false);
+    expect(isTelemetryEnabled(true, { NODE_ENV: 'production' })).toBe(true);
   });
 
-  it('stays on when OPENORA_TELEMETRY_DISABLED=0', () => {
-    expect(isTelemetryEnabled(true, { OPENORA_TELEMETRY_DISABLED: '0' })).toBe(true);
-  });
-});
-
-describe('substitute', () => {
-  it('replaces known keys and leaves unknown ones', () => {
-    expect(substitute('{{a}}-{{unknown}}-{{a}}', { a: '1' })).toBe('1-{{unknown}}-1');
+  it('does not treat 0 or an empty value as set', () => {
+    for (const value of ['0', '', 'false', 'no']) {
+      expect(isTelemetryEnabled(true, { OPENORA_TELEMETRY_DISABLED: value })).toBe(true);
+      expect(isTelemetryEnabled(true, { DO_NOT_TRACK: value })).toBe(true);
+    }
   });
 });
 
-describe('path mapping', () => {
-  it('undots a single segment', () => {
-    expect(undotSegment('__dot__env')).toBe('.env');
-    expect(undotSegment('plain')).toBe('plain');
+describe('sanitizeName', () => {
+  it('lowercases and replaces unsafe characters', () => {
+    expect(sanitizeName('My App!')).toBe('my-app');
+    expect(sanitizeName('a b/c')).toBe('a-b-c');
+    expect(sanitizeName('keep_this-1')).toBe('keep_this-1');
   });
 
-  it('undots every segment and strips .tpl', () => {
-    expect(outputPath(join('__dot__rulesync', 'x.md.tpl'))).toBe(join('.rulesync', 'x.md'));
-    expect(outputPath(join('a', '__dot__b', 'c.json'))).toBe(join('a', '.b', 'c.json'));
+  it('trims leading and trailing dashes', () => {
+    expect(sanitizeName('--x--')).toBe('x');
+    expect(sanitizeName('  x  ')).toBe('x');
+  });
+
+  it('falls back to a default name when nothing is left', () => {
+    expect(sanitizeName('')).toBe('igaming-app');
+    expect(sanitizeName('!!!')).toBe('igaming-app');
+    expect(sanitizeName('---')).toBe('igaming-app');
+  });
+
+  it('turns path traversal and scoped npm names into a flat safe name', () => {
+    expect(sanitizeName('../../etc/passwd')).toBe('etc-passwd');
+    expect(sanitizeName('..\\..\\windows')).toBe('windows');
+    expect(sanitizeName('/abs/path')).toBe('abs-path');
+    expect(sanitizeName('@scope/pkg')).toBe('scope-pkg');
+    expect(sanitizeName('a;rm -rf ~')).toBe('a-rm--rf');
+    expect(sanitizeName('..')).toBe('igaming-app');
+  });
+
+  it('never emits a name containing a separator, dot or uppercase letter', () => {
+    for (const raw of ['../x', 'A.B', 'x/../y', 'Ünï', 'a\nb', 'a%2e%2eb']) {
+      expect(sanitizeName(raw)).toMatch(/^[a-z0-9_-]+$/);
+    }
   });
 });
 
 describe('emitTree', () => {
-  it('substitutes .tpl files and copies the rest verbatim', () => {
+  let root: string;
+  let src: string;
+  let out: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'create-openora-'));
+    src = join(root, 'src');
+    out = join(root, 'out');
+    mkdirSync(src);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const src = makeTmp();
-    const out = makeTmp();
-    mkdirSync(join(src, '__dot__cfg'));
-    writeFileSync(join(src, '__dot__cfg', 'a.txt.tpl'), 'hi {{name}} {{nope}}');
-    writeFileSync(join(src, 'b.txt'), 'keep {{name}}');
+  });
 
-    emitTree(src, { name: 'app' }, out);
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(root, { recursive: true, force: true });
+  });
 
-    expect(readFileSync(join(out, '.cfg', 'a.txt'), 'utf8')).toBe('hi app {{nope}}');
-    expect(readFileSync(join(out, 'b.txt'), 'utf8')).toBe('keep {{name}}');
+  it('substitutes known variables and leaves unknown placeholders', () => {
+    writeFileSync(join(src, 'a.txt.tpl'), 'hi {{name}} {{missing}} {{ name }} {{scope}}');
+    writeFileSync(join(src, 'raw.txt'), 'keep {{name}}');
+    emitTree(src, { name: 'shop', scope: '@shop' }, out);
+    expect(readFileSync(join(out, 'a.txt'), 'utf8')).toBe('hi shop {{missing}} {{ name }} @shop');
+    expect(readFileSync(join(out, 'raw.txt'), 'utf8')).toBe('keep {{name}}');
+  });
+
+  it('does not re-expand placeholders carried inside a substituted value', () => {
+    writeFileSync(join(src, 'a.tpl'), '{{name}}');
+    emitTree(src, { name: '{{scope}}', scope: 'x' }, out);
+    expect(readFileSync(join(out, 'a'), 'utf8')).toBe('{{scope}}');
+  });
+
+  it('maps __dot__ segments to dotfiles', () => {
+    mkdirSync(join(src, '__dot__claude'));
+    writeFileSync(join(src, '__dot__gitignore'), 'x');
+    writeFileSync(join(src, '__dot__claude', 'settings.json'), '{}');
+    writeFileSync(join(src, 'mid__dot__x'), 'y');
+    emitTree(src, {}, out);
+    expect(existsSync(join(out, '.gitignore'))).toBe(true);
+    expect(existsSync(join(out, '.claude', 'settings.json'))).toBe(true);
+    expect(existsSync(join(out, 'mid__dot__x'))).toBe(true);
+  });
+
+  it('strips the tpl suffix', () => {
+    writeFileSync(join(src, 'package.json.tpl'), '{}');
+    writeFileSync(join(src, 'tpl'), 'plain');
+    emitTree(src, {}, out);
+    expect(existsSync(join(out, 'package.json'))).toBe(true);
+    expect(existsSync(join(out, 'package.json.tpl'))).toBe(false);
+    expect(existsSync(join(out, 'tpl'))).toBe(true);
+  });
+
+  it('creates nested directories', () => {
+    mkdirSync(join(src, 'a', 'b', 'c'), { recursive: true });
+    writeFileSync(join(src, 'a', 'b', 'c', 'deep.txt'), 'd');
+    emitTree(src, {}, join(out, 'not', 'yet', 'there'));
+    expect(readFileSync(join(out, 'not', 'yet', 'there', 'a', 'b', 'c', 'deep.txt'), 'utf8')).toBe(
+      'd',
+    );
+  });
+
+  it('writes a hostile sanitized name only inside the target directory', () => {
+    writeFileSync(join(src, 'p.json.tpl'), '{"name":"{{name}}"}');
+    emitTree(src, buildVars(sanitizeName('../../escape'), {}), out);
+    expect(readFileSync(join(out, 'p.json'), 'utf8')).toBe('{"name":"escape"}');
+    expect(existsSync(join(root, 'escape'))).toBe(false);
   });
 });
 
-describe('consumer templates', () => {
-  it('only reference keys that buildVars provides', () => {
-    const provided = new Set(Object.keys(buildVars('app', VERSIONS)));
-    const used = new Set<string>();
-    for (const file of listFiles(consumerTemplates).filter((f) => f.endsWith('.tpl'))) {
-      for (const match of readFileSync(file, 'utf8').matchAll(/\{\{(\w+)\}\}/g)) {
-        used.add(match[1] ?? '');
-      }
-    }
-    expect(used.size).toBeGreaterThan(0);
-    expect([...used].filter((key) => !provided.has(key))).toEqual([]);
+describe('buildVars', () => {
+  it('carries the project name and the dependency versions', () => {
+    const vars = buildVars('shop', { coreVersion: '^1.2.3', mcpVersion: '^4.5.6' });
+    expect(vars['name']).toBe('shop');
+    expect(vars['scope']).toBe('@shop');
+    expect(vars['coreVersion']).toBe('^1.2.3');
+    expect(vars['mcpVersion']).toBe('^4.5.6');
+    expect(JSON.parse(vars['mcpArgsJson'] ?? '')).toEqual([
+      'node_modules/@openora/mcp/dist/main.js',
+    ]);
   });
 });

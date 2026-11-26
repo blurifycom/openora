@@ -76,6 +76,10 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
 
     createBannerConfiguration: os.createBannerConfiguration.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'content', 'create');
+      if (input.reuseExisting) {
+        // The reused configuration comes back with its images, which reads gate on update.
+        await adminGuard.assert(context, 'content', 'update');
+      }
       return cms.createConfiguration(input, userId, { ip, userAgent });
     }),
 

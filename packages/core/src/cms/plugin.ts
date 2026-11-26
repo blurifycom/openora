@@ -16,6 +16,7 @@ export default {
           c.get(EVENT_BUS),
           c.get(CACHE),
           c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).cms.allowedBannerImageHosts : [],
+          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).cms.bannerImageCountBounds : {},
         ),
         c.get(ADMIN_GUARD),
       ),

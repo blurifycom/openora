@@ -1,21 +1,37 @@
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
-import { EXCHANGE_RATE_READER, JOB_QUEUE, PLATFORM_CONFIG } from '@openora/core/contracts';
+import { describe, expect, it } from 'vitest';
+import {
+  definePlatformConfig,
+  EXCHANGE_RATE_READER,
+  JOB_QUEUE,
+  PLATFORM_CONFIG,
+  type JobQueueAdapter,
+} from '@openora/core/contracts';
 import { Container, loadPlugins } from '@openora/core/server';
-import { mock } from '../../../testing/mock.js';
 
 const path = fileURLToPath(new URL('../plugin.ts', import.meta.url));
 
-// Runs the router factory the way createApp does, and reports the schedules it upserted.
 async function schedulesUpserted(noRoutes: boolean) {
   const container = new Container();
   const registry = await loadPlugins([{ id: 'exchange-rate', path, noRoutes }], container);
-  const schedule = vi.fn(async () => {});
-  container.register(JOB_QUEUE, () => mock({ schedule }));
-  container.register(PLATFORM_CONFIG, () => mock({}));
-  container.register(EXCHANGE_RATE_READER, () => mock({}));
+  const scheduled: string[] = [];
+  const jobQueue: JobQueueAdapter = {
+    enqueue: async () => ({ id: 'job' }),
+    schedule: async (_queue, scheduleId) => {
+      scheduled.push(scheduleId);
+    },
+    unschedule: async () => {},
+    registerWorker: () => {},
+    close: async () => {},
+  };
+  container.register(JOB_QUEUE, () => jobQueue);
+  container.register(PLATFORM_CONFIG, () => definePlatformConfig({}));
+  container.register(EXCHANGE_RATE_READER, () => ({
+    getRate: async () => null,
+    convert: async () => null,
+  }));
   registry.routers.getAll().get('exchangeRate')?.(container as never);
-  return schedule.mock.calls.map((call: unknown[]) => call[1]);
+  return scheduled;
 }
 
 describe('exchange-rate warm-up schedule', () => {

@@ -27,12 +27,11 @@ An `[oss]` file group (files in an OSS worktree under `{{ossDir}}/.worktrees/`) 
 
 ## Focus
 
-`risk` (the default roster): also read `compliance-reviewer.md` next to this file IN FULL, follow its reading map, and run its checklist; you own `security` and `compliance` and return both `DIMENSION:` lines. `confirm` mode then needs zero hits in both domains.
+`risk` (the default roster): also read `compliance-reviewer.md` next to this file IN FULL, follow its reading map, and run its checklist; you own `security` and `compliance` and return both `DIMENSION:` lines.
 
 ## Mode
 
-- `confirm` (the precheck found no security keyword in the change, and `RISK:` is `low` or `medium`): within 5 tool calls, skim the reviewable files for anything the keyword list could miss - a route, a guard, a secret, input reaching a query or the DOM. Nothing: `DIMENSION: security - n/a - <what you checked>`. Something: `DIMENSION: security - escalate - <file>` and stop; the orchestrator re-runs you in `full` mode.
-- `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines.
+Always `full`: the whole checklist below, starting from the `DOMAIN-HIT:` lines. The precheck's `ROSTER:` already decided you are needed.
 
 ## Budget and handoff
 
@@ -83,4 +82,4 @@ Outside focus `risk`, money paths, ledger integrity, and regulated gates belong 
 
 ## Output
 
-Max 10 findings, most severe first. Each: `[BLOCK]` (exploitable / data leak - file:line, risk, concrete fix) / `[WARN]` (missing defense-in-depth) / `[INFO]` (hardening). Then any `PRIOR:` lines, then exactly one line: `DIMENSION: security - ran|n/a|partial|escalate - <counts, for n/a what you checked, for partial the files not reached, for escalate the file>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.
+Max 10 findings, most severe first. Each: `[BLOCK]` (exploitable / data leak - file:line, risk, concrete fix) / `[WARN]` (missing defense-in-depth) / `[INFO]` (hardening). Then any `PRIOR:` lines, then exactly one line: `DIMENSION: security - ran|n/a|partial - <counts, for n/a what you checked, for partial the files not reached>`. End with **PASS** / **CHANGES REQUESTED** + one line on the most severe finding.

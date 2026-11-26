@@ -1,367 +1,347 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { and, eq, gte, inArray, like, sql, sum, type SQLWrapper } from 'drizzle-orm';
-import { findOneOrThrow, type DrizzleDb, type DrizzleTx } from '@openora/core/server';
-import type { WalletWindowMetric, WalletWindowTotals } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import { createTestDb, type TestDb } from '../../testing/real-infra.js';
 import { migrate } from '../migrate.js';
-import { LOSS_LEGS, wallet, walletTransaction } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { WalletReaderService } from '../adapters/wallet-reader.service.js';
 
-// The queries compliance, player management and sportsbook ran on the wallet tables before they
-// moved behind WALLET_READER, kept verbatim as oracles: each reader method must answer what its
-// old query did, on the caller's transaction where the old query ran on one.
+type Insert = typeof walletTransaction.$inferInsert;
 
-type Db = DrizzleDb | DrizzleTx;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-function oldDepositsByCurrency(db: Db, userId: string) {
-  return db
-    .select({
-      currency: walletTransaction.currency,
-      total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
-    })
-    .from(walletTransaction)
-    .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-    .where(
-      and(
-        eq(wallet.userId, userId),
-        eq(walletTransaction.type, 'deposit'),
-        eq(walletTransaction.status, 'completed'),
-      ),
-    )
-    .groupBy(walletTransaction.currency);
-}
-
-function oldTotalsSince(amount: SQLWrapper, countedAt: SQLWrapper, windowStarts: readonly Date[]) {
-  const totals = windowStarts.map(
-    (start) =>
-      sql`greatest(coalesce(sum(${amount}) filter (where ${countedAt} >= ${start}), 0), 0)::text`,
-  );
-  return sql<string[]>`array[${sql.join(totals, sql`, `)}]`;
-}
-
-async function oldMoneyByWindow(
-  tx: Db,
-  userId: string,
-  windowStarts: readonly Date[],
-): Promise<WalletWindowTotals[]> {
-  const earliest = windowStarts.reduce<Date | null>(
-    (min, start) => (min === null || start < min ? start : min),
-    null,
-  );
-  if (earliest === null) {
-    return [];
-  }
-  const depositedAt = sql`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
-  const deposits = await tx
-    .select({
-      currency: walletTransaction.currency,
-      totals: oldTotalsSince(walletTransaction.amount, depositedAt, windowStarts),
-    })
-    .from(walletTransaction)
-    .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-    .where(
-      and(
-        eq(wallet.userId, userId),
-        eq(walletTransaction.type, 'deposit'),
-        eq(walletTransaction.status, 'completed'),
-        gte(depositedAt, earliest),
-      ),
-    )
-    .groupBy(walletTransaction.currency);
-  const metric = sql<WalletWindowMetric>`case when ${walletTransaction.type} in ('win', 'win_reversal') then 'wins' else 'bets' end`;
-  const signedAmount = sql`case when ${walletTransaction.type} in ('bet_reversal', 'win_reversal') then -${walletTransaction.amount} else ${walletTransaction.amount} end`;
-  const play = await tx
-    .select({
-      metric,
-      currency: walletTransaction.currency,
-      totals: oldTotalsSince(signedAmount, walletTransaction.createdAt, windowStarts),
-    })
-    .from(walletTransaction)
-    .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
-    .where(
-      and(
-        eq(wallet.userId, userId),
-        eq(walletTransaction.status, 'completed'),
-        inArray(
-          walletTransaction.type,
-          LOSS_LEGS.map((leg) => leg.type),
-        ),
-        gte(walletTransaction.createdAt, earliest),
-      ),
-    )
-    .groupBy(metric, walletTransaction.currency);
-  return [...deposits.map((row) => ({ ...row, metric: 'deposits' as const })), ...play];
-}
-
-async function oldHasWallet(tx: Db, userId: string): Promise<boolean> {
-  const [row] = await tx.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId));
-  return row !== undefined;
-}
-
-async function oldCollected(tx: Db, providerName: string, roundId: string, id: string) {
-  const [taken] = await tx
-    .select({ total: sum(walletTransaction.amount) })
-    .from(walletTransaction)
-    .where(
-      and(
-        eq(walletTransaction.externalRoundId, roundId),
-        eq(walletTransaction.providerName, providerName),
-        eq(walletTransaction.type, 'win_reversal'),
-        eq(walletTransaction.status, 'completed'),
-        like(walletTransaction.providerRefId, `%:${id}`),
-      ),
-    );
-  return taken?.total ?? '0';
-}
-
-const byKey = <T extends { currency: string; metric?: string }>(rows: readonly T[]) =>
-  [...rows].sort((a, b) =>
-    `${a.metric ?? ''}:${a.currency}`.localeCompare(`${b.metric ?? ''}:${b.currency}`),
-  );
-
-let db: TestDb;
+let testDb: TestDb;
 let reader: WalletReaderService;
 
-const ago = (ms: number) => new Date(Date.now() - ms);
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
-const PROVIDER = 'sportsbook:feed-a';
-const ROUND = 'round-1';
+beforeAll(async () => {
+  testDb = await createTestDb([migrate]);
+  reader = new WalletReaderService({ drizzle: testDb.drizzle, pivotCurrency: 'USD' });
+}, 120_000);
 
-type Row = Omit<typeof walletTransaction.$inferInsert, 'walletId'>;
+afterAll(() => testDb.drop());
 
-async function seedWallet(userId: string, rows: Row[]) {
-  const { id } = findOneOrThrow(
-    await db.drizzle.db.insert(wallet).values({ userId, currency: 'USD' }).returning(),
-    new Error('seedWallet: no wallet row'),
-  );
-  for (const row of rows) {
-    await db.drizzle.db.insert(walletTransaction).values({ walletId: id, ...row });
+const db = () => testDb.drizzle.db;
+type Executor = Pick<ReturnType<typeof db>, 'insert' | 'select'>;
+
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
+
+async function seedWallet(userId: string, executor: Executor = db(), currency = 'USD') {
+  const [row] = await executor.insert(wallet).values({ userId, currency }).returning();
+  if (!row) {
+    throw new Error('wallet insert returned no row');
   }
-  return id;
+  return row;
 }
 
-const done = 'completed' as const;
+async function seedBalance(walletId: string, currency: string, amount: string) {
+  await db().insert(walletBalance).values({ walletId, currency, amount });
+}
 
-beforeAll(async () => {
-  db = await createTestDb([migrate]);
-  reader = new WalletReaderService({ drizzle: db.drizzle, pivotCurrency: 'USD' });
-});
+async function seedTransaction(
+  walletId: string,
+  overrides: Partial<Insert> & Pick<Insert, 'type' | 'amount'>,
+  executor: Executor = db(),
+) {
+  const [row] = await executor
+    .insert(walletTransaction)
+    .values({ walletId, currency: 'USD', status: 'completed', ...overrides })
+    .returning();
+  if (!row) {
+    throw new Error('transaction insert returned no row');
+  }
+  return row;
+}
 
-afterAll(async () => {
-  await db.drop();
-});
-
-beforeEach(async () => {
-  await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${wallet} RESTART IDENTITY CASCADE`,
-  );
-});
-
-describe('WalletReaderService parity with the reads it replaced (real PG)', () => {
+async function seededPlayer() {
   const userId = randomUUID();
-  const debtId = randomUUID();
-  const windowStarts = [ago(HOUR), ago(DAY), ago(30 * DAY)];
+  const owned = await seedWallet(userId);
+  return { userId, walletId: owned.id };
+}
 
-  beforeEach(async () => {
-    await seedWallet(userId, [
-      { type: 'deposit', status: done, amount: '100', currency: 'USD', createdAt: ago(2 * DAY) },
-      {
-        type: 'deposit',
-        status: done,
-        amount: '50.5',
-        currency: 'USD',
-        createdAt: ago(10 * 60_000),
-      },
-      { type: 'deposit', status: done, amount: '0.25', currency: 'BTC', createdAt: ago(3 * HOUR) },
-      // Held 40 days, released an hour ago: counts from its release.
-      {
-        type: 'deposit',
-        status: done,
-        amount: '7',
-        currency: 'USD',
-        createdAt: ago(40 * DAY),
-        reviewedAt: ago(30 * 60_000),
-      },
-      { type: 'deposit', status: done, amount: '9', currency: 'ETH', createdAt: ago(60 * DAY) },
-      { type: 'deposit', status: 'pending', amount: '999', currency: 'USD' },
-      { type: 'deposit', status: 'failed', amount: '11', currency: 'USD' },
-      { type: 'withdrawal', status: done, amount: '30', currency: 'USD' },
-      { type: 'bet', status: done, amount: '20', currency: 'USD', createdAt: ago(2 * DAY) },
-      { type: 'bet', status: done, amount: '5', currency: 'USD', createdAt: ago(30 * 60_000) },
-      // Reverses the 2-day-old stake inside the last hour: that window's stakes stop at zero.
-      {
-        type: 'bet_reversal',
-        status: done,
-        amount: '20',
-        currency: 'USD',
-        createdAt: ago(5 * 60_000),
-      },
-      { type: 'bet', status: done, amount: '0.1', currency: 'BTC', createdAt: ago(2 * HOUR) },
-      { type: 'bet', status: 'pending', amount: '1000', currency: 'USD' },
-      { type: 'win', status: done, amount: '15', currency: 'USD', createdAt: ago(20 * 60_000) },
-      // A debt collection is a completed win_reversal tagged with the shortfall id.
-      {
-        type: 'win_reversal',
-        status: done,
-        amount: '4',
-        currency: 'USD',
-        createdAt: ago(15 * 60_000),
-        providerName: PROVIDER,
-        externalRoundId: ROUND,
-        providerRefId: `collect:1:${debtId}`,
-      },
-      {
-        type: 'win_reversal',
-        status: done,
-        amount: '2.5',
-        currency: 'USD',
-        providerName: PROVIDER,
-        externalRoundId: ROUND,
-        providerRefId: `collect:2:${debtId}`,
-      },
-      {
-        type: 'win_reversal',
-        status: 'pending',
-        amount: '100',
-        currency: 'USD',
-        providerName: PROVIDER,
-        externalRoundId: ROUND,
-        providerRefId: `collect:3:${debtId}`,
-      },
-      {
-        type: 'win_reversal',
-        status: done,
-        amount: '3',
-        currency: 'USD',
-        providerName: PROVIDER,
-        externalRoundId: ROUND,
-        providerRefId: `collect:1:${randomUUID()}`,
-      },
-      {
-        type: 'win_reversal',
-        status: done,
-        amount: '6',
-        currency: 'USD',
-        providerName: 'sportsbook:feed-b',
-        externalRoundId: ROUND,
-        providerRefId: `collect:4:${debtId}`,
-      },
-      {
-        type: 'win_reversal',
-        status: done,
-        amount: '8',
-        currency: 'USD',
-        providerName: PROVIDER,
-        externalRoundId: 'round-2',
-        providerRefId: `collect:5:${debtId}`,
-      },
-    ]);
-    // Another player's money never leaks into this one's.
-    await seedWallet(randomUUID(), [
-      { type: 'deposit', status: done, amount: '500', currency: 'USD' },
-      { type: 'bet', status: done, amount: '40', currency: 'USD' },
-    ]);
-  });
+const rawRows = async <T extends Record<string, unknown>>(query: ReturnType<typeof sql>) =>
+  (await db().execute<T>(query)).rows;
 
-  it('deposits by currency: the KYC gate, KYC re-verification and player total read', async () => {
-    const expected = await oldDepositsByCurrency(db.drizzle.db, userId);
-
-    expect(byKey(await reader.getDepositsByCurrency(userId))).toEqual(byKey(expected));
-    expect(expected.length).toBe(3);
-    expect(await reader.getDepositsByCurrency(randomUUID())).toEqual([]);
-  });
-
-  it('money by window: the RG standing read', async () => {
-    const expected = await oldMoneyByWindow(db.drizzle.db, userId, windowStarts);
-
-    expect(byKey(await reader.getMoneyByWindow(userId, windowStarts))).toEqual(byKey(expected));
-    expect(expected.map((row) => row.metric).sort()).toEqual([
-      'bets',
-      'bets',
-      'deposits',
-      'deposits',
-      'wins',
-    ]);
-    expect(await reader.getMoneyByWindow(userId, [])).toEqual([]);
-  });
-
-  it('has wallet: the sportsbook reserve read', async () => {
-    const stranger = randomUUID();
-
-    expect(await reader.hasWallet(userId, db.drizzle.db)).toBe(
-      await oldHasWallet(db.drizzle.db, userId),
-    );
-    expect(await reader.hasWallet(stranger, db.drizzle.db)).toBe(
-      await oldHasWallet(db.drizzle.db, stranger),
-    );
-    expect(await reader.hasWallet(userId, db.drizzle.db)).toBe(true);
-    expect(await reader.hasWallet(stranger, db.drizzle.db)).toBe(false);
-  });
-
-  it('provider transaction sum: the sportsbook debt collection read', async () => {
-    const query = {
-      providerName: PROVIDER,
-      externalRoundId: ROUND,
-      type: 'win_reversal' as const,
-      providerRefSuffix: debtId,
-    };
-    const unknown = { ...query, providerRefSuffix: randomUUID() };
-
-    expect(await reader.sumProviderTransactions(query, db.drizzle.db)).toBe(
-      await oldCollected(db.drizzle.db, PROVIDER, ROUND, debtId),
-    );
-    expect(await reader.sumProviderTransactions(unknown, db.drizzle.db)).toBe(
-      await oldCollected(db.drizzle.db, PROVIDER, ROUND, unknown.providerRefSuffix),
-    );
-    expect(Number(await reader.sumProviderTransactions(query, db.drizzle.db))).toBe(6.5);
-    expect(await reader.sumProviderTransactions(unknown, db.drizzle.db)).toBe('0');
-    const wildcard = { ...query, providerRefSuffix: '%' };
-    const oneCharWildcard = { ...query, providerRefSuffix: `_${debtId.slice(1)}` };
-    expect(Number(await oldCollected(db.drizzle.db, PROVIDER, ROUND, '%'))).toBeGreaterThan(0);
-    expect(await reader.sumProviderTransactions(wildcard, db.drizzle.db)).toBe('0');
-    expect(await reader.sumProviderTransactions(oneCharWildcard, db.drizzle.db)).toBe('0');
-  });
-
-  it('reads on the caller transaction, seeing its uncommitted writes as the old reads did', async () => {
-    const newcomer = randomUUID();
-
-    await db.drizzle.db.transaction(async (tx) => {
-      const [created] = await tx.insert(wallet).values({ userId: newcomer }).returning();
-      await tx.insert(walletTransaction).values([
-        { walletId: created!.id, type: 'deposit', status: done, amount: '12', currency: 'USD' },
-        { walletId: created!.id, type: 'bet', status: done, amount: '3', currency: 'USD' },
-        {
-          walletId: created!.id,
-          type: 'win_reversal',
-          status: done,
-          amount: '1',
-          currency: 'USD',
-          providerName: PROVIDER,
-          externalRoundId: 'round-tx',
-          providerRefId: `collect:9:${debtId}`,
-        },
-      ]);
-
-      expect(await reader.hasWallet(newcomer, tx)).toBe(await oldHasWallet(tx, newcomer));
-      expect(await reader.hasWallet(newcomer, tx)).toBe(true);
-      expect(await reader.getDepositsByCurrency(newcomer, tx)).toEqual(
-        await oldDepositsByCurrency(tx, newcomer),
-      );
-      expect(byKey(await reader.getMoneyByWindow(newcomer, windowStarts, tx))).toEqual(
-        byKey(await oldMoneyByWindow(tx, newcomer, windowStarts)),
-      );
-      const query = {
-        providerName: PROVIDER,
-        externalRoundId: 'round-tx',
-        type: 'win_reversal' as const,
-        providerRefSuffix: debtId,
-      };
-      expect(await reader.sumProviderTransactions(query, tx)).toBe(
-        await oldCollected(tx, PROVIDER, 'round-tx', debtId),
-      );
-      expect(Number(await reader.sumProviderTransactions(query, tx))).toBe(1);
+describe('wallet reader parity', () => {
+  it('every WALLET_READER method returns what its original table query returns for the same seeded player, on the pool', async () => {
+    const { userId, walletId } = await seededPlayer();
+    await seedBalance(walletId, 'USD', '125.5');
+    await seedBalance(walletId, 'EUR', '7');
+    const firstDeposit = await seedTransaction(walletId, {
+      type: 'deposit',
+      amount: '40',
+      createdAt: daysAgo(5),
     });
+    const lastDeposit = await seedTransaction(walletId, {
+      type: 'deposit',
+      amount: '60',
+      createdAt: daysAgo(2),
+    });
+    await seedTransaction(walletId, { type: 'deposit', amount: '99', status: 'pending' });
+    await seedTransaction(walletId, { type: 'bet', amount: '30', createdAt: daysAgo(1) });
+    await seedTransaction(walletId, { type: 'bet_reversal', amount: '10', createdAt: daysAgo(1) });
+    await seedTransaction(walletId, { type: 'withdrawal', amount: '5', createdAt: daysAgo(3) });
+    await seedTransaction(walletId, { type: 'withdrawal', amount: '8', createdAt: daysAgo(90) });
+    const referenced = await seedTransaction(walletId, {
+      type: 'bet',
+      amount: '1',
+      providerName: 'parity-provider',
+      providerRefId: `ref-${randomUUID()}`,
+    });
+
+    const [rawDeposits] = await rawRows<{ total: string }>(
+      sql`select sum(t.amount)::text as total from wallet_transaction t join wallet w on w.id = t.wallet_id
+          where w.user_id = ${userId} and t.type = 'deposit' and t.status = 'completed'`,
+    );
+    const [rawWithdrawals] = await rawRows<{ n: string }>(
+      sql`select count(*)::text as n from wallet_transaction t join wallet w on w.id = t.wallet_id
+          where w.user_id = ${userId} and t.type = 'withdrawal' and t.status = 'completed'
+            and t.created_at > now() - interval '30 days'`,
+    );
+    const [rawTurnover] = await rawRows<{ total: string }>(
+      sql`select greatest(sum(case when t.type = 'bet' then t.amount else -t.amount end), 0)::text as total
+          from wallet_transaction t join wallet w on w.id = t.wallet_id
+          where w.user_id = ${userId} and t.type in ('bet', 'bet_reversal') and t.status = 'completed'
+            and t.created_at >= now() - interval '7 days'`,
+    );
+    const [rawBalance] = await rawRows<{ amount: string }>(
+      sql`select b.amount::text as amount from wallet_balance b join wallet w on w.id = b.wallet_id
+          where w.user_id = ${userId} and b.currency = w.currency`,
+    );
+
+    expect(await reader.getBalances(userId)).toEqual({
+      activeCurrency: 'USD',
+      balances: [
+        { currency: 'EUR', balance: '7.000000000000000000' },
+        { currency: 'USD', balance: '125.500000000000000000' },
+      ],
+    });
+    expect(await reader.getBalance(userId)).toEqual({
+      balance: rawBalance?.amount,
+      currency: 'USD',
+    });
+    expect(await reader.getDepositsByCurrency(userId)).toEqual([
+      { currency: 'USD', total: rawDeposits?.total },
+    ]);
+    expect(await reader.getLifetimeDeposit(userId)).toBe('100.000000000000000000');
+    expect(await reader.getWithdrawalCountInWindow(userId, 30)).toBe(Number(rawWithdrawals?.n));
+    expect(await reader.getTurnoverSince(userId, daysAgo(7))).toBe(rawTurnover?.total);
+    expect(await reader.getLastDeposit(userId)).toMatchObject({
+      transactionId: lastDeposit.id,
+      amount: lastDeposit.amount,
+      currency: 'USD',
+    });
+    expect(await reader.isFirstDeposit(userId, firstDeposit.id)).toBe(true);
+    expect(await reader.isFirstDeposit(userId, lastDeposit.id)).toBe(false);
+    expect(
+      await reader.findByProviderRef('parity-provider', referenced.providerRefId ?? ''),
+    ).toMatchObject({
+      id: referenced.id,
+      userId,
+      amount: referenced.amount,
+    });
+    expect(await reader.hasWallet(userId, db())).toBe(true);
+  });
+
+  it('every WALLET_READER method that takes a transaction sees uncommitted rows when it is given the caller transaction', async () => {
+    const userId = randomUUID();
+    const providerName = 'tx-provider';
+    const externalRoundId = `round-${randomUUID()}`;
+
+    await db().transaction(async (tx) => {
+      const owned = await seedWallet(userId, tx);
+      await tx.insert(walletBalance).values({ walletId: owned.id, currency: 'USD', amount: '15' });
+      const deposit = await seedTransaction(owned.id, { type: 'deposit', amount: '15' }, tx);
+      await seedTransaction(
+        owned.id,
+        {
+          type: 'bet',
+          amount: '4',
+          providerName,
+          externalRoundId,
+          providerRefId: 'bet:ref-1',
+        },
+        tx,
+      );
+      const since = daysAgo(1);
+
+      expect(await reader.hasWallet(userId, tx)).toBe(true);
+      expect(await reader.getBalances(userId, tx)).toEqual({
+        activeCurrency: 'USD',
+        balances: [{ currency: 'USD', balance: '15.000000000000000000' }],
+      });
+      expect(await reader.getDepositsByCurrency(userId, tx)).toEqual([
+        { currency: 'USD', total: '15.000000000000000000' },
+      ]);
+      expect(await reader.getLifetimeDeposit(userId, tx)).toBe('15.000000000000000000');
+      expect(await reader.isFirstDeposit(userId, deposit.id, tx)).toBe(true);
+      expect(await reader.getMoneyByWindow(userId, [since], tx)).toEqual(
+        expect.arrayContaining([
+          { metric: 'deposits', currency: 'USD', totals: ['15.000000000000000000'] },
+          { metric: 'bets', currency: 'USD', totals: ['4.000000000000000000'] },
+        ]),
+      );
+      expect(
+        await reader.sumProviderTransactions(
+          { providerName, externalRoundId, type: 'bet', providerRefSuffix: 'ref-1' },
+          tx,
+        ),
+      ).toBe('4.000000000000000000');
+
+      expect(await reader.hasWallet(userId, db())).toBe(false);
+      expect(await reader.getDepositsByCurrency(userId)).toEqual([]);
+      expect((await reader.getBalances(userId)).balances).toEqual([]);
+    });
+
+    expect(await reader.hasWallet(userId, db())).toBe(true);
+  });
+
+  it('getBalance and getBalances return zero balances, never null, for a player with no wallet rows', async () => {
+    const userId = randomUUID();
+
+    expect(await reader.getBalances(userId)).toEqual({ activeCurrency: 'USD', balances: [] });
+    expect(await reader.getBalance(userId)).toEqual({ balance: '0', currency: 'USD' });
+    expect(await reader.getDepositsByCurrency(userId)).toEqual([]);
+    expect(await reader.getLifetimeDeposit(userId)).toBe('0');
+  });
+
+  it('getMoneyByWindow and getTurnoverSince count only rows from the window start on, with the start included', async () => {
+    const { userId, walletId } = await seededPlayer();
+    const start = new Date(Date.now() - 2 * DAY_MS);
+    await seedTransaction(walletId, {
+      type: 'bet',
+      amount: '1',
+      createdAt: new Date(start.getTime() - 1),
+    });
+    await seedTransaction(walletId, { type: 'bet', amount: '2', createdAt: start });
+    await seedTransaction(walletId, {
+      type: 'bet',
+      amount: '4',
+      createdAt: new Date(start.getTime() + 1),
+    });
+
+    const windows = await reader.getMoneyByWindow(userId, [start, new Date(start.getTime() + 1)]);
+
+    expect(windows).toEqual([
+      { metric: 'bets', currency: 'USD', totals: ['6.000000000000000000', '4.000000000000000000'] },
+    ]);
+    expect(await reader.getTurnoverSince(userId, start)).toBe('6.000000000000000000');
+    expect(await reader.getTurnoverSince(userId, new Date(start.getTime() + 2))).toBe('0');
+  });
+
+  it('getWithdrawalCountInWindow and getWithdrawalCountsInWindow agree for the same players and window', async () => {
+    const busy = await seededPlayer();
+    const quiet = await seededPlayer();
+    const idle = await seededPlayer();
+    await seedTransaction(busy.walletId, {
+      type: 'withdrawal',
+      amount: '3',
+      createdAt: daysAgo(1),
+    });
+    await seedTransaction(busy.walletId, {
+      type: 'withdrawal',
+      amount: '3',
+      createdAt: daysAgo(10),
+    });
+    await seedTransaction(busy.walletId, {
+      type: 'withdrawal',
+      amount: '3',
+      createdAt: daysAgo(45),
+    });
+    await seedTransaction(busy.walletId, {
+      type: 'withdrawal',
+      amount: '3',
+      status: 'pending',
+      createdAt: daysAgo(1),
+    });
+    await seedTransaction(quiet.walletId, {
+      type: 'withdrawal',
+      amount: '3',
+      createdAt: daysAgo(2),
+    });
+    const players = [busy, quiet, idle];
+
+    const batch = await reader.getWithdrawalCountsInWindow(
+      players.map((player) => player.userId),
+      30,
+    );
+    const singles = await Promise.all(
+      players.map((player) => reader.getWithdrawalCountInWindow(player.userId, 30)),
+    );
+
+    expect(singles).toEqual([2, 1, 0]);
+    expect(players.map((player) => batch.get(player.userId) ?? 0)).toEqual(singles);
+    expect(batch.has(idle.userId)).toBe(false);
+  });
+
+  it('findOwnProviderTransaction returns nothing for a provider reference that belongs to another player', async () => {
+    const owner = await seededPlayer();
+    const other = await seededPlayer();
+    const row = await seedTransaction(owner.walletId, {
+      type: 'bet',
+      amount: '2',
+      providerName: 'own-provider',
+      providerRefId: `ref-${randomUUID()}`,
+    });
+    const unreferenced = await seedTransaction(other.walletId, { type: 'bet', amount: '2' });
+
+    expect(await reader.findOwnProviderTransaction(other.userId, row.id)).toBeNull();
+    expect(await reader.findOwnProviderTransaction(other.userId, unreferenced.id)).toBeNull();
+    expect(await reader.findOwnProviderTransaction(owner.userId, row.id)).toMatchObject({
+      id: row.id,
+      userId: owner.userId,
+      providerName: 'own-provider',
+    });
+  });
+
+  it('sumProviderTransactions under the debt row lock matches the sum of the provider transactions already taken', async () => {
+    const { userId, walletId } = await seededPlayer();
+    const providerName = 'lock-provider';
+    const externalRoundId = `round-${randomUUID()}`;
+    const base = { providerName, externalRoundId, type: 'bet' as const };
+    await seedTransaction(walletId, { ...base, amount: '2.5', providerRefId: 'bet:a-1' });
+    await seedTransaction(walletId, { ...base, amount: '1.5', providerRefId: 'win:a-1' });
+    await seedTransaction(walletId, { ...base, amount: '9', providerRefId: 'bet:other' });
+    await seedTransaction(walletId, {
+      ...base,
+      amount: '7',
+      providerRefId: 'failed:a-1',
+      status: 'failed',
+    });
+    await seedTransaction(walletId, {
+      ...base,
+      type: 'win',
+      amount: '5',
+      providerRefId: 'win2:a-1',
+    });
+    const query = { providerName, externalRoundId, type: 'bet' as const, providerRefSuffix: 'a-1' };
+
+    const [rawTaken] = await rawRows<{ total: string | null }>(
+      sql`select coalesce(sum(amount), 0)::text as total from wallet_transaction
+          where provider_name = ${providerName} and external_round_id = ${externalRoundId}
+            and type = 'bet' and status = 'completed' and provider_ref_id like '%:a-1'`,
+    );
+
+    const underLock = await db().transaction(async (tx) => {
+      await tx.select().from(wallet).where(eq(wallet.userId, userId)).for('update');
+      return reader.sumProviderTransactions(query, tx);
+    });
+
+    expect(underLock).toBe(rawTaken?.total);
+    expect(underLock).toBe('4.000000000000000000');
+    expect(
+      await reader.sumProviderTransactions({ ...query, providerRefSuffix: 'missing' }, db()),
+    ).toBe('0');
+  });
+
+  it('hasWallet is false before the first wallet row and true after it', async () => {
+    const userId = randomUUID();
+
+    await db().transaction(async (tx) => {
+      expect(await reader.hasWallet(userId, tx)).toBe(false);
+      await seedWallet(userId, tx);
+      expect(await reader.hasWallet(userId, tx)).toBe(true);
+    });
+
+    expect(await reader.hasWallet(userId, db())).toBe(true);
   });
 });

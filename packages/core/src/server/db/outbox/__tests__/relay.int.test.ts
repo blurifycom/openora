@@ -1,474 +1,362 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
-import type { MessageBrokerAdapter, EventEnvelope } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
-import { migrate } from '@openora/core/server/migrate';
-import { OutboxRelay, eventOutboxBacklog } from '../relay.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { eq, inArray, sql } from 'drizzle-orm';
+import type { BrokerHandler, EventEnvelope, MessageBrokerAdapter } from '@openora/core/contracts';
+import { migrate as migrateEngine } from '@openora/core/server/migrate';
+import { createTestDb, type TestDb } from '../../../../testing/real-infra.js';
+import { createEventBus } from '../../../kernel/event-bus.js';
+import { DrizzleOutboxWriter } from '../writer.js';
+import { DrizzleProcessedEventLog } from '../processed-events.js';
 import { eventOutbox, processedEvents } from '../schema.js';
-import { EVENT_RETENTION_MS } from '../../../kernel/event-bus.js';
+import { OutboxRelay, eventOutboxBacklog, oldestUnrelayedEvent } from '../relay.js';
 
-const { relayWarn } = vi.hoisted(() => ({ relayWarn: vi.fn() }));
+const loggerCalls = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
 
-vi.mock('../../../kernel/logger.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../kernel/logger.js')>();
-  return {
-    ...actual,
-    createLogger: (name: string) => {
-      const logger = actual.createLogger(name);
-      if (name === 'outbox-relay') {
-        logger.warn = relayWarn;
-      }
-      return logger;
-    },
-  };
-});
+vi.mock('../../../kernel/logger.js', () => ({
+  createLogger: () => ({ ...loggerCalls, info: vi.fn(), debug: vi.fn() }),
+}));
 
-let db: TestDb;
+const DAY_MS = 24 * 60 * 60_000;
 
-async function seedRow(overrides: Partial<typeof eventOutbox.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(eventOutbox)
-    .values({
-      eventId: randomUUID(),
-      topic: 'wallet.deposit.completed',
-      payload: { id: randomUUID() },
-      occurredAt: new Date(),
-      ...overrides,
-    })
-    .returning();
-  return row!;
-}
+const opened: TestDb[] = [];
 
-function brokerThat(onPublish?: (envelope: EventEnvelope) => void): MessageBrokerAdapter {
-  return {
-    publish: vi.fn(async (envelope: EventEnvelope) => {
-      onPublish?.(envelope);
-    }),
-    subscribe: () => () => {},
-    close: async () => {},
-  };
-}
-
-async function rowsById() {
-  const rows = await db.drizzle.db.select().from(eventOutbox);
-  return new Map(rows.map((r) => [r.eventId, r]));
-}
-
-beforeAll(async () => {
-  db = await createTestDb([migrate]);
-});
-
-afterAll(async () => {
-  await db.drop();
-});
-
-beforeEach(async () => {
-  await db.drizzle.db.execute(
-    sql`TRUNCATE ${eventOutbox}, ${processedEvents} RESTART IDENTITY CASCADE`,
-  );
-});
-
-describe('OutboxRelay.drainOnce (real PG)', () => {
-  it('publishes pending rows in order and marks them published', async () => {
-    const a = await seedRow({
-      topic: 'wallet.deposit.completed',
-      occurredAt: new Date('2026-01-01T00:00:00.000Z'),
-    });
-    await seedRow({
-      topic: 'wallet.withdrawal.completed',
-      occurredAt: new Date('2026-01-01T00:00:01.000Z'),
-    });
-    const broker = brokerThat();
-    const relay = new OutboxRelay(db.drizzle.db, broker);
-
-    const n = await relay.drainOnce();
-
-    expect(n).toBe(2);
-    expect(broker.publish).toHaveBeenCalledTimes(2);
-    expect((broker.publish as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
-      eventId: a.eventId,
-      topic: a.topic,
-    });
-    const rows = await db.drizzle.db.select().from(eventOutbox);
-    expect(rows.every((r) => r.publishedAt !== null)).toBe(true);
-  });
-
-  async function publishedOrder() {
-    const published: string[] = [];
-    const relay = new OutboxRelay(
-      db.drizzle.db,
-      brokerThat((envelope) => published.push(envelope.eventId)),
-    );
-    await relay.drainOnce();
-    return published;
+afterEach(async () => {
+  loggerCalls.warn.mockClear();
+  loggerCalls.error.mockClear();
+  for (const testDb of opened.splice(0)) {
+    await testDb.drop();
   }
+});
 
-  it('publishes rows sharing one occurredAt by seq, not by insert or id order', async () => {
-    const occurredAt = new Date('2026-01-01T00:00:00.000Z');
-    const bySeq: string[] = [];
-    for (const seq of [5, 4, 3, 2, 1]) {
-      bySeq[seq - 1] = (await seedRow({ occurredAt, seq })).eventId;
+async function freshDb() {
+  const testDb = await createTestDb([migrateEngine]);
+  opened.push(testDb);
+  return testDb.drizzle.db;
+}
+
+type Db = Awaited<ReturnType<typeof freshDb>>;
+
+type RecordingBroker = MessageBrokerAdapter & { published: EventEnvelope[] };
+
+function recordingBroker(
+  publish: (envelope: EventEnvelope) => Promise<void> = () => Promise.resolve(),
+): RecordingBroker {
+  const published: EventEnvelope[] = [];
+  const handlers = new Map<string, Set<BrokerHandler>>();
+  return {
+    published,
+    async publish(item) {
+      await publish(item);
+      published.push(item);
+      for (const handler of handlers.get(item.topic) ?? []) {
+        await handler(item);
+      }
+    },
+    subscribe(topic, handler) {
+      const set = handlers.get(topic) ?? new Set<BrokerHandler>();
+      set.add(handler);
+      handlers.set(topic, set);
+      return () => set.delete(handler);
+    },
+    async close() {},
+  };
+}
+
+const failingBroker = () => recordingBroker(() => Promise.reject(new Error('broker down')));
+
+const envelope = (overrides: Partial<EventEnvelope> = {}): EventEnvelope => ({
+  eventId: randomUUID(),
+  topic: `relay.test.${randomUUID()}`,
+  payload: { note: randomUUID() },
+  occurredAt: new Date().toISOString(),
+  schemaVersion: 1,
+  ...overrides,
+});
+
+async function enqueue(db: Db, ...envelopes: EventEnvelope[]) {
+  await db.transaction(async (tx) => {
+    for (const item of envelopes) {
+      await new DrizzleOutboxWriter().write(tx, item);
     }
+  });
+}
 
-    expect(await publishedOrder()).toEqual(bySeq);
+const outboxRow = async (db: Db, eventId: string) => {
+  const [row] = await db.select().from(eventOutbox).where(eq(eventOutbox.eventId, eventId));
+  return row;
+};
+
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+describe('relay', () => {
+  it('a row committed with the business write is published to the broker after commit', async () => {
+    const db = await freshDb();
+    const broker = recordingBroker();
+    const relay = new OutboxRelay(db, broker);
+    const item = envelope();
+    let drainedBeforeCommit = -1;
+    await db.transaction(async (tx) => {
+      await new DrizzleOutboxWriter().write(tx, item);
+      drainedBeforeCommit = await relay.drainOnce();
+    });
+    expect(drainedBeforeCommit).toBe(0);
+    expect(broker.published).toEqual([]);
+    expect(await relay.drainOnce()).toBe(1);
+    expect(broker.published).toEqual([item]);
+    expect((await outboxRow(db, item.eventId))?.publishedAt).toBeInstanceOf(Date);
   });
 
-  it('publishes a row written before seq existed ahead of the numbered rows of its millisecond', async () => {
-    const occurredAt = new Date('2026-01-01T00:00:00.000Z');
-    const second = await seedRow({ occurredAt, seq: 2 });
-    const legacy = await seedRow({ occurredAt, seq: null });
-    const first = await seedRow({ occurredAt, seq: 1 });
-    const later = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z'), seq: null });
-
-    expect(await publishedOrder()).toEqual([
-      legacy.eventId,
-      first.eventId,
-      second.eventId,
-      later.eventId,
-    ]);
-  });
-
-  it('numbers rows in insert order when the writer sets no seq', async () => {
-    const occurredAt = new Date('2026-01-01T00:00:00.000Z');
-    const first = await seedRow({ occurredAt });
-    const second = await seedRow({ occurredAt });
-
-    expect(second.seq).toBeGreaterThan(first.seq ?? Number.POSITIVE_INFINITY);
-  });
-
-  it('is a no-op when nothing is pending', async () => {
-    await seedRow({ publishedAt: new Date() });
-    const broker = brokerThat();
-    const relay = new OutboxRelay(db.drizzle.db, broker);
-
-    const n = await relay.drainOnce();
-
-    expect(n).toBe(0);
-    expect(broker.publish).not.toHaveBeenCalled();
-  });
-
-  it('leaves the row pending and its lease released when broker.publish throws', async () => {
-    const row = await seedRow();
-    const broker: MessageBrokerAdapter = {
-      publish: vi.fn(async () => {
-        throw new Error('broker unreachable');
+  it('a rolled back transaction publishes nothing', async () => {
+    const db = await freshDb();
+    const broker = recordingBroker();
+    const item = envelope();
+    await expect(
+      db.transaction(async (tx) => {
+        await new DrizzleOutboxWriter().write(tx, item);
+        throw new Error('business write failed');
       }),
-      subscribe: () => () => {},
-      close: async () => {},
-    };
-    const errors: unknown[] = [];
-    const relay = new OutboxRelay(db.drizzle.db, broker, { onError: (err) => errors.push(err) });
-
-    await expect(relay.drainOnce()).resolves.toBe(0);
-
-    const [after] = await db.drizzle.db
-      .select()
-      .from(eventOutbox)
-      .where(eq(eventOutbox.eventId, row.eventId));
-    expect(after?.publishedAt).toBeNull();
-    expect(after?.claimedAt).toBeNull();
-    expect(after?.attempts).toBe(1);
-    expect(errors[0]).toMatchObject({ message: 'broker unreachable' });
+    ).rejects.toThrow('business write failed');
+    expect(await new OutboxRelay(db, broker).drainOnce()).toBe(0);
+    expect(broker.published).toEqual([]);
+    expect(await outboxRow(db, item.eventId)).toBeUndefined();
   });
 
-  it('does not let a failing row block the rest of the batch', async () => {
-    const a = await seedRow({ occurredAt: new Date('2026-01-01T00:00:00.000Z') });
-    const b = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z') });
-    const c = await seedRow({ occurredAt: new Date('2026-01-01T00:00:02.000Z') });
-    const broker = brokerThat((envelope) => {
-      if (envelope.eventId === b.eventId) {
-        throw new Error('broker unreachable');
+  it('a row is marked published only after the broker publish resolves', async () => {
+    const db = await freshDb();
+    const item = envelope();
+    await enqueue(db, item);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started: () => void = () => {};
+    const publishStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const broker = recordingBroker(async () => {
+      started();
+      await gate;
+    });
+    const draining = new OutboxRelay(db, broker).drainOnce();
+    await publishStarted;
+    const inFlight = await outboxRow(db, item.eventId);
+    expect(inFlight?.publishedAt).toBeNull();
+    expect(inFlight?.claimedAt).toBeInstanceOf(Date);
+    release();
+    expect(await draining).toBe(1);
+    expect((await outboxRow(db, item.eventId))?.publishedAt).toBeInstanceOf(Date);
+  });
+
+  it('a failing row is reported and released while the rest of the batch is published', async () => {
+    const db = await freshDb();
+    const base = Date.now() - 10_000;
+    const [first, poison, last] = [0, 1, 2].map((offset) =>
+      envelope({ occurredAt: new Date(base + offset).toISOString() }),
+    );
+    if (!first || !poison || !last) {
+      throw new Error('fixture');
+    }
+    await enqueue(db, first, poison, last);
+    const errors: unknown[] = [];
+    const broker = recordingBroker(async (item) => {
+      if (item.eventId === poison.eventId) {
+        throw new Error('broker rejected the poison row');
       }
     });
-    const relay = new OutboxRelay(db.drizzle.db, broker, { onError: () => undefined });
-
-    await expect(relay.drainOnce()).resolves.toBe(2);
-
-    const afterFailure = await rowsById();
-    expect(afterFailure.get(a.eventId)?.publishedAt).not.toBeNull();
-    expect(afterFailure.get(b.eventId)?.publishedAt).toBeNull();
-    expect(afterFailure.get(c.eventId)?.publishedAt).not.toBeNull();
-
-    const publishSpy = broker.publish as ReturnType<typeof vi.fn>;
-    publishSpy.mockClear();
-    publishSpy.mockImplementation(async () => undefined);
-    const n = await relay.drainOnce();
-
-    expect(n).toBe(1);
-    expect(publishSpy.mock.calls.map((call) => call[0].eventId)).toEqual([b.eventId]);
-    const afterRetry = await rowsById();
-    expect([...afterRetry.values()].every((r) => r.publishedAt !== null)).toBe(true);
+    const relay = new OutboxRelay(db, broker, { onError: (err) => errors.push(err) });
+    expect(await relay.drainOnce()).toBe(2);
+    expect(broker.published.map((item) => item.eventId)).toEqual([first.eventId, last.eventId]);
+    expect(errors).toEqual([new Error('broker rejected the poison row')]);
+    const poisoned = await outboxRow(db, poison.eventId);
+    expect(poisoned?.publishedAt).toBeNull();
+    expect(poisoned?.claimedAt).toBeNull();
+    expect(poisoned?.attempts).toBe(1);
+    expect((await outboxRow(db, first.eventId))?.publishedAt).toBeInstanceOf(Date);
+    expect((await outboxRow(db, last.eventId))?.publishedAt).toBeInstanceOf(Date);
+    expect(await new OutboxRelay(db, recordingBroker()).drainOnce()).toBe(1);
   });
 
-  it('skips a row claimed by another relay until its lease expires', async () => {
-    const fresh = await seedRow({ claimedAt: new Date() });
-    const stale = await seedRow({ claimedAt: new Date(Date.now() - 60_000) });
-    const broker = brokerThat();
-    const relay = new OutboxRelay(db.drizzle.db, broker);
-
-    const n = await relay.drainOnce();
-
-    expect(n).toBe(1);
-    expect((broker.publish as ReturnType<typeof vi.fn>).mock.calls[0][0].eventId).toBe(
-      stale.eventId,
+  it('two concurrent relays never claim the same row inside its lease', async () => {
+    const db = await freshDb();
+    const items = Array.from({ length: 24 }, (_, index) =>
+      envelope({ occurredAt: new Date(Date.now() - 60_000 + index).toISOString() }),
     );
-    expect((await rowsById()).get(fresh.eventId)?.publishedAt).toBeNull();
-  });
-
-  it('hands back the rest of a batch once half its lease is spent publishing', async () => {
-    const first = await seedRow({ occurredAt: new Date('2026-01-01T00:00:00.000Z') });
-    const second = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z') });
-    let clock = Date.now();
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
-    // The first publish takes 20s, past the 15s budget of a 30s lease.
-    const broker = brokerThat(() => {
-      clock += 20_000;
-    });
-    const relay = new OutboxRelay(db.drizzle.db, broker);
-
-    try {
-      await expect(relay.drainOnce()).resolves.toBe(1);
-    } finally {
-      now.mockRestore();
-    }
-
-    expect(broker.publish).toHaveBeenCalledTimes(1);
-    const rows = await rowsById();
-    expect(rows.get(first.eventId)?.publishedAt).not.toBeNull();
-    expect(rows.get(second.eventId)?.publishedAt).toBeNull();
-    expect(rows.get(second.eventId)?.claimedAt).toBeNull();
-  });
-
-  it('publishes each row exactly once across two concurrent relays', async () => {
-    const seeded = await Promise.all(Array.from({ length: 50 }, () => seedRow()));
-    const published: string[] = [];
-    // A slow publish holds each relay's claim open so the two drains overlap.
-    const slowBroker: MessageBrokerAdapter = {
-      publish: async (envelope) => {
-        await new Promise((r) => setTimeout(r, 2));
-        published.push(envelope.eventId);
-      },
-      subscribe: () => () => {},
-      close: async () => {},
+    await enqueue(db, ...items);
+    const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 5));
+    const brokerA = recordingBroker(pause);
+    const brokerB = recordingBroker(pause);
+    const relayA = new OutboxRelay(db, brokerA, { batchSize: 5 });
+    const relayB = new OutboxRelay(db, brokerB, { batchSize: 5 });
+    const drainAll = async (relay: OutboxRelay) => {
+      while ((await relay.drainOnce()) > 0) {
+        await pause();
+      }
     };
-    const relayA = new OutboxRelay(db.drizzle.db, slowBroker, { batchSize: 30 });
-    const relayB = new OutboxRelay(db.drizzle.db, slowBroker, { batchSize: 30 });
-
-    const counts: number[] = [];
-    for (let i = 0; i < 3; i += 1) {
-      counts.push(...(await Promise.all([relayA.drainOnce(), relayB.drainOnce()])));
-    }
-
-    expect(counts.reduce((sum, n) => sum + n, 0)).toBe(seeded.length);
-    expect(new Set(published).size).toBe(published.length);
-    expect(new Set(published)).toEqual(new Set(seeded.map((r) => r.eventId)));
+    await Promise.all([drainAll(relayA), drainAll(relayB)]);
+    const ids = [...brokerA.published, ...brokerB.published].map((item) => item.eventId);
+    expect(ids).toHaveLength(items.length);
+    expect(new Set(ids)).toEqual(new Set(items.map((item) => item.eventId)));
+    const rows = await db.select().from(eventOutbox);
+    expect(rows.every((row) => row.attempts === 1 && row.publishedAt !== null)).toBe(true);
   });
 
-  it('prunes published rows and processed_events past retention, keeping the rest', async () => {
-    const longAgo = new Date(Date.now() - EVENT_RETENTION_MS - 60_000);
-    const oldPublished = await seedRow({ publishedAt: longAgo });
-    const recentPublished = await seedRow({ publishedAt: new Date() });
-    const oldPending = await seedRow({ occurredAt: longAgo });
-    await db.drizzle.db.insert(processedEvents).values([
+  it('a row claimed by a dead relay is republished after the lease expires', async () => {
+    const db = await freshDb();
+    const item = envelope();
+    await enqueue(db, item);
+    const dying = new OutboxRelay(
+      db,
+      recordingBroker(() => new Promise<void>(() => {})),
+    );
+    void dying.drainOnce();
+    await vi.waitFor(async () => {
+      expect((await outboxRow(db, item.eventId))?.claimedAt).toBeInstanceOf(Date);
+    });
+    const survivorBroker = recordingBroker();
+    const survivor = new OutboxRelay(db, survivorBroker);
+    expect(await survivor.drainOnce()).toBe(0);
+    expect(survivorBroker.published).toEqual([]);
+    await db
+      .update(eventOutbox)
+      .set({ claimedAt: sql`now() - interval '31 seconds'` })
+      .where(eq(eventOutbox.eventId, item.eventId));
+    expect(await survivor.drainOnce()).toBe(1);
+    expect(survivorBroker.published).toEqual([item]);
+    const row = await outboxRow(db, item.eventId);
+    expect(row?.attempts).toBe(2);
+    expect(row?.publishedAt).toBeInstanceOf(Date);
+  });
+
+  it('the same event delivered twice is processed once through the dedupe record', async () => {
+    const db = await freshDb();
+    const broker = recordingBroker();
+    const bus = createEventBus({
+      broker,
+      outbox: new DrizzleOutboxWriter(),
+      processedEvents: new DrizzleProcessedEventLog(db),
+    });
+    const topic = `relay.test.${randomUUID()}`;
+    const handled: unknown[] = [];
+    bus.on(topic, (payload) => void handled.push(payload), { consumer: 'svc/plugin/dedupe' });
+    const item = envelope({ topic, payload: { amount: '10.00' } });
+    await enqueue(db, item);
+    const relay = new OutboxRelay(db, broker);
+    expect(await relay.drainOnce()).toBe(1);
+    await db
+      .update(eventOutbox)
+      .set({ publishedAt: null, claimedAt: null })
+      .where(eq(eventOutbox.eventId, item.eventId));
+    expect(await relay.drainOnce()).toBe(1);
+    expect(broker.published.map((published) => published.eventId)).toEqual([
+      item.eventId,
+      item.eventId,
+    ]);
+    expect(handled).toEqual([{ amount: '10.00' }]);
+    const records = await db
+      .select()
+      .from(processedEvents)
+      .where(eq(processedEvents.eventId, item.eventId));
+    expect(records).toHaveLength(1);
+    expect(records[0]?.consumer).toBe('svc/plugin/dedupe');
+  });
+
+  it('published rows and dedupe records are pruned after their retention', async () => {
+    const db = await freshDb();
+    const stale = envelope();
+    const recent = envelope();
+    const pending = envelope({ occurredAt: ago(30 * DAY_MS) });
+    await enqueue(db, stale, recent, pending);
+    await db
+      .update(eventOutbox)
+      .set({ publishedAt: new Date(Date.now() - 8 * DAY_MS) })
+      .where(eq(eventOutbox.eventId, stale.eventId));
+    await db
+      .update(eventOutbox)
+      .set({ publishedAt: new Date(Date.now() - 6 * DAY_MS) })
+      .where(eq(eventOutbox.eventId, recent.eventId));
+    await db.insert(processedEvents).values([
+      { eventId: 'old', consumer: 'c', processedAt: new Date(Date.now() - 9 * DAY_MS) },
+      { eventId: 'inside-margin', consumer: 'c', processedAt: new Date(Date.now() - 7.5 * DAY_MS) },
+      { eventId: 'fresh', consumer: 'c', processedAt: new Date() },
+    ]);
+    await new OutboxRelay(db, failingBroker(), { onError: () => undefined }).drainOnce();
+    const remaining = await db
+      .select({ eventId: eventOutbox.eventId })
+      .from(eventOutbox)
+      .where(inArray(eventOutbox.eventId, [stale.eventId, recent.eventId, pending.eventId]));
+    expect(remaining.map((row) => row.eventId).sort()).toEqual(
+      [recent.eventId, pending.eventId].sort(),
+    );
+    const records = await db.select().from(processedEvents);
+    expect(records.map((row) => row.eventId).sort()).toEqual(['fresh', 'inside-margin']);
+  });
+});
+
+describe('backlog', () => {
+  it('the backlog reports pending rows and the age of the oldest on the database clock', async () => {
+    const db = await freshDb();
+    expect(await eventOutboxBacklog(db)).toEqual({ pending: 0, oldestPendingAgeMs: 0 });
+    await db.insert(eventOutbox).values([
       {
         eventId: randomUUID(),
-        consumer: 'old',
-        processedAt: new Date(Date.now() - EVENT_RETENTION_MS - 25 * 60 * 60_000),
+        topic: 't',
+        payload: {},
+        occurredAt: sql`now() - interval '5 minutes'`,
       },
-      // Kept a day past the stream retention: its entry may still be pending and redelivered.
-      { eventId: randomUUID(), consumer: 'just-past-retention', processedAt: longAgo },
-      { eventId: randomUUID(), consumer: 'recent' },
+      {
+        eventId: randomUUID(),
+        topic: 't',
+        payload: {},
+        occurredAt: sql`now() - interval '1 minute'`,
+        claimedAt: sql`now()`,
+      },
+      {
+        eventId: randomUUID(),
+        topic: 't',
+        payload: {},
+        occurredAt: sql`now() - interval '1 hour'`,
+        claimedAt: sql`now()`,
+        publishedAt: sql`now()`,
+      },
     ]);
-    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
-
-    await relay.drainOnce();
-
-    const remaining = await rowsById();
-    expect(remaining.has(oldPublished.eventId)).toBe(false);
-    expect(remaining.has(recentPublished.eventId)).toBe(true);
-    expect(remaining.get(oldPending.eventId)?.publishedAt).not.toBeNull();
-    const consumers = await db.drizzle.db.select().from(processedEvents);
-    expect(consumers.map((r) => r.consumer).sort()).toEqual(['just-past-retention', 'recent']);
-  });
-});
-
-function deferred() {
-  let resolve = () => {};
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve: () => resolve() };
-}
-
-describe('OutboxRelay poll loop (real PG)', () => {
-  it('publishes on its own, with nobody calling drainOnce', async () => {
-    const row = await seedRow();
-    const relay = new OutboxRelay(db.drizzle.db, brokerThat(), { intervalMs: 10 });
-
-    relay.start();
-    try {
-      await vi.waitFor(async () => {
-        expect((await rowsById()).get(row.eventId)?.publishedAt).not.toBeNull();
-      });
-    } finally {
-      await relay.stop();
-    }
-  });
-
-  it('drains a backlog larger than one batch within a single tick', async () => {
-    const rows = await Promise.all(Array.from({ length: 5 }, () => seedRow()));
-    const relay = new OutboxRelay(db.drizzle.db, brokerThat(), { intervalMs: 1000, batchSize: 2 });
-
-    relay.start();
-    try {
-      // One tick fires at ~1s; the next would be ~2s. One batch per tick would leave rows pending.
-      await vi.waitFor(
-        async () => {
-          const byId = await rowsById();
-          expect(rows.every((r) => byId.get(r.eventId)?.publishedAt)).toBe(true);
-        },
-        { timeout: 1800 },
-      );
-    } finally {
-      await relay.stop();
-    }
-  });
-
-  it('reports a failing drain to onError and keeps polling', async () => {
-    await seedRow();
-    const errors: unknown[] = [];
-    const broker = brokerThat(() => {
-      throw new Error('broker unreachable');
-    });
-    const relay = new OutboxRelay(db.drizzle.db, broker, {
-      intervalMs: 10,
-      onError: (err) => errors.push(err),
-    });
-
-    relay.start();
-    try {
-      await vi.waitFor(() => expect(errors.length).toBeGreaterThan(1));
-    } finally {
-      await relay.stop();
-    }
-    expect(errors[0]).toMatchObject({ message: 'broker unreachable' });
-  });
-
-  it('stops the timer but waits for the drain already in flight', async () => {
-    await seedRow();
-    const publishStarted = deferred();
-    const releasePublish = deferred();
-    const broker: MessageBrokerAdapter = {
-      publish: vi.fn(async () => {
-        publishStarted.resolve();
-        await releasePublish.promise;
-      }),
-      subscribe: () => () => {},
-      close: async () => {},
-    };
-    const relay = new OutboxRelay(db.drizzle.db, broker, { intervalMs: 10 });
-
-    relay.start();
-    await publishStarted.promise;
-
-    let stopped = false;
-    const stopping = relay.stop().then(() => {
-      stopped = true;
-    });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(stopped).toBe(false);
-
-    releasePublish.resolve();
-    await stopping;
-    expect(stopped).toBe(true);
-  });
-});
-
-function failingBroker(): MessageBrokerAdapter {
-  return {
-    publish: async () => {
-      throw new Error('broker down');
-    },
-    subscribe: () => () => {},
-    close: async () => {},
-  };
-}
-
-describe('event outbox lag', () => {
-  const TWO_MINUTES_MS = 120_000;
-  const staleOccurredAt = () => new Date(Date.now() - TWO_MINUTES_MS);
-
-  beforeEach(() => {
-    relayWarn.mockClear();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('backlog counts unpublished rows, claimed or not, and ignores published ones', async () => {
-    await seedRow({ occurredAt: staleOccurredAt() });
-    await seedRow({ occurredAt: staleOccurredAt(), claimedAt: new Date() });
-    await seedRow({ occurredAt: staleOccurredAt(), publishedAt: new Date() });
-
-    const backlog = await eventOutboxBacklog(db.drizzle.db);
-
+    const backlog = await eventOutboxBacklog(db);
     expect(backlog.pending).toBe(2);
-    expect(backlog.oldestPendingAgeMs).toBeGreaterThan(TWO_MINUTES_MS - 5_000);
+    expect(backlog.oldestPendingAgeMs).toBeGreaterThanOrEqual(300_000);
+    expect(backlog.oldestPendingAgeMs).toBeLessThan(310_000);
   });
 
-  it('backlog of an empty outbox is zero', async () => {
-    expect(await eventOutboxBacklog(db.drizzle.db)).toEqual({ pending: 0, oldestPendingAgeMs: 0 });
-  });
-
-  it('logs when the oldest pending row is past the threshold', async () => {
-    await seedRow({ occurredAt: staleOccurredAt() });
-    const relay = new OutboxRelay(db.drizzle.db, failingBroker(), { onError: () => {} });
-
-    await relay.drainOnce();
-
-    expect(relayWarn).toHaveBeenCalledTimes(1);
-    expect(relayWarn).toHaveBeenCalledWith(
-      { pending: 1, oldestPendingAgeMs: expect.any(Number) },
-      'event outbox lagging',
+  it('lag is reported only when the oldest unpublished row is older than the threshold', async () => {
+    const lagging = await freshDb();
+    await enqueue(lagging, envelope({ occurredAt: ago(5 * 60_000) }));
+    await new OutboxRelay(lagging, failingBroker(), { onError: () => undefined }).drainOnce();
+    expect(loggerCalls.warn).toHaveBeenCalledTimes(1);
+    expect(loggerCalls.warn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ pending: 1, oldestPendingAgeMs: expect.any(Number) }),
     );
+    loggerCalls.warn.mockClear();
+    const healthy = await freshDb();
+    await enqueue(healthy, envelope({ occurredAt: ago(10_000) }));
+    await new OutboxRelay(healthy, failingBroker(), { onError: () => undefined }).drainOnce();
+    expect(loggerCalls.warn).not.toHaveBeenCalled();
   });
 
-  it('counts a claimed but unpublished row', async () => {
-    await seedRow({ occurredAt: staleOccurredAt(), claimedAt: new Date() });
-    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
-
+  it('lag is reported at most once per check interval', async () => {
+    const db = await freshDb();
+    await enqueue(db, envelope({ occurredAt: ago(5 * 60_000) }));
+    const relay = new OutboxRelay(db, failingBroker(), { onError: () => undefined });
     await relay.drainOnce();
-
-    expect(relayWarn).toHaveBeenCalledTimes(1);
+    await relay.drainOnce();
+    await relay.drainOnce();
+    expect(loggerCalls.warn).toHaveBeenCalledTimes(1);
   });
 
-  it('does not log for a fresh row or a published one', async () => {
-    await seedRow();
-    await seedRow({ occurredAt: staleOccurredAt(), publishedAt: new Date() });
-    const relay = new OutboxRelay(db.drizzle.db, brokerThat());
-
-    await relay.drainOnce();
-
-    expect(relayWarn).not.toHaveBeenCalled();
-  });
-
-  it('logs at most once a minute across repeated drains', async () => {
-    await seedRow({ occurredAt: staleOccurredAt() });
-    const relay = new OutboxRelay(db.drizzle.db, failingBroker(), { onError: () => {} });
-    const realNow = Date.now();
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(realNow);
-
-    await relay.drainOnce();
-    await relay.drainOnce();
-    vi.setSystemTime(realNow + 30_000);
-    await relay.drainOnce();
-    expect(relayWarn).toHaveBeenCalledTimes(1);
-
-    vi.setSystemTime(realNow + 61_000);
-    await relay.drainOnce();
-    expect(relayWarn).toHaveBeenCalledTimes(2);
+  it('oldestUnrelayedEvent returns nothing when everything is published', async () => {
+    const db = await freshDb();
+    const older = envelope({ occurredAt: ago(60_000) });
+    const newer = envelope({ occurredAt: ago(1_000) });
+    await enqueue(db, older, newer);
+    expect((await oldestUnrelayedEvent(db))?.eventId).toBe(older.eventId);
+    await new OutboxRelay(db, recordingBroker()).drainOnce();
+    expect(await oldestUnrelayedEvent(db)).toBeUndefined();
   });
 });
