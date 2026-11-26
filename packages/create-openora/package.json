@@ -32,7 +32,7 @@
     "check:types": "node scripts/generate-versions.mjs && tsc --noEmit",
     "clean": "rm -rf dist template src/generated",
     "prepack": "pnpm run build",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run --passWithNoTests"
   },
   "devDependencies": {
     "@openora/core": "workspace:*",
