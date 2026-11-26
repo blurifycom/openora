@@ -8,6 +8,7 @@ import {
   type PaymentAdapter,
   type PaymentWebhookEvent,
 } from '@openora/core/contracts';
+import { globalStore } from './global-store.js';
 import { parseTestWebhook } from './payment-webhook-event.js';
 
 type SweepCall = { balance: CustodyBalance; idempotencyKey: string };
@@ -20,13 +21,18 @@ type CustodyVendor = {
 };
 
 const VENDOR_STORE = Symbol.for('openora.testing.custody-vendor');
-const holder = globalThis as typeof globalThis & { [VENDOR_STORE]?: CustodyVendor };
-const vendor = (holder[VENDOR_STORE] ??= {
-  transactions: [],
-  sweepable: [],
-  sweeps: [],
-  listingGate: null,
-});
+const isCustodyVendor = (value: unknown): value is CustodyVendor =>
+  typeof value === 'object' && value !== null && 'transactions' in value && 'sweeps' in value;
+const vendor = globalStore(
+  VENDOR_STORE,
+  isCustodyVendor,
+  (): CustodyVendor => ({
+    transactions: [],
+    sweepable: [],
+    sweeps: [],
+    listingGate: null,
+  }),
+);
 
 const NEVER_CRON = '0 0 1 1 *';
 

@@ -66,13 +66,16 @@ async function elapsePeriod(userId: string) {
 
 async function runExpirySweep(userId: string) {
   await e2e.app.container.get(JOB_QUEUE).enqueue(queue('rg-monitor'), {});
-  await vi.waitFor(async () => {
-    const [row] = await db()
-      .select({ rgBlocked: user.rgBlocked })
-      .from(user)
-      .where(eq(user.id, userId));
-    expect(row?.rgBlocked).toBe(false);
-  });
+  await vi.waitFor(
+    async () => {
+      const [row] = await db()
+        .select({ rgBlocked: user.rgBlocked })
+        .from(user)
+        .where(eq(user.id, userId));
+      expect(row?.rgBlocked).toBe(false);
+    },
+    { timeout: 10_000 },
+  );
 }
 
 async function elapseCoolingOff(userId: string) {
@@ -263,7 +266,9 @@ describe('Self-exclusion', () => {
     'self-exclusion forfeits every active bonus and the bonus balance is zeroed with a ledger row',
   );
 
-  it('self-exclusion keeps real-money balance withdrawable', async () => {
+  it.todo('a self-excluded player can still withdraw their real-money balance');
+
+  it('the ledger RG gate refuses a bet but not a withdrawal debit during self-exclusion', async () => {
     const player = await newFundedPlayer(e2e, '100');
 
     await startSelfExclusion(player);

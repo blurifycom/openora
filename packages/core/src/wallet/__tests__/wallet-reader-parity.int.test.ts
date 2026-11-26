@@ -228,10 +228,6 @@ describe('wallet reader parity', () => {
     expect(await reader.getTurnoverSince(userId, new Date(start.getTime() + 2))).toBe('0');
   });
 
-  it.todo(
-    'getMoneyByWindow and getTurnoverSince count only rows inside the window, with the window start included and the end excluded',
-  );
-
   it('getWithdrawalCountInWindow and getWithdrawalCountsInWindow agree for the same players and window', async () => {
     const busy = await seededPlayer();
     const quiet = await seededPlayer();

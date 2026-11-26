@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { PAYMENT_ADAPTER, type PaymentAdapter } from '@openora/core/contracts';
+import { globalStore } from './global-store.js';
 import { parseTestWebhook } from './payment-webhook-event.js';
 
 type PayoutCall = { amount: string; currency: string; transactionId: string };
 
 const PAYOUT_STORE = Symbol.for('openora.testing.withdrawal-payouts');
-const holder = globalThis as typeof globalThis & { [PAYOUT_STORE]?: PayoutCall[] };
-const payouts = (holder[PAYOUT_STORE] ??= []);
+const isPayoutList = (value: unknown): value is PayoutCall[] => Array.isArray(value);
+const payouts = globalStore(PAYOUT_STORE, isPayoutList, (): PayoutCall[] => []);
 
 export const payoutsFor = (transactionId: string) =>
   payouts.filter((call) => call.transactionId === transactionId);

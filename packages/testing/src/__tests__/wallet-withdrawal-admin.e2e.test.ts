@@ -70,7 +70,10 @@ async function adminUserId() {
     .select({ id: user.id })
     .from(user)
     .where(eq(user.email, 'admin@oss.dev'));
-  return row!.id;
+  if (!row) {
+    throw new Error('seeded admin admin@oss.dev is missing');
+  }
+  return row.id;
 }
 
 async function queueFor(currency: string, query: Record<string, string> = {}) {

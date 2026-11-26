@@ -112,6 +112,7 @@ describe('player balances and transaction history', () => {
 
     const withdrawals = await list('types[0]=withdrawal');
     const deposits = await list('types[0]=deposit&statuses[0]=completed');
+    const failedDeposits = await list('types[0]=deposit&statuses[0]=failed');
     const otherCurrency = await list('currencies[0]=NOPE');
     const sameCurrency = await list(`currencies[0]=${player.currency}`);
     const firstPage = await list('page=1&limit=2');
@@ -119,6 +120,7 @@ describe('player balances and transaction history', () => {
 
     expect(withdrawals.total).toBe(2);
     expect(withdrawals.items.map((item) => item.type)).toEqual(['withdrawal', 'withdrawal']);
+    expect(failedDeposits.total).toBe(0);
     expect(deposits.total).toBe(1);
     expect(deposits.items).toEqual([
       expect.objectContaining({ type: 'deposit', status: 'completed', amount: amountOf('100') }),
