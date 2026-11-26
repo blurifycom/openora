@@ -79,7 +79,7 @@ function openPool(connectionString: string, poolSize?: PoolSizeEnv): Pool {
   return pool;
 }
 
-export function parseReplicaUrls(raw: string | undefined): string[] {
+function parseReplicaUrls(raw: string | undefined): string[] {
   return (raw ?? '')
     .split(',')
     .map((entry) => entry.trim())

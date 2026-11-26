@@ -43,7 +43,7 @@ used it.
 ## Rules
 
 - Import `test`/`expect` from `fixtures.ts`, NEVER from `@playwright/test` - fixtures add `cleanup()` and shared setup.
-- Set up state through the product: seed data or drive the API, so the spec exercises the same path a player would. `mockApi(page, routes)` (from `lib/mocks.ts`) is the escape hatch above - reach for it only after the real setup is genuinely impossible, and never branch test logic on the mode.
+- Set up state through the product: seed data or drive the API, so the spec exercises the same path a player would. A browser-side route mock is the escape hatch above - reach for it only after the real setup is genuinely impossible, and never branch test logic on the mode.
 - A mock that stays is typed: fixture shapes in `mocks/<domain>.ts` mirror the response contract - type platform-endpoint fixtures with the `z.infer` contract type from `@openora/*` so a contract change fails typecheck. No loose hand-written JSON.
 - Selectors use `data-testid` - kebab-case, domain-prefixed (`chat-message`, `chat-input`). Never assert on CSS classes or component-library structure; shared UI components spread props so `data-testid` passes through.
 - Page objects in `pages/<name>.page.ts` are functional factories - no classes, no `this`; locators + actions returned as a plain object.

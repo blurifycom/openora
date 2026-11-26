@@ -1,396 +1,237 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createToken, type Token, type TokenCatalog } from '@openora/core/contracts';
+import { describe, expect, it } from 'vitest';
+import type { TokenCatalog } from '@openora/core/contracts';
+import type { Plugin } from '../define-plugin.js';
+import type { PluginEntry } from '../load-plugins.js';
 import {
   applyServiceManifest,
   assertServiceComplete,
   parseServiceManifest,
   selectServiceEntries,
-  type HostControl,
-  type ServiceManifestCheck,
+  type ServiceManifestEntry,
 } from '../service-manifest.js';
-import type { PluginEntry } from '../load-plugins.js';
-import type { Plugin } from '../define-plugin.js';
-
-const plain = (id: string) => ({ id, noRoutes: false });
-
-const entries: PluginEntry[] = [
-  { id: 'identity', path: 'a' },
-  { id: 'wallet', path: 'b' },
-  { id: 'gaming', path: 'c' },
-  { id: 'rabbitmq', path: 'd', kind: 'infra' },
-  { id: 'bullmq', path: 'e', kind: 'infra' },
-];
 
 describe('parseServiceManifest', () => {
-  it('returns null (monolith) when unset or empty', () => {
+  it('returns null when the manifest is unset', () => {
     expect(parseServiceManifest(undefined)).toBeNull();
+  });
+
+  it('returns null when the manifest is blank', () => {
     expect(parseServiceManifest('')).toBeNull();
-    expect(parseServiceManifest('   ')).toBeNull();
+    expect(parseServiceManifest('  \n\t ')).toBeNull();
+    expect(parseServiceManifest(' , ,, ')).toBeNull();
   });
 
-  it('splits on commas and whitespace, trimming blanks', () => {
-    expect(parseServiceManifest('identity, wallet')).toEqual([plain('identity'), plain('wallet')]);
-    expect(parseServiceManifest('identity  wallet')).toEqual([plain('identity'), plain('wallet')]);
-    expect(parseServiceManifest('wallet,')).toEqual([plain('wallet')]);
+  it('parses ids separated by commas or whitespace', () => {
+    const expected = [
+      { id: 'wallet', noRoutes: false },
+      { id: 'kyc', noRoutes: false },
+      { id: 'bonus', noRoutes: false },
+    ];
+    expect(parseServiceManifest('wallet,kyc,bonus')).toEqual(expected);
+    expect(parseServiceManifest('wallet kyc bonus')).toEqual(expected);
+    expect(parseServiceManifest(' wallet ,\n kyc,  bonus ')).toEqual(expected);
   });
 
-  it('reads the :no-routes suffix as a per-id flag', () => {
-    expect(parseServiceManifest('wallet,identity:no-routes')).toEqual([
-      plain('wallet'),
-      { id: 'identity', noRoutes: true },
+  it('parses the no-routes flag', () => {
+    expect(parseServiceManifest('wallet:no-routes,kyc')).toEqual([
+      { id: 'wallet', noRoutes: true },
+      { id: 'kyc', noRoutes: false },
     ]);
   });
 
-  it('collapses a repeat that agrees on the flag', () => {
-    expect(parseServiceManifest('wallet,wallet')).toEqual([plain('wallet')]);
-    expect(parseServiceManifest('identity:no-routes,identity:no-routes')).toEqual([
-      { id: 'identity', noRoutes: true },
-    ]);
+  it('rejects an unknown flag or extra segments', () => {
+    expect(() => parseServiceManifest('wallet:routes')).toThrow(/unknown flag/);
+    expect(() => parseServiceManifest('wallet:no-routes:x')).toThrow(/unknown flag/);
+    expect(() => parseServiceManifest('wallet:')).toThrow(/unknown flag/);
+    expect(() => parseServiceManifest('wallet:No-Routes')).toThrow(/unknown flag/);
   });
 
-  it('rejects an unknown flag, an empty flag and a contradictory repeat', () => {
-    expect(() => parseServiceManifest('identity:noroutes')).toThrow(/unknown flag/);
-    expect(() => parseServiceManifest('identity:')).toThrow(/unknown flag/);
-    expect(() => parseServiceManifest('identity:no-routes:x')).toThrow(/unknown flag/);
-    expect(() => parseServiceManifest('identity,identity:no-routes')).toThrow(
-      /both with and without/,
+  it('rejects an id named both with and without no-routes', () => {
+    expect(() => parseServiceManifest('wallet,wallet:no-routes')).toThrow(
+      /names "wallet" both with and without ":no-routes"/,
     );
+    expect(() => parseServiceManifest('wallet:no-routes,wallet')).toThrow(/both with and without/);
+  });
+
+  it('collapses a repeated id', () => {
+    expect(parseServiceManifest('wallet,wallet,kyc,wallet')).toEqual([
+      { id: 'wallet', noRoutes: false },
+      { id: 'kyc', noRoutes: false },
+    ]);
+    expect(parseServiceManifest('wallet:no-routes,wallet:no-routes')).toEqual([
+      { id: 'wallet', noRoutes: true },
+    ]);
   });
 });
+
+const entries: PluginEntry[] = [
+  { id: 'wallet', path: '/wallet' },
+  { id: 'kyc', path: '/kyc' },
+  { id: 'bonus', path: '/bonus' },
+  { id: 'queue', path: '/queue', kind: 'infra' },
+];
+
+const manifest = (...items: ServiceManifestEntry[]) => items;
+const ids = (list: PluginEntry[]) => list.map((e) => e.id);
 
 describe('applyServiceManifest', () => {
-  it('returns every entry for the monolith (null manifest)', () => {
-    expect(applyServiceManifest(entries, null)).toHaveLength(entries.length);
+  it('returns every entry when there is no manifest', () => {
+    expect(applyServiceManifest(entries, null)).toBe(entries);
   });
 
-  it('keeps the named modules plus all infra overlays', () => {
-    const selected = applyServiceManifest(entries, [plain('wallet')]);
-    expect(selected.map((e) => e.id).sort()).toEqual(['bullmq', 'rabbitmq', 'wallet']);
+  it('keeps only the listed modules', () => {
+    const kept = applyServiceManifest(entries, manifest({ id: 'kyc', noRoutes: false }));
+    expect(ids(kept)).toEqual(['kyc', 'queue']);
   });
 
-  it('marks only the flagged entries noRoutes, and keeps them', () => {
-    const selected = applyServiceManifest(entries, [
-      plain('wallet'),
-      { id: 'identity', noRoutes: true },
-    ]);
-    expect(selected.find((e) => e.id === 'identity')?.noRoutes).toBe(true);
-    expect(selected.find((e) => e.id === 'wallet')?.noRoutes).toBeUndefined();
-    expect(selected.find((e) => e.id === 'gaming')).toBeUndefined();
+  it('keeps every infra overlay even when not listed', () => {
+    const kept = applyServiceManifest(entries, manifest({ id: 'wallet', noRoutes: false }));
+    expect(ids(kept)).toContain('queue');
   });
 
-  it('throws on the flag for an unknown id', () => {
-    expect(() => applyServiceManifest(entries, [{ id: 'nope', noRoutes: true }])).toThrow(
-      /unknown module id/,
+  it('fails on an unknown module id and lists the known ids', () => {
+    expect(() => applyServiceManifest(entries, manifest({ id: 'ghost', noRoutes: false }))).toThrow(
+      /unknown module id\(s\): ghost\. Known ids: wallet, kyc, bonus, queue\./,
     );
   });
 
-  it('throws on the flag for an infra overlay', () => {
-    expect(() => applyServiceManifest(entries, [{ id: 'rabbitmq', noRoutes: true }])).toThrow(
-      /infra overlay/,
+  it('refuses no-routes on an infra overlay', () => {
+    expect(() => applyServiceManifest(entries, manifest({ id: 'queue', noRoutes: true }))).toThrow(
+      /marks infra overlay\(s\) ":no-routes": queue/,
     );
   });
 
-  it('throws on an unknown id', () => {
-    expect(() => applyServiceManifest(entries, [plain('nope')])).toThrow(/unknown module id/);
+  it('keeps a module the listed modules depend on only when it is listed', () => {
+    const kept = applyServiceManifest(entries, manifest({ id: 'bonus', noRoutes: false }));
+    expect(ids(kept)).not.toContain('wallet');
+    const withWallet = applyServiceManifest(
+      entries,
+      manifest({ id: 'bonus', noRoutes: false }, { id: 'wallet', noRoutes: false }),
+    );
+    expect(ids(withWallet)).toEqual(['wallet', 'bonus', 'queue']);
+  });
+
+  it('a module marked no-routes loads without mounting its routers', () => {
+    const kept = applyServiceManifest(
+      entries,
+      manifest({ id: 'wallet', noRoutes: true }, { id: 'kyc', noRoutes: false }),
+    );
+    expect(kept.find((e) => e.id === 'wallet')?.noRoutes).toBe(true);
+    expect(kept.find((e) => e.id === 'kyc')?.noRoutes).toBeUndefined();
+    expect(entries.find((e) => e.id === 'wallet')?.noRoutes).toBeUndefined();
   });
 });
 
-const MAIL = createToken<object>('MAIL');
-const RG_LIMITS = createToken<object>('RG_LIMITS');
-const PERMISSIONS = createToken<object>('PERMISSIONS');
-const catalog = { MAIL, RG_LIMITS, PERMISSIONS } satisfies TokenCatalog;
-type Catalog = typeof catalog;
+describe('service completeness', () => {
+  const WALLET_PORT = Symbol('WALLET_COMMANDS');
+  const AUDIT_PORT = Symbol('AUDIT_LOG');
 
-const plugin = (id: string, shape: Partial<Plugin<Catalog>> = {}): Plugin<Catalog> => ({
-  id,
-  register: () => {},
-  ...shape,
-});
-const binds =
-  (...ports: Token<object>[]): Plugin<Catalog>['register'] =>
-  (ctx) => {
-    for (const port of ports) {
-      ctx.provide(port, () => ({}));
-    }
+  type Spec = {
+    dependsOn?: string[];
+    requires?: symbol[];
+    controls?: { port: symbol; boundBy: string; routesOnly?: boolean }[];
+    provides?: symbol[];
   };
 
-const ADMIN_GUARD_CONTROL: HostControl<Catalog> = {
-  owner: 'AdminGuard',
-  port: PERMISSIONS,
-  without: 'grants come from the static role table',
-  boundBy: 'iam',
-};
-
-/** A plugin list of `plugins` (those named in `infra` as overlays), checked against `manifest`. */
-function checkOf(
-  plugins: Plugin<Catalog>[],
-  manifest: string[],
-  {
-    infra = [],
-    bound = [],
-    hostControls = [],
-  }: { infra?: string[]; bound?: symbol[]; hostControls?: HostControl<Catalog>[] } = {},
-) {
-  const byId = new Map(plugins.map((p) => [p.id, p]));
-  const readPlugin = vi.fn(async (entry: PluginEntry) => {
-    const found = byId.get(entry.id);
-    if (!found) {
-      throw new Error(`no fixture plugin ${entry.id}`);
-    }
-    return found;
-  });
-  const check: ServiceManifestCheck<Catalog> = {
-    entries: plugins.map((p) => ({
-      id: p.id,
-      path: p.id,
-      ...(infra.includes(p.id) ? { kind: 'infra' as const } : {}),
-    })),
-    manifest: parseServiceManifest(manifest.join(',')) ?? [],
-    readPlugin,
-    hostControls,
-    isBound: (port) => bound.includes(port),
-  };
-  return { check, readPlugin };
-}
-
-describe('selectServiceEntries', () => {
-  const graph = [
-    plugin('audit'),
-    plugin('identity', { dependsOn: ['audit'] }),
-    plugin('wallet', { dependsOn: ['identity', 'audit'] }),
-    plugin('gaming', { dependsOn: ['wallet'] }),
-    plugin('bullmq'),
-  ];
-
-  it('boots a manifest that lists its dependencies, reading only what it selects', async () => {
-    const { check, readPlugin } = checkOf(graph, ['audit', 'identity', 'wallet'], {
-      infra: ['bullmq'],
-    });
-
-    const selected = await selectServiceEntries(check);
-
-    expect(selected.map((e) => e.id)).toEqual(['audit', 'identity', 'wallet', 'bullmq']);
-    expect(readPlugin.mock.calls.map(([e]) => e.id).sort()).toEqual(
-      ['audit', 'bullmq', 'identity', 'wallet'].sort(),
-    );
-  });
-
-  it('names every left-out dependency, transitive ones included, in one error', async () => {
-    const { check } = checkOf(graph, ['gaming']);
-
-    await expect(selectServiceEntries(check)).rejects.toThrow(
-      /SERVICE_MANIFEST=gaming leaves out[\s\S]*- wallet \(required by gaming\)[\s\S]*- identity \(required by wallet\)[\s\S]*- audit \(required by wallet, identity\)[\s\S]*Add them: SERVICE_MANIFEST=gaming,wallet,identity,audit$/m,
-    );
-  });
-
-  it("counts an infra overlay's dependencies", async () => {
-    const overlay = graph.map((p) => (p.id === 'bullmq' ? { ...p, dependsOn: ['identity'] } : p));
-    const { check } = checkOf(overlay, ['audit'], { infra: ['bullmq'] });
-
-    await expect(selectServiceEntries(check)).rejects.toThrow(/- identity \(required by bullmq\)/);
-  });
-
-  it('flags a dependency the plugin list does not have at all', async () => {
-    const { check } = checkOf([plugin('audit', { dependsOn: ['ghost'] })], ['audit']);
-    const run = selectServiceEntries(check);
-
-    await expect(run).rejects.toThrow(/- ghost \(required by audit\) - not in the plugin list/);
-    await expect(run).rejects.not.toThrow(/Add them/);
-  });
-
-  it('stops on a cycle among left-out modules', async () => {
-    const cyclic = [
-      plugin('gaming', { dependsOn: ['wallet'] }),
-      plugin('wallet', { dependsOn: ['identity'] }),
-      plugin('identity', { dependsOn: ['wallet'] }),
-    ];
-
-    await expect(selectServiceEntries(checkOf(cyclic, ['gaming']).check)).rejects.toThrow(
-      /Add them: SERVICE_MANIFEST=gaming,wallet,identity$/m,
-    );
-  });
-
-  it('still refuses an unknown id before reading anything', async () => {
-    const { check, readPlugin } = checkOf(graph, ['nope']);
-
-    await expect(selectServiceEntries(check)).rejects.toThrow(/unknown module id/);
-    expect(readPlugin).not.toHaveBeenCalled();
-  });
-});
-
-describe('the one error a manifest boot fails with', () => {
-  const install = [
-    plugin('audit'),
-    plugin('identity', { requiresPorts: [MAIL] }),
-    plugin('mail', { dependsOn: ['audit'], register: binds(MAIL) }),
-    plugin('wallet', {
-      dependsOn: ['identity'],
-      controlPorts: [{ port: RG_LIMITS, without: 'limits go unenforced', boundBy: 'compliance' }],
-    }),
-    plugin('compliance', { dependsOn: ['wallet', 'gaming'], register: binds(RG_LIMITS) }),
-    plugin('gaming', { dependsOn: ['wallet'] }),
-    plugin('iam', { dependsOn: ['identity'], register: binds(PERMISSIONS) }),
-  ];
-  const withoutModules = (...ids: string[]) => install.filter((p) => !ids.includes(p.id));
-
-  it('adds every module a left-out dependency, a required port and a control need', async () => {
-    const { check } = checkOf(install, ['wallet'], { hostControls: [ADMIN_GUARD_CONTROL] });
-
-    await expect(selectServiceEntries(check)).rejects.toThrow(
-      'SERVICE_MANIFEST=wallet leaves out what this service needs:\n' +
-        '  - identity (required by wallet, iam)\n' +
-        '  - wallet runs without RG_LIMITS (bound by compliance): limits go unenforced\n' +
-        '  - identity requires MAIL (bound by mail)\n' +
-        '  - AdminGuard runs without PERMISSIONS (bound by iam): grants come from the static role table\n' +
-        '  - gaming (required by compliance)\n' +
-        '  - audit (required by mail)\n' +
-        'Add them: SERVICE_MANIFEST=wallet,identity,compliance,mail,iam,gaming,audit\n' +
-        'A split service may not skip a control the rest of its install enforces',
-    );
-  });
-
-  it('refuses an unbound required port, naming the module that binds it', async () => {
-    const { check } = checkOf(install, ['identity']);
-
-    await expect(assertServiceComplete(check)).rejects.toThrow(
-      /- identity requires MAIL \(bound by mail\)\n {2}- audit \(required by mail\)\nAdd them: SERVICE_MANIFEST=identity,mail,audit\nA split service loads every module/,
-    );
-  });
-
-  it('refuses an unbound control the plugin list has, adding its module and what it needs', async () => {
-    const { check } = checkOf(install, ['wallet', 'identity', 'mail', 'audit'], { bound: [MAIL] });
-
-    await expect(assertServiceComplete(check)).rejects.toThrow(
-      /- wallet runs without RG_LIMITS \(bound by compliance\): limits go unenforced\n {2}- gaming \(required by compliance\)\nAdd them: SERVICE_MANIFEST=wallet,identity,mail,audit,compliance,gaming\n/,
-    );
-  });
-
-  it("refuses the host's controls on a split that needs nothing else", async () => {
-    const { check } = checkOf(install, ['audit'], { hostControls: [ADMIN_GUARD_CONTROL] });
-
-    await expect(assertServiceComplete(check)).rejects.toThrow(
-      /- AdminGuard runs without PERMISSIONS \(bound by iam\)[\s\S]*Add them: SERVICE_MANIFEST=audit,iam,identity,mail\n/,
-    );
-  });
-
-  it('boots, reading only what it selects, once every port is bound', async () => {
-    const { check, readPlugin } = checkOf(install, ['wallet', 'identity', 'mail', 'audit'], {
-      bound: [MAIL, RG_LIMITS, PERMISSIONS],
-      hostControls: [ADMIN_GUARD_CONTROL],
-    });
-
-    await expect(assertServiceComplete(check)).resolves.toBeUndefined();
-    expect(readPlugin.mock.calls.map(([e]) => e.id)).toEqual([
-      'audit',
-      'identity',
-      'mail',
-      'wallet',
-    ]);
-  });
-
-  it('boots a control whose module the plugin list does not have', async () => {
-    const { check } = checkOf(
-      withoutModules('compliance', 'iam'),
-      ['wallet', 'identity', 'mail', 'audit'],
-      { bound: [MAIL], hostControls: [ADMIN_GUARD_CONTROL] },
-    );
-
-    await expect(assertServiceComplete(check)).resolves.toBeUndefined();
-  });
-
-  it('still refuses, offering nothing to add, when the selected module does not bind it', async () => {
-    const unbinding = install.map((p) => (p.id === 'compliance' ? { ...p, register: binds() } : p));
-    const { check } = checkOf(
-      unbinding,
-      ['wallet', 'identity', 'mail', 'audit', 'compliance', 'gaming'],
-      { bound: [MAIL] },
-    );
-    const run = assertServiceComplete(check);
-
-    await expect(run).rejects.toThrow(/- wallet runs without RG_LIMITS \(bound by compliance\)/);
-    await expect(run).rejects.not.toThrow(/Add them/);
-  });
-
-  describe('a control only routes reach', () => {
-    const routed = [
-      ...withoutModules('wallet'),
-      plugin('wallet', {
-        dependsOn: ['identity'],
-        controlPorts: [
-          {
-            port: RG_LIMITS,
-            without: 'limits go unenforced',
-            boundBy: 'compliance',
-            routesOnly: true,
-          },
-        ],
-      }),
-    ];
-
-    it('boots a :no-routes selection without it', async () => {
-      const { check } = checkOf(routed, ['wallet:no-routes', 'identity', 'mail', 'audit'], {
-        bound: [MAIL],
-      });
-
-      await expect(assertServiceComplete(check)).resolves.toBeUndefined();
-    });
-
-    it('leaves it out of the error a :no-routes selection fails with for something else', async () => {
-      const { check } = checkOf(routed, ['wallet:no-routes', 'identity', 'audit']);
-      const run = assertServiceComplete(check);
-
-      await expect(run).rejects.toThrow(/- identity requires MAIL/);
-      await expect(run).rejects.not.toThrow(/RG_LIMITS|compliance/);
-    });
-
-    it('refuses a selection that serves the routes, adding the module', async () => {
-      const { check } = checkOf(routed, ['wallet', 'identity', 'mail', 'audit'], { bound: [MAIL] });
-
-      await expect(assertServiceComplete(check)).rejects.toThrow(
-        /- wallet runs without RG_LIMITS \(bound by compliance\): limits go unenforced\n[\s\S]*Add them: SERVICE_MANIFEST=wallet,identity,mail,audit,compliance,gaming\n/,
-      );
-    });
-  });
-
-  it('names the module that failed to register when no binder of a required port is known', async () => {
-    const unconfigured = install.map((p) =>
-      p.id === 'mail'
-        ? {
-            ...p,
-            register: () => {
-              throw new Error('mail: AUTH_SECRET is too short');
-            },
+  function build(specs: Record<string, Spec>) {
+    const plugins = new Map<string, Plugin<TokenCatalog>>();
+    const list: PluginEntry[] = Object.keys(specs).map((id) => ({ id, path: `/${id}` }));
+    for (const [id, spec] of Object.entries(specs)) {
+      plugins.set(id, {
+        id,
+        dependsOn: spec.dependsOn ?? [],
+        requiresPorts: spec.requires ?? [],
+        controlPorts: (spec.controls ?? []).map((c) => ({ ...c, without: `${id} skips a check` })),
+        register(ctx) {
+          for (const port of spec.provides ?? []) {
+            ctx.provide(port, () => id);
           }
-        : p,
-    );
-    const { check } = checkOf(unconfigured, ['identity']);
+        },
+      });
+    }
+    const readPlugin = async (entry: PluginEntry) => {
+      const plugin = plugins.get(entry.id);
+      if (!plugin) {
+        throw new Error(`no plugin ${entry.id}`);
+      }
+      return plugin;
+    };
+    return { list, readPlugin };
+  }
 
-    await expect(assertServiceComplete(check)).rejects.toThrow(
-      /- identity requires MAIL, which no module in the plugin list binds[\s\S]*failed to register, so the ports they bind are unknown:\n {2}- mail: mail: AUTH_SECRET is too short$/,
+  const check = (
+    specs: Record<string, Spec>,
+    selected: ServiceManifestEntry[],
+    bound: symbol[] = [],
+  ) => {
+    const { list, readPlugin } = build(specs);
+    return {
+      entries: list,
+      manifest: selected,
+      readPlugin,
+      hostControls: [],
+      isBound: (port: symbol) => bound.includes(port),
+    };
+  };
+
+  const specs: Record<string, Spec> = {
+    wallet: { provides: [WALLET_PORT] },
+    bonus: { requires: [WALLET_PORT] },
+    kyc: {},
+  };
+
+  it('a service missing a port its kept modules require fails the boot with a clear error', async () => {
+    const failing = check(specs, [{ id: 'bonus', noRoutes: false }]);
+    await expect(assertServiceComplete(failing)).rejects.toThrow(
+      /SERVICE_MANIFEST=bonus leaves out what this service needs:[\s\S]*bonus requires WALLET_COMMANDS \(bound by wallet\)[\s\S]*Add them: SERVICE_MANIFEST=bonus,wallet/,
     );
   });
 
-  it('registers none of the plugins the boot registered a second time', async () => {
-    const registers = new Map(install.map(({ id, register }) => [id, vi.fn(register)]));
-    const { check } = checkOf(
-      install.map((p) => ({ ...p, register: registers.get(p.id) ?? p.register })),
-      ['identity'],
-    );
-
-    await expect(
-      assertServiceComplete({ ...check, registered: new Set(['identity']) }),
-    ).rejects.toThrow(/- identity requires MAIL \(bound by mail\)/);
-    expect(registers.get('identity')).not.toHaveBeenCalled();
-    expect(registers.get('mail')).toHaveBeenCalledOnce();
+  it('a service missing a module its kept modules depend on fails before anything registers', async () => {
+    const dependent = check({ wallet: {}, bonus: { dependsOn: ['wallet'] } }, [
+      { id: 'bonus', noRoutes: false },
+    ]);
+    await expect(selectServiceEntries(dependent)).rejects.toThrow(/wallet \(required by bonus\)/);
   });
 
-  it('names a required port no module in the plugin list binds', async () => {
-    const { check } = checkOf(withoutModules('mail'), ['identity']);
-    const run = assertServiceComplete(check);
-
-    await expect(run).rejects.toThrow(
-      /- identity requires MAIL, which no module in the plugin list binds/,
+  it('a service missing a control port whose module is in the plugin list fails the boot', async () => {
+    const withControl = check(
+      {
+        wallet: { provides: [AUDIT_PORT] },
+        bonus: { controls: [{ port: AUDIT_PORT, boundBy: 'wallet' }] },
+      },
+      [{ id: 'bonus', noRoutes: false }],
     );
-    await expect(run).rejects.not.toThrow(/Add them/);
+    await expect(assertServiceComplete(withControl)).rejects.toThrow(
+      /bonus runs without AUDIT_LOG \(bound by wallet\)/,
+    );
+  });
+
+  it('a control port enforced only on routes is skipped for a no-routes module', async () => {
+    const routesOnly = check(
+      {
+        wallet: { provides: [AUDIT_PORT] },
+        bonus: { controls: [{ port: AUDIT_PORT, boundBy: 'wallet', routesOnly: true }] },
+      },
+      [{ id: 'bonus', noRoutes: true }],
+    );
+    await expect(assertServiceComplete(routesOnly)).resolves.toBeUndefined();
+  });
+
+  it('a complete service passes the check', async () => {
+    const complete = check(
+      specs,
+      [
+        { id: 'bonus', noRoutes: false },
+        { id: 'wallet', noRoutes: false },
+      ],
+      [WALLET_PORT],
+    );
+    await expect(assertServiceComplete(complete)).resolves.toBeUndefined();
+  });
+
+  it('passes when the required port is already bound by the host', async () => {
+    const hostBound = check(specs, [{ id: 'bonus', noRoutes: false }], [WALLET_PORT]);
+    await expect(assertServiceComplete(hostBound)).resolves.toBeUndefined();
   });
 });

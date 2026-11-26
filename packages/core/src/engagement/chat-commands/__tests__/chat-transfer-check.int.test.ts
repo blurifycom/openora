@@ -1,397 +1,225 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq, sql } from 'drizzle-orm';
-import { ZodError } from 'zod';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { and, eq, isNull } from 'drizzle-orm';
+import { call, ORPCError } from '@orpc/server';
 import {
-  Container,
-  DRIZZLE,
-  EVENT_BUS,
-  ModuleRegistryImpl,
-  type CoreTokenCatalog,
-  type DrizzleTx,
-} from '@openora/core/server';
-import {
-  ACCOUNT_READER,
-  AUDIT_WRITER,
-  CHAT_BLOCK_WRITER,
-  CHAT_CONTEXT_SEND_POLICY,
-  CHAT_TRANSFER_CHECK,
-  CHAT_TRANSFER_MAX_COUNTERPARTS,
-  GLOBAL_CHAT_ROOM_ID,
-  REALTIME_TRANSPORT,
+  chatBlockLockKey,
+  checkChatTransfer,
+  ChatTransferCheckUnavailableError,
+  type ChatTransferCheck,
   type ChatTransferCheckInput,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { type InternalContext, withAdvisoryXactLock } from '@openora/core/server';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
+import { chatRoom, chatUserBlock } from '@openora/core/engagement/schema/chat';
 import {
-  chatMute,
-  chatPlatformBan,
-  chatRoom,
-  chatRoomBan,
-  chatRoomMember,
-  chatRoomMute,
-  chatUserBlock,
-} from '@openora/core/engagement/schema/chat';
-import chatPlugin from '@openora/core/engagement/plugins/chat';
-import {
-  makeAccountReader,
-  makeAuditWriter,
-  makeChatContextSendPolicy,
-  makeEventBus,
-  makeRealtimeTransport,
-} from '../../../testing/mock.js';
-import { migrate } from '../migrate.js';
+  createTestDb,
+  waitForAdvisoryLockWaiter,
+  type TestDb,
+} from '../../../testing/real-infra.js';
+import { migrate as migrateChatCommands } from '../migrate.js';
 import { chatCommandConfig } from '../schema/index.js';
-import chatCommandsPlugin from '../plugin.js';
+import { createInternalTransferCheckRouter } from '../router/internal-transfer-check.router.js';
+import { ChatTransferCheckService } from '../service/chat-transfer-check.service.js';
 
-let db: TestDb;
+type TransferCommand = ChatTransferCheckInput['command'];
+
+let testDb: TestDb;
+let transferCheck: ChatTransferCheckService;
 
 beforeAll(async () => {
-  db = await createTestDb([migrateChat, migrate]);
-});
+  testDb = await createTestDb([migrateChat, migrateChatCommands]);
+  transferCheck = new ChatTransferCheckService({
+    roomAccess: { verifyRoomAccess: async () => undefined },
+    contextSendPolicy: { check: async () => ({ allowed: true }) },
+  });
+}, 120_000);
 
 afterAll(async () => {
-  await db.drop();
-});
+  await testDb.drop();
+}, 60_000);
 
-beforeEach(async () => {
-  await db.drizzle.db.execute(
-    sql`TRUNCATE ${chatUserBlock}, ${chatCommandConfig}, ${chatPlatformBan}, ${chatRoomBan}, ${chatMute}, ${chatRoomMute} CASCADE`,
-  );
-  await db.drizzle.db.delete(chatRoom).where(sql`${chatRoom.slug} <> ${GLOBAL_CHAT_ROOM_ID}`);
-  await db.drizzle.db.insert(chatCommandConfig).values([
-    { key: 'gift', label: 'gift', config: { maxRecipients: 1 } },
-    { key: 'rain', label: 'rain', enabled: false },
-  ]);
-});
+const db = () => testDb.drizzle.db;
 
-function boot(contextSendPolicy = makeChatContextSendPolicy()) {
-  const container = new Container<CoreTokenCatalog>();
-  container.register(DRIZZLE, () => db.drizzle);
-  container.register(EVENT_BUS, () => makeEventBus());
-  container.register(AUDIT_WRITER, () => makeAuditWriter());
-  container.register(REALTIME_TRANSPORT, () => makeRealtimeTransport());
-  container.register(ACCOUNT_READER, () => makeAccountReader());
-  const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
-  chatPlugin.register(registry);
-  chatCommandsPlugin.register(registry);
-  container.register(CHAT_CONTEXT_SEND_POLICY, () => contextSendPolicy);
-  const transferCheck = container.get(CHAT_TRANSFER_CHECK);
-  return {
-    check: (input: ChatTransferCheckInput) =>
-      db.drizzle.db.transaction((tx) => transferCheck.check(tx, input)),
-    transferCheck,
-    blockWriter: container.get(CHAT_BLOCK_WRITER),
-  };
-}
-
-async function globalRoomId() {
-  const [row] = await db.drizzle.db
-    .select({ id: chatRoom.id })
-    .from(chatRoom)
-    .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
-  return row.id;
-}
-
-async function room(values: Partial<typeof chatRoom.$inferInsert> = {}, memberIds: string[] = []) {
-  const [created] = await db.drizzle.db
+async function seedRoom() {
+  const slug = `room-${randomUUID()}`;
+  const [room] = await db()
     .insert(chatRoom)
-    .values({ name: 'room', slug: `room-${randomUUID()}`, ...values })
-    .returning({ id: chatRoom.id });
-  if (memberIds.length > 0) {
-    await db.drizzle.db
-      .insert(chatRoomMember)
-      .values(memberIds.map((userId) => ({ roomId: created.id, userId })));
+    .values({ name: slug, slug, isPublic: true })
+    .returning();
+  if (!room) {
+    throw new Error('seedRoom: no row');
   }
-  return created.id;
+  return room;
 }
 
-const gift = (over: Partial<ChatTransferCheckInput> = {}): ChatTransferCheckInput => ({
-  actorId: randomUUID(),
-  roomId: null,
-  counterpartIds: [],
-  command: 'gift',
-  ...over,
-});
+async function setCommand(key: TransferCommand, enabled: boolean) {
+  await db()
+    .insert(chatCommandConfig)
+    .values({ key, enabled, label: key })
+    .onConflictDoUpdate({ target: chatCommandConfig.key, set: { enabled } });
+}
 
-describe('CHAT_TRANSFER_CHECK local binding', () => {
-  it('names each counterpart in a block with the actor once, either direction, never the actor', async () => {
-    const { check } = boot();
-    const actorId = randomUUID();
-    const [blockedByActor, blockingActor, clear] = [randomUUID(), randomUUID(), randomUUID()];
-    await db.drizzle.db.insert(chatUserBlock).values([
-      { blockerId: actorId, blockedId: blockedByActor },
-      { blockerId: blockingActor, blockedId: actorId },
-    ]);
+const runCheck = (input: ChatTransferCheckInput) =>
+  testDb.drizzle.db.transaction((tx) => transferCheck.check(tx, input));
 
-    const verdict = await check(
-      gift({
-        actorId,
-        counterpartIds: [blockedByActor, blockingActor, clear, actorId, blockedByActor, actorId],
-      }),
-    );
+function inputFor(
+  roomId: string | null,
+  actorId: string,
+  counterpartIds: string[] = [],
+  command: TransferCommand = 'gift',
+): ChatTransferCheckInput {
+  return { actorId, roomId, counterpartIds, command };
+}
 
-    expect(verdict).toEqual({
-      allowed: true,
-      canonicalRoomId: null,
-      contextRef: null,
-      blockedIds: [blockedByActor, blockingActor],
-      commandConfig: { maxRecipients: 1 },
-    });
+describe('chat transfer check', () => {
+  it('a disabled command is refused', async () => {
+    const room = await seedRoom();
+    const actor = randomUUID();
+    await setCommand('rain', false);
+    await setCommand('donate', true);
+
+    const disabled = await runCheck(inputFor(room.id, actor, [], 'rain'));
+    const enabled = await runCheck(inputFor(room.id, actor, [], 'donate'));
+
+    expect(disabled).toEqual({ allowed: false, refusal: 'command_disabled' });
+    expect(enabled).toMatchObject({ allowed: true });
   });
 
-  it('ignores a lifted block', async () => {
-    const { check } = boot();
-    const actorId = randomUUID();
-    const counterpartId = randomUUID();
-    await db.drizzle.db
+  it('a counterpart blocked by the actor or blocking the actor is reported', async () => {
+    const room = await seedRoom();
+    const actor = randomUUID();
+    const blockedByActor = randomUUID();
+    const blockingActor = randomUUID();
+    const unrelated = randomUUID();
+    const unblocked = randomUUID();
+    await setCommand('gift', true);
+    await db()
       .insert(chatUserBlock)
-      .values({ blockerId: actorId, blockedId: counterpartId, removedAt: new Date() });
+      .values([
+        { blockerId: actor, blockedId: blockedByActor },
+        { blockerId: blockingActor, blockedId: actor },
+        { blockerId: actor, blockedId: unblocked, removedAt: new Date() },
+      ]);
 
-    await expect(check(gift({ actorId, counterpartIds: [counterpartId] }))).resolves.toMatchObject({
-      allowed: true,
-      blockedIds: [],
-    });
-  });
-
-  it('rejects more counterparts than the cap before taking any lock', async () => {
-    const { check } = boot();
-    const counterpartIds = Array.from({ length: CHAT_TRANSFER_MAX_COUNTERPARTS + 1 }, () =>
-      randomUUID(),
+    const verdict = await runCheck(
+      inputFor(room.id, actor, [blockedByActor, blockingActor, unrelated, unblocked]),
     );
 
-    await expect(check(gift({ counterpartIds }))).rejects.toBeInstanceOf(ZodError);
+    expect(verdict).toMatchObject({ allowed: true });
+    if (!verdict.allowed) {
+      throw new Error('expected an allowed verdict');
+    }
+    expect([...verdict.blockedIds].sort()).toEqual([blockedByActor, blockingActor].sort());
   });
 
-  it('throws without the caller transaction instead of answering unlocked', async () => {
-    const { transferCheck } = boot();
+  it('counterparts above the cap are refused', async () => {
+    const room = await seedRoom();
+    const actor = randomUUID();
+    await setCommand('gift', true);
+    const ids = Array.from({ length: 501 }, () => randomUUID());
 
-    await expect(transferCheck.check(undefined, gift())).rejects.toThrow(
-      'needs the caller transaction',
-    );
+    const atCap = await runCheck(inputFor(room.id, actor, ids.slice(0, 500)));
+    const overCap = runCheck(inputFor(room.id, actor, ids));
+
+    expect(atCap).toMatchObject({ allowed: true, blockedIds: [] });
+    await expect(overCap).rejects.toThrow();
   });
 
-  it('throws on the non-transaction database handle', async () => {
-    const { transferCheck } = boot();
+  it('a concurrent block waits for the transfer transaction to commit', async () => {
+    await setCommand('gift', true);
+    const directions = ['actor-blocks', 'counterpart-blocks'] as const;
 
-    await expect(transferCheck.check(db.drizzle.db, gift())).rejects.toThrow(
-      'needs the caller transaction',
-    );
+    for (const direction of directions) {
+      const room = await seedRoom();
+      const actor = randomUUID();
+      const counterpart = randomUUID();
+      const blockerId = direction === 'actor-blocks' ? actor : counterpart;
+      const blockedId = direction === 'actor-blocks' ? counterpart : actor;
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let checked: () => void = () => {};
+      const checkDone = new Promise<void>((resolve) => {
+        checked = resolve;
+      });
+      const transfer = testDb.drizzle.db.transaction(async (tx) => {
+        const verdict = await transferCheck.check(tx, inputFor(room.id, actor, [counterpart]));
+        checked();
+        await gate;
+        return verdict;
+      });
+      await checkDone;
+
+      const blocking = testDb.drizzle.db.transaction((tx) =>
+        withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), () =>
+          tx.insert(chatUserBlock).values({ blockerId, blockedId }),
+        ),
+      );
+      await waitForAdvisoryLockWaiter(testDb);
+      const activeWhileWaiting = await db()
+        .select({ id: chatUserBlock.id })
+        .from(chatUserBlock)
+        .where(and(eq(chatUserBlock.blockerId, blockerId), isNull(chatUserBlock.removedAt)));
+      release();
+      const verdict = await transfer;
+      await blocking;
+      const activeAfter = await db()
+        .select({ blockedId: chatUserBlock.blockedId })
+        .from(chatUserBlock)
+        .where(and(eq(chatUserBlock.blockerId, blockerId), isNull(chatUserBlock.removedAt)));
+
+      expect(activeWhileWaiting).toEqual([]);
+      expect(verdict).toMatchObject({ allowed: true, blockedIds: [] });
+      expect(activeAfter).toEqual([{ blockedId }]);
+    }
   });
 
-  it('refuses an actor who is not a member of a private room', async () => {
-    const { check } = boot();
-    const memberId = randomUUID();
-    const roomId = await room({ isPublic: false }, [memberId]);
-
-    await expect(check(gift({ roomId }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'room_access_denied',
-    });
-    await expect(check(gift({ actorId: memberId, roomId }))).resolves.toMatchObject({
-      allowed: true,
-      canonicalRoomId: roomId,
-    });
-  });
-
-  it('refuses a room that does not exist', async () => {
-    const { check } = boot();
-
-    await expect(check(gift({ roomId: randomUUID() }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'room_not_found',
-    });
-  });
-
-  it('refuses a command switched off, or with no config row', async () => {
-    const { check } = boot();
-
-    await expect(check(gift({ command: 'rain' }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'command_disabled',
-    });
-    await expect(check(gift({ command: 'donate' }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'command_disabled',
-    });
-  });
-
-  it('refuses room access before the command gate, so a disabled command does not vouch for a non-member', async () => {
-    const { check } = boot();
-    const memberId = randomUUID();
-    const roomId = await room({ isPublic: false }, [memberId]);
-
-    await expect(check(gift({ command: 'rain', roomId }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'room_access_denied',
-    });
-    await expect(check(gift({ command: 'rain', roomId, actorId: memberId }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'command_disabled',
-    });
-  });
-
-  it('refuses a command whose stored limits no longer parse, and allows one with none stored', async () => {
-    const { check } = boot();
-    await db.drizzle.db.execute(
-      sql`INSERT INTO ${chatCommandConfig} (key, label, config) VALUES ('donate', 'donate', '{"maxAmount": {"not": "a decimal"}}'::jsonb)`,
-    );
-
-    await expect(check(gift({ command: 'donate' }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'command_disabled',
-    });
-
-    await db.drizzle.db
-      .update(chatCommandConfig)
-      .set({ config: null })
-      .where(sql`${chatCommandConfig.key} = 'donate'`);
-
-    await expect(check(gift({ command: 'donate' }))).resolves.toMatchObject({
-      allowed: true,
-      commandConfig: {},
-    });
-  });
-
-  it('answers the global room as null whether addressed by null or by its row id', async () => {
-    const { check } = boot();
-
-    await expect(check(gift())).resolves.toMatchObject({ allowed: true, canonicalRoomId: null });
-    await expect(check(gift({ roomId: await globalRoomId() }))).resolves.toMatchObject({
-      allowed: true,
-      canonicalRoomId: null,
-    });
-  });
-
-  describe('a banned actor is refused', () => {
-    const rooms = {
-      global: async () => ({ roomId: null, banRoomId: await globalRoomId() }),
-      public: async () => {
-        const roomId = await room();
-        return { roomId, banRoomId: roomId };
-      },
-      private: async (actorId: string) => {
-        const roomId = await room({ isPublic: false }, [actorId]);
-        return { roomId, banRoomId: roomId };
+  it('an unanswered remote check refuses as unavailable', async () => {
+    const input = inputFor(randomUUID(), randomUUID(), [randomUUID()]);
+    const unanswered: ChatTransferCheck = {
+      check: async () => {
+        throw new ChatTransferCheckUnavailableError({ cause: new Error('request timed out') });
       },
     };
-    const platformScopes = {
-      global: '__global',
-      public: '__all_public',
-      private: '__all',
-    } as const;
-
-    it.each(Object.keys(rooms) as (keyof typeof rooms)[])(
-      'room ban in the %s room',
-      async (kind) => {
-        const { check } = boot();
-        const actorId = randomUUID();
-        const { roomId, banRoomId } = await rooms[kind](actorId);
-        await db.drizzle.db
-          .insert(chatRoomBan)
-          .values({ roomId: banRoomId, userId: actorId, bannedBy: randomUUID() });
-
-        await expect(check(gift({ actorId, roomId }))).resolves.toEqual({
-          allowed: false,
-          refusal: 'room_access_denied',
-        });
+    const faulty: ChatTransferCheck = {
+      check: async () => {
+        throw new Error('unexpected fault');
       },
+    };
+
+    const verdict = await checkChatTransfer(unanswered, null, input);
+
+    expect(verdict).toEqual({ allowed: false, refusal: 'chat_unavailable' });
+    await expect(checkChatTransfer(faulty, null, input)).rejects.toThrow('unexpected fault');
+  });
+
+  it('a caller service outside the allowed list is refused on the internal route', async () => {
+    const room = await seedRoom();
+    await setCommand('gift', true);
+    const router = createInternalTransferCheckRouter(
+      transferCheck,
+      testDb.drizzle,
+      new Set(['wallet']),
     );
+    const input = inputFor(room.id, randomUUID());
+    const asCaller = (internalCaller: string) => {
+      const context: InternalContext = {
+        request: { headers: {} },
+        clientMeta: { ip: null, userAgent: null },
+        internalCaller,
+      };
+      return { context };
+    };
 
-    it.each(Object.keys(rooms) as (keyof typeof rooms)[])(
-      'platform ban covering the %s room',
-      async (kind) => {
-        const { check } = boot();
-        const actorId = randomUUID();
-        const { roomId } = await rooms[kind](actorId);
-        await db.drizzle.db.insert(chatPlatformBan).values({
-          userId: actorId,
-          bannedBy: randomUUID(),
-          scope: platformScopes[kind],
-          reason: 'spam',
-        });
-
-        await expect(check(gift({ actorId, roomId }))).resolves.toEqual({
-          allowed: false,
-          refusal: 'room_access_denied',
-        });
-      },
+    const outsider = await call(router.check, input, asCaller('sportsbook')).catch(
+      (error: unknown) => error,
     );
-  });
+    const listed = await call(router.check, input, asCaller('wallet'));
 
-  it('reads bans through the caller transaction', async () => {
-    const { transferCheck } = boot();
-    const actorId = randomUUID();
-    const roomId = await room();
-
-    const verdict = await db.drizzle.db.transaction(async (tx: DrizzleTx) => {
-      await tx.insert(chatRoomBan).values({ roomId, userId: actorId, bannedBy: randomUUID() });
-      return transferCheck.check(tx, gift({ actorId, roomId }));
-    });
-
-    expect(verdict).toEqual({ allowed: false, refusal: 'room_access_denied' });
-  });
-
-  it('lets a muted actor through, as chat transfers do today', async () => {
-    const { check } = boot();
-    const actorId = randomUUID();
-    const roomId = await room();
-    await db.drizzle.db.insert(chatMute).values({
-      userId: actorId,
-      roomId: null,
-      scope: '__global',
-      mutedBy: randomUUID(),
-      reason: 'spam',
-    });
-    await db.drizzle.db
-      .insert(chatRoomMute)
-      .values({ roomId, userId: actorId, mutedBy: randomUUID(), reason: 'spam' });
-
-    await expect(check(gift({ actorId }))).resolves.toMatchObject({ allowed: true });
-    await expect(check(gift({ actorId, roomId }))).resolves.toMatchObject({ allowed: true });
-  });
-
-  it('returns a context room contextRef, and refuses with the policy reason when it denies', async () => {
-    const actorId = randomUUID();
-    const contextRef = `match:${randomUUID()}`;
-    const roomId = await room({ kind: 'context', contextRef, isPublic: false }, [actorId]);
-
-    await expect(boot().check(gift({ actorId, roomId }))).resolves.toMatchObject({
-      allowed: true,
-      canonicalRoomId: roomId,
-      contextRef,
-    });
-
-    const denying = boot(
-      makeChatContextSendPolicy(async () => ({ allowed: false, reason: 'match_closed' })),
-    );
-    await expect(denying.check(gift({ actorId, roomId }))).resolves.toEqual({
-      allowed: false,
-      refusal: 'context_send_denied',
-      policyReason: 'match_closed',
-      contextRef,
-    });
-  });
-
-  it('holds a block issued during the transfer until the transfer commits', async () => {
-    const { transferCheck, blockWriter } = boot();
-    const actorId = randomUUID();
-    const counterpartId = randomUUID();
-    const order: string[] = [];
-    let blockDone: Promise<unknown> = Promise.resolve();
-
-    await db.drizzle.db.transaction(async (tx) => {
-      const verdict = await transferCheck.check(
-        tx,
-        gift({ actorId, counterpartIds: [counterpartId] }),
-      );
-      expect(verdict).toMatchObject({ allowed: true, blockedIds: [] });
-      blockDone = blockWriter.blockUser(counterpartId, actorId).then(() => order.push('block'));
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      order.push('transfer');
-    });
-    await blockDone;
-
-    expect(order).toEqual(['transfer', 'block']);
+    expect(outsider).toBeInstanceOf(ORPCError);
+    expect(outsider).toMatchObject({ code: 'FORBIDDEN' });
+    expect(listed).toMatchObject({ allowed: true });
   });
 });

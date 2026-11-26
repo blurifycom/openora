@@ -1,108 +1,259 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { isTelemetryEnabled, sendTelemetry, type TelemetryBody } from '../telemetry.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  CACHE,
+  JOB_QUEUE,
+  PLAYER_ACTIVITY_TRACKER,
+  type CacheAdapter,
+  type JobQueueAdapter,
+  type PlayerActivityTracker,
+} from '@openora/core/contracts';
+import { DRIZZLE, type DrizzleService } from '../../db/index.js';
+import { Container } from '../../kernel/index.js';
+import type { CoreTokenCatalog } from '../core-token-catalog.js';
+import { startTelemetry } from '../telemetry.js';
 
-const PRODUCTION = { NODE_ENV: 'production' };
+const INSTANCE_ID = '7b0f3c0e-8f43-4d5e-9d0b-1f6f0a7a2c11';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-const body: TelemetryBody = {
-  type: 'event',
-  payload: {
-    website: 'site',
-    hostname: 'instance',
-    url: '/heartbeat',
-    name: 'heartbeat',
-    id: 'instance-1',
-    data: {
-      version: '1.0.0',
-      node: 'v22.0.0',
-      os: 'linux',
-      arch: 'x64',
-      activePlayers1d: 1,
-      activePlayers30d: 2,
-    },
-  },
+type Rig = {
+  container: Container<CoreTokenCatalog>;
+  queue: {
+    schedule: ReturnType<typeof vi.fn>;
+    unschedule: ReturnType<typeof vi.fn>;
+    registerWorker: ReturnType<typeof vi.fn>;
+  };
+  setIfAbsent: ReturnType<typeof vi.fn>;
 };
 
-describe('isTelemetryEnabled', () => {
-  it('is on by default outside tests', () => {
-    expect(isTelemetryEnabled(undefined, PRODUCTION)).toBe(true);
-    expect(isTelemetryEnabled(undefined, {})).toBe(true);
+function rig(
+  options: {
+    tracker?: boolean;
+    scheduleFails?: boolean;
+    firstBoot?: boolean;
+  } = {},
+): Rig {
+  const { tracker = true, scheduleFails = false, firstBoot = true } = options;
+  const schedule = vi.fn(async () => {
+    if (scheduleFails) {
+      throw new Error('redis down');
+    }
   });
+  const unschedule = vi.fn(async () => {});
+  const registerWorker = vi.fn();
+  const jobQueue: JobQueueAdapter = {
+    enqueue: async () => ({ id: 'job' }),
+    schedule,
+    unschedule,
+    registerWorker,
+    close: async () => {},
+  };
+  const setIfAbsent = vi.fn(async () => firstBoot);
+  const cache: CacheAdapter = {
+    get: async () => undefined,
+    set: async () => {},
+    setIfAbsent,
+    delete: async () => {},
+  };
+  const activity: PlayerActivityTracker = {
+    touchLastSeen: async () => {},
+    countActiveSince: async () => 3,
+  };
+  const db = {
+    insert: () => ({ values: () => ({ onConflictDoNothing: async () => {} }) }),
+    select: () => ({ from: async () => [{ instanceId: INSTANCE_ID }] }),
+  };
+  const drizzle: DrizzleService = Object.create({ db });
+  const container = new Container<CoreTokenCatalog>();
+  container.register(JOB_QUEUE, () => jobQueue);
+  container.register(CACHE, () => cache);
+  container.register(DRIZZLE, () => drizzle);
+  if (tracker) {
+    container.register(PLAYER_ACTIVITY_TRACKER, () => activity);
+  }
+  return { container, queue: { schedule, unschedule, registerWorker }, setIfAbsent };
+}
 
-  it('is off when createApp is given telemetry: false', () => {
-    expect(isTelemetryEnabled(false, PRODUCTION)).toBe(false);
-  });
+function stubFetch(impl: (url: string, init: RequestInit) => Promise<Response>) {
+  const fetchMock = vi.fn(impl);
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
 
-  it.each(['1', 'true', 'TRUE', ' yes '])('is off when OPENORA_TELEMETRY_DISABLED=%s', (flag) => {
-    expect(isTelemetryEnabled(undefined, { ...PRODUCTION, OPENORA_TELEMETRY_DISABLED: flag })).toBe(
-      false,
-    );
-  });
+function okFetch() {
+  return stubFetch(async () => new Response(null, { status: 204 }));
+}
 
-  it.each(['0', 'false', ''])('stays on when OPENORA_TELEMETRY_DISABLED=%s', (flag) => {
-    expect(isTelemetryEnabled(undefined, { ...PRODUCTION, OPENORA_TELEMETRY_DISABLED: flag })).toBe(
-      true,
-    );
-  });
-
-  it('is off when DO_NOT_TRACK=1', () => {
-    expect(isTelemetryEnabled(undefined, { ...PRODUCTION, DO_NOT_TRACK: '1' })).toBe(false);
-  });
-
-  it('is off under NODE_ENV=test', () => {
-    expect(isTelemetryEnabled(undefined, { NODE_ENV: 'test' })).toBe(false);
-  });
-
-  it('is off when CI is set', () => {
-    expect(isTelemetryEnabled(undefined, { ...PRODUCTION, CI: 'true' })).toBe(false);
-  });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
-describe('sendTelemetry', () => {
-  let server: Server;
-  let url: string;
-  let status = 200;
-  const received: Array<{ headers: Record<string, unknown>; body: unknown }> = [];
-
-  beforeAll(async () => {
-    server = createServer((req, res) => {
-      let raw = '';
-      req.on('data', (chunk: Buffer) => {
-        raw += chunk.toString();
-      });
-      req.on('end', () => {
-        received.push({ headers: req.headers, body: JSON.parse(raw) });
-        res.writeHead(status).end();
-      });
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/send`;
+describe('startTelemetry', () => {
+  it('schedules nothing when telemetry is disabled in the option', () => {
+    const fetchMock = okFetch();
+    const { container, queue } = rig();
+    startTelemetry(container, false, {});
+    expect(queue.schedule).not.toHaveBeenCalled();
+    expect(queue.registerWorker).not.toHaveBeenCalled();
+    expect(queue.unschedule).toHaveBeenCalledWith('telemetry', 'telemetry.heartbeat');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  afterAll(async () => {
-    await new Promise((resolve) => server.close(resolve));
+  it.each([
+    ['OPENORA_TELEMETRY_DISABLED', '1'],
+    ['OPENORA_TELEMETRY_DISABLED', 'true'],
+    ['OPENORA_TELEMETRY_DISABLED', ' YES '],
+    ['DO_NOT_TRACK', '1'],
+    ['DO_NOT_TRACK', 'true'],
+  ])('schedules nothing when %s=%j is truthy', (name, value) => {
+    const fetchMock = okFetch();
+    const { container, queue } = rig();
+    startTelemetry(container, undefined, { [name]: value });
+    expect(queue.schedule).not.toHaveBeenCalled();
+    expect(queue.registerWorker).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  beforeEach(() => {
-    received.length = 0;
-    status = 200;
+  it('a falsy opt-out value does not disable telemetry', () => {
+    okFetch();
+    const { container, queue } = rig();
+    startTelemetry(container, undefined, { DO_NOT_TRACK: '0' });
+    expect(queue.schedule).toHaveBeenCalledTimes(1);
   });
 
-  it('posts the event as JSON under a user agent Umami does not drop as a bot', async () => {
-    await sendTelemetry(url, body);
+  it('schedules nothing in CI or under NODE_ENV test', () => {
+    const fetchMock = okFetch();
+    const ci = rig();
+    startTelemetry(ci.container, undefined, { CI: 'true' });
+    expect(ci.queue.schedule).not.toHaveBeenCalled();
+    expect(ci.queue.registerWorker).not.toHaveBeenCalled();
 
-    expect(received).toHaveLength(1);
-    expect(received[0]?.body).toEqual(body);
-    expect(received[0]?.headers['user-agent']).toMatch(
-      /^Mozilla\/5\.0 \(compatible; openora\/\d+\.\d+\.\d+/,
+    const test = rig();
+    startTelemetry(test.container, undefined, { NODE_ENV: 'test' });
+    expect(test.queue.schedule).not.toHaveBeenCalled();
+    expect(test.queue.registerWorker).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('schedules nothing on a service that cannot count players', () => {
+    const fetchMock = okFetch();
+    const { container, queue } = rig({ tracker: false });
+    startTelemetry(container, undefined, {});
+    expect(queue.schedule).not.toHaveBeenCalled();
+    expect(queue.registerWorker).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('schedules a heartbeat job and reports boot when enabled', async () => {
+    const fetchMock = okFetch();
+    const { container, queue } = rig();
+    startTelemetry(container, undefined, {});
+    expect(queue.registerWorker).toHaveBeenCalledTimes(1);
+    expect(queue.schedule).toHaveBeenCalledWith(
+      'telemetry',
+      'telemetry.heartbeat',
+      {},
+      { everyMs: DAY_MS },
     );
-    expect(received[0]?.headers['content-type']).toBe('application/json');
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe('https://telemetry.openora.ai/api/send');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body)).payload.name).toBe('boot');
   });
 
-  it('rejects when the collector answers with an error status', async () => {
-    status = 503;
+  it('does not report boot when another instance already holds the boot guard', async () => {
+    const fetchMock = okFetch();
+    const { container, setIfAbsent } = rig({ firstBoot: false });
+    startTelemetry(container, undefined, {});
+    await vi.waitFor(() => expect(setIfAbsent).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
-    await expect(sendTelemetry(url, body)).rejects.toThrow('503');
+  it('sends to OPENORA_TELEMETRY_URL when set', async () => {
+    const fetchMock = okFetch();
+    const { container } = rig();
+    startTelemetry(container, undefined, { OPENORA_TELEMETRY_URL: 'https://sink.example/api' });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://sink.example/api');
+  });
+
+  it('the scheduled heartbeat worker reports a heartbeat event', async () => {
+    const fetchMock = okFetch();
+    const { container, queue } = rig({ firstBoot: false });
+    startTelemetry(container, undefined, {});
+    const registration = queue.registerWorker.mock.calls[0]?.[0];
+    await registration.handler();
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload.name).toBe('heartbeat');
+  });
+
+  it('boot completes when the telemetry endpoint is unreachable', async () => {
+    const fetchMock = stubFetch(async () => {
+      throw new TypeError('fetch failed');
+    });
+    const { container, queue } = rig();
+    expect(() => startTelemetry(container, undefined, {})).not.toThrow();
+    expect(queue.schedule).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it('boot completes when the endpoint answers an error status', async () => {
+    const fetchMock = stubFetch(async () => new Response(null, { status: 500 }));
+    const { container } = rig();
+    expect(() => startTelemetry(container, undefined, {})).not.toThrow();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it('boot completes when the telemetry endpoint hangs past the send timeout', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const fetchMock = stubFetch(() => new Promise<Response>(() => {}));
+    const { container, queue } = rig();
+    const returned = startTelemetry(container, undefined, {});
+    expect(returned).toBeUndefined();
+    expect(queue.schedule).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(timeoutSpy).toHaveBeenCalledWith(5000);
+    expect(fetchMock.mock.calls[0]?.[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('a failed schedule is logged and does not throw', async () => {
+    okFetch();
+    const { container, queue } = rig({ scheduleFails: true });
+    expect(() => startTelemetry(container, undefined, {})).not.toThrow();
+    await vi.waitFor(() => expect(queue.schedule).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it('the payload carries no player or operator identifying data', async () => {
+    const fetchMock = okFetch();
+    const { container } = rig();
+    startTelemetry(container, undefined, {});
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const init = fetchMock.mock.calls[0]?.[1];
+    const body = JSON.parse(String(init?.body));
+    expect(Object.keys(body).sort()).toEqual(['payload', 'type']);
+    expect(Object.keys(body.payload).sort()).toEqual([
+      'data',
+      'hostname',
+      'id',
+      'name',
+      'url',
+      'website',
+    ]);
+    expect(Object.keys(body.payload.data).sort()).toEqual([
+      'activePlayers1d',
+      'activePlayers30d',
+      'arch',
+      'node',
+      'os',
+      'version',
+    ]);
+    expect(body.payload.id).toBe(INSTANCE_ID);
+    expect(body.payload.hostname).toBe('instance');
+    expect(body.payload.data.activePlayers1d).toBe(3);
+    expect(JSON.stringify(init?.headers)).not.toMatch(/authorization|cookie/i);
   });
 });

@@ -158,7 +158,7 @@ export function buildEmailWindows({
  * Either way the trail is reported broken. An incomplete result, which has no registration window,
  * is returned as it is.
  */
-export function boundFirstWindow(
+function boundFirstWindow(
   built: ReturnType<typeof buildEmailWindows>,
   registeredAt: Date,
   others: readonly Pick<EmailChange, 'before' | 'after' | 'at'>[],
@@ -202,7 +202,7 @@ const changedAtOf = (after: Record<string, unknown> | null) => {
 const emailOf = (side: Record<string, unknown> | null) =>
   typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
 
-const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
+export const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
   const changedAt = changedAtOf(after);
   return {
     before: emailOf(before),

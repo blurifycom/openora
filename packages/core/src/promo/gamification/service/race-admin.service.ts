@@ -12,8 +12,6 @@ import { promoRace } from '../schema/index.js';
 import { RACE_COLUMNS, toRace } from '../shared/race-mapper.js';
 import { RaceNotFoundError } from './race.service.js';
 
-export { RaceNotFoundError };
-
 export const RacePositionsInvalidError = createDomainError<[reason: string]>(
   'RacePositionsInvalidError',
   (reason) => `the race's positions would be invalid: ${reason}`,
