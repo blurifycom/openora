@@ -1,3 +1,5 @@
+import { parseInternalCallers } from './router-utils.js';
+
 export function envMs(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') {
@@ -12,3 +14,6 @@ export function envMs(name: string, fallback: number): number {
 
 export const projectionHeartbeatEveryMs = (): number =>
   envMs('LEDGER_PROJECTION_HEARTBEAT_MS', 10_000);
+
+export const projectionHeartbeatArmed = (remote: boolean | undefined): boolean =>
+  remote === true || parseInternalCallers(process.env['MONEY_PORTS_CALLERS']).size > 0;

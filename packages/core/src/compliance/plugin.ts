@@ -4,6 +4,7 @@ import {
   ADMIN_GUARD,
   createLogger,
   retryUntilDone,
+  projectionHeartbeatArmed,
   projectionHeartbeatEveryMs,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
@@ -556,14 +557,20 @@ export default {
         void jobQueueRef
           .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000 })
           .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
-        void jobQueueRef
-          .schedule(
-            RG_LIMITS_HEARTBEAT_QUEUE,
-            'compliance-ledger-heartbeat',
-            {},
-            { everyMs: projectionHeartbeatEveryMs() },
-          )
-          .catch((err) => logger.error({ err }, 'compliance: limits heartbeat schedule failed'));
+        if (projectionHeartbeatArmed(c.get(RG_LIMIT_LEDGER).remote)) {
+          void c
+            .get(RG_LIMIT_LEDGER)
+            .heartbeat()
+            .catch((err) => logger.error({ err }, 'compliance: limits boot heartbeat failed'));
+          void jobQueueRef
+            .schedule(
+              RG_LIMITS_HEARTBEAT_QUEUE,
+              'compliance-ledger-heartbeat',
+              {},
+              { everyMs: projectionHeartbeatEveryMs() },
+            )
+            .catch((err) => logger.error({ err }, 'compliance: limits heartbeat schedule failed'));
+        }
       }
 
       return createComplianceRouter({

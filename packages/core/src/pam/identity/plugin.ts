@@ -41,6 +41,7 @@ import {
   LOCAL_SESSION_RESOLVER,
   createLogger,
   retryUntilDone,
+  projectionHeartbeatArmed,
   projectionHeartbeatEveryMs,
   parseInternalCallers,
 } from '@openora/core/server';
@@ -409,9 +410,16 @@ export default {
     ctx.routers.add('identity', (c, options) => {
       if (options?.mounted !== false) {
         assertAuthSurfaceGuards(c);
-        if (c.has(PLAY_ELIGIBILITY_PROJECTION)) {
-          const projection = c.get(PLAY_ELIGIBILITY_PROJECTION);
+        const projection = c.has(PLAY_ELIGIBILITY_PROJECTION)
+          ? c.get(PLAY_ELIGIBILITY_PROJECTION)
+          : null;
+        if (projection) {
           playEligibilityHeartbeatRef = () => projection.heartbeat();
+        }
+        if (projection && projectionHeartbeatArmed(projection.remote)) {
+          void projection
+            .heartbeat()
+            .catch((err) => logger.error({ err }, 'identity: eligibility boot heartbeat failed'));
           void c
             .get(JOB_QUEUE)
             .schedule(
