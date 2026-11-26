@@ -20,12 +20,21 @@ mkdirSync(join(repo, '.rulesync', 'hooks'), { recursive: true });
 copyFileSync(join(hooks, '_shared.mjs'), join(repo, '.rulesync', 'hooks', '_shared.mjs'));
 copyFileSync(join(hooks, 'guard-review.mjs'), guard);
 writeFileSync(join(repo, '.gitignore'), '.claude/\n');
+mkdirSync(join(repo, '.claude', 'skills', 'review'), { recursive: true });
+writeFileSync(join(repo, '.claude', 'skills', 'review', 'SKILL.md'), '');
 const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
 git('init', '-q', '-b', 'feat/x');
 git('add', '-A');
 git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
 const head = git('rev-parse', 'HEAD');
-after(() => rmSync(repo, { recursive: true, force: true }));
+const plain = realpathSync(mkdtempSync(join(tmpdir(), 'guard-review-plain-')));
+const plainGit = (...args) => execFileSync('git', args, { cwd: plain, encoding: 'utf8' }).trim();
+plainGit('init', '-q', '-b', 'feat/y');
+plainGit('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+after(() => {
+  rmSync(repo, { recursive: true, force: true });
+  rmSync(plain, { recursive: true, force: true });
+});
 beforeEach(() => rmSync(reviews, { recursive: true, force: true }));
 
 const saveReview = (sha, verdict) => {
@@ -239,4 +248,12 @@ test('a glued or repeated source flag is read per CLI', () => {
   assert.equal(exitCode('gh pr create -dH feat/other'), DENIED);
   assert.equal(exitCode('gh pr create -dH feat/x'), ALLOWED);
   assert.equal(exitCode('gh pr create -H=dev'), ALLOWED);
+});
+
+test('a repo without the review skill needs no review, but keeps its shared branches', () => {
+  assert.equal(exitCode(`cd ${plain} && git push -u origin HEAD`), ALLOWED);
+  assert.equal(exitCode(`git -C ${plain} push -u origin HEAD`), ALLOWED);
+  assert.equal(exitCode(`cd ${plain} && glab mr create --source-branch feat/y --fill`), ALLOWED);
+  assert.equal(exitCode(`git -C ${plain} push origin HEAD:main`), DENIED);
+  assert.equal(exitCode('git push -u origin feat/x'), DENIED);
 });

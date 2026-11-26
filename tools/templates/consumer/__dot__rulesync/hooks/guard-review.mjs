@@ -18,6 +18,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
+const REVIEW_SKILL = join('.claude', 'skills', 'review', 'SKILL.md');
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
 const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*(?:(?:command|env|time|nohup)\s+)?(?:\S*/)?`;
 const GIT_PUSH = new RegExp(`${PREFIX}git((?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*)\\s+push\\b(.*)$`);
@@ -238,14 +239,18 @@ const check = ({ dir, opensReview, pushArgs, sendsNothingNew, source }) => {
   if (!top || !common || (opensReview && !source && SHARED.test(branch))) {
     return;
   }
+  const mainCheckout = dirname(isAbsolute(common) ? common : resolve(dir, common));
+  const checkouts = [...new Set([top, mainCheckout])];
+  if (!checkouts.some((root) => existsSync(join(root, REVIEW_SKILL)))) {
+    return;
+  }
   if (!head) {
     if (source) {
       deny(`Blocked: \`${source}\` is not a local or fetched branch here; fetch it, then retry.`);
     }
     return;
   }
-  const mainCheckout = dirname(isAbsolute(common) ? common : resolve(dir, common));
-  if (!isApproved([...new Set([top, mainCheckout])], head)) {
+  if (!isApproved(checkouts, head)) {
     deny(
       `Blocked: no APPROVED review of HEAD ${head.slice(0, 9)}. Run \`ship\` for a ticket, or the \`review\` skill on this branch until it says APPROVED, then push. A person can still push from their own terminal.`,
     );
