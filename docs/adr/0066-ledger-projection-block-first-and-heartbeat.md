@@ -34,18 +34,21 @@ a stake (eligibility) and a deposit or wager (limits) refuse with `LedgerProject
 refusal on the Ledger API, which is not stored on the idempotency key so a retry after recovery is
 decided again, and a `player_blocked` refusal on the sportsbook ledger) once the last beat is older than
 `LEDGER_PROJECTION_STALE_MS` (default 60000), or missing. Without `MONEY_PORTS_CALLERS` nothing is checked;
-with it set the check runs even for a writer in the same process. The age is read at the database
+with it set the check runs even for a writer in the same process. The eligibility row is read before the age: a player it already blocks is refused as blocked, and stored, however old the beat, so a stale beat never turns a block into a retryable answer. The age is read at the database
 clock, and so are a cooling-off end and a limit window, so a replica clock that drifts never moves a
 refusal. Once the beat is older than `LEDGER_PROJECTION_ALERT_MS` (default 30000) a check logs an
 error the error tracker receives, at most once per that interval per projection, so a stalled owner
 is seen before stakes refuse.
 
-**Rollout order.** A missing beat refuses, so the owners beat before the money service names a
-caller: deploy identity and compliance with their remote projections, which beat at boot, confirm a row per projection in
-`ledger_projection_heartbeat` younger than `LEDGER_PROJECTION_STALE_MS`, and only then set
-`MONEY_PORTS_CALLERS` on the money service. Set in the other order, every stake, deposit and wager
-refuses until the first beat lands. A missing row never passes: it is indistinguishable from an
-owner that never started.
+**Rollout order.** A missing beat refuses, and a remote owner's beat is itself a money-ports call,
+which the money service answers only once `MONEY_PORTS_CALLERS` names the owner's service. So set
+`MONEY_PORTS_CALLERS` on the money service first, then deploy identity and compliance with
+`MONEY_SERVICE_URL`: each beats once at boot, so a row per projection lands within seconds. Confirm a
+row per projection in `ledger_projection_heartbeat` younger than `LEDGER_PROJECTION_STALE_MS` before
+routing stakes to the money service; until then every stake, deposit and wager it decides refuses. A
+missing row never passes: it is indistinguishable from an owner that never started. A process that
+loads the money modules locally on the database a money service also serves sets
+`MONEY_PORTS_CALLERS` too, so its owners beat for the money service that checks them.
 
 **Limit writes.** `reconcile` takes the slot locks of the limits it writes before the version row,
 the same locks a deposit or wager check takes. `writeFromRemote` runs while compliance's own
