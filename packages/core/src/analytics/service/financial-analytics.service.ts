@@ -62,11 +62,11 @@ const GRANULARITY_INTERVALS: Record<Granularity, string> = {
   month: '1 month',
 };
 
-function toBucketKey(bucket: Date | string): string {
+export function toBucketKey(bucket: Date | string): string {
   return new Date(bucket).toISOString().slice(0, 10);
 }
 
-function resolveGgrRange(dateFrom?: string, dateTo?: string): { from: Date; to: Date } {
+export function resolveGgrRange(dateFrom?: string, dateTo?: string): { from: Date; to: Date } {
   const to = dateTo ? new Date(dateTo) : new Date();
   const from = dateFrom
     ? new Date(dateFrom)
@@ -131,7 +131,7 @@ function byCurrency(rows: readonly MoneyByCurrency[]): Map<string, string> {
 }
 
 /** One row per currency of a financial summary, rails folded together. */
-function totalsPerCurrency(summary: FinancialSummary): FinancialCurrencyTotals[] {
+export function totalsPerCurrency(summary: FinancialSummary): FinancialCurrencyTotals[] {
   const deposits = sumByCurrency(summary.deposits);
   const withdrawals = sumByCurrency(summary.withdrawals);
   const netDeposits = byCurrency(summary.netDeposits);

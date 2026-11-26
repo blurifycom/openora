@@ -455,7 +455,7 @@ type WithdrawalAsset = {
  * (a fiat PSP), and the caller's choice passes through unchecked; rows that are all
  * withdrawal-disabled is a deliberate operator decision and fails closed.
  */
-function resolveWithdrawalNetwork(
+export function resolveWithdrawalNetwork(
   assets: readonly WithdrawalAsset[],
   currency: string,
   network?: string,
@@ -487,7 +487,7 @@ function resolveWithdrawalNetwork(
  * currency-wide minimum is either too high for the cheap chain or below the fee on the
  * expensive one.
  */
-function assertAboveMinimumWithdrawal(
+export function assertAboveMinimumWithdrawal(
   assets: readonly WithdrawalAsset[],
   amount: string,
   currency: string,
@@ -509,7 +509,7 @@ function payableAsset(assets: readonly WithdrawalAsset[], network: string | null
  * The network fee kept from a withdrawal: the player is debited `amount` and the provider pays
  * out `amount - fee`, so the operator never funds the fee. `null` when the network charges none.
  */
-function withdrawalFeeFor(
+export function withdrawalFeeFor(
   assets: readonly WithdrawalAsset[],
   amount: string,
   currency: string,
@@ -530,7 +530,7 @@ function withdrawalFeeFor(
  * both must fit the asset's on-chain precision. Rounding either would pay a different amount
  * than the ledger debits.
  */
-function assertPayablePrecision(
+export function assertPayablePrecision(
   decimals: number | null,
   amounts: readonly (string | null)[],
   currency: string,
@@ -584,7 +584,7 @@ export function assertDepositAllowed(
   }
 }
 
-function depositFloor(assets: readonly DepositAsset[], network?: string) {
+export function depositFloor(assets: readonly DepositAsset[], network?: string) {
   const wanted = network?.toUpperCase();
   const applicable = wanted
     ? assets.filter((asset) => asset.network.toUpperCase() === wanted)
@@ -596,7 +596,7 @@ function depositFloor(assets: readonly DepositAsset[], network?: string) {
   );
 }
 
-function assertAboveMinimumDeposit(
+export function assertAboveMinimumDeposit(
   assets: readonly DepositAsset[],
   amount: string,
   currency: string,
@@ -835,7 +835,7 @@ export function depositStatusIsNoOp(
   );
 }
 
-function soleNetworkForCurrency(
+export function soleNetworkForCurrency(
   rows: readonly Pick<WalletDepositAddress, 'currency' | 'network'>[],
   currency: string,
 ) {
@@ -1045,7 +1045,7 @@ type ReferenceSnapshot = Pick<
   'referenceCurrency' | 'referenceAmount' | 'referenceRate' | 'referenceRateAsOf'
 >;
 
-function payoutAmount(tx: Pick<WalletTransaction, 'amount' | 'fee'>): string {
+export function payoutAmount(tx: Pick<WalletTransaction, 'amount' | 'fee'>): string {
   return tx.fee === null ? tx.amount : moneySubtract(tx.amount, tx.fee);
 }
 
