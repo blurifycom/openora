@@ -23,7 +23,7 @@ import {
   fundedPlayer,
   ledgerOf,
   txId,
-} from './fixtures/sportsbook.js';
+} from './support/sportsbook.js';
 
 let db: TestDb;
 let app: TestApp;

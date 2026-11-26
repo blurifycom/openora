@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 import { eventOutbox } from '@openora/core/server';
 import { readJson } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
-import { TEST_TURNOVER_LOCKED_MESSAGE } from './fixtures/turnover-gate-config.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
+import { TEST_TURNOVER_LOCKED_MESSAGE } from './support/turnover-gate-config.js';
 
 const { admin, drizzle, player, grant, grantRow, realBalance, ledgerRows, withdraw } =
   useBonusLockHarness('forfeit', {

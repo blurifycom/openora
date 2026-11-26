@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_LOCKED_FUNDS_MESSAGE } from '@openora/core/contracts';
 import { readJson } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
 
 const { drizzle, commands, player, grant, grantRow, realBalance, withdraw, btcHolder, swap } =
   useBonusLockHarness('forfeit');

@@ -8,12 +8,12 @@ import {
   type WalletTransactionType,
 } from '@openora/core/contracts';
 import { bootE2e, closeE2e } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
 
 const fixture = (name: string) => fileURLToPath(new URL(name, import.meta.url));
 const blockConfig = {
   id: 'testing-bonus-withdrawal-block-config',
-  path: fixture('./fixtures/test-bonus-withdrawal-block-config-plugin.ts'),
+  path: fixture('./support/test-bonus-withdrawal-block-config-plugin.ts'),
 };
 
 const { drizzle, commands, player, grant, realBalance } = useBonusLockHarness('block');
@@ -103,12 +103,12 @@ describe('booting with the bonus withdrawal mode', () => {
     [
       'provide',
       'testing-bonus-lock-rebind-provide',
-      './fixtures/test-bonus-lock-rebind-provide-plugin.ts',
+      './support/test-bonus-lock-rebind-provide-plugin.ts',
     ],
     [
       'provideSealed',
       'testing-bonus-lock-rebind-sealed',
-      './fixtures/test-bonus-lock-rebind-sealed-plugin.ts',
+      './support/test-bonus-lock-rebind-sealed-plugin.ts',
     ],
   ] as const)('refuses an overlay rebinding the locks with %s', async (_, id, file) => {
     const plugins = await loadExtensions();

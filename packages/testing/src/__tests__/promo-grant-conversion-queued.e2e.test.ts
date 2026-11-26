@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { readJson } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
 
 const CONVERT = '/backoffice/promo/grants/convert-transfer-grants';
 

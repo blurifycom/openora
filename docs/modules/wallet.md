@@ -155,6 +155,11 @@ is `SPORTSBOOK_LEDGER` unchanged.
 
 ## Rules that are easy to get wrong here
 
+- **A bet a bonus's class rules keep off its buckets reports what that class may spend.** When the
+  bet's class cannot be covered from the buckets it may draw on, the debit is refused and reports
+  the funds the class may use, real money included, not the whole real and bonus balance. Nothing
+  moves and no audit row is written (ADR-0063).
+
 - **A bet reversal always leaves an audit row, written in the credit's transaction.** A bet or win
   at or above `wallet.significantAmountThresholds[currency]` does too (a decimal string per
   currency; a currency without an entry, or no map, records nothing). The threshold is compared per

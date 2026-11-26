@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { readJson } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
 
 const { admin, player, grant, grantRow, realBalance } = useBonusLockHarness('block', {
   config: {

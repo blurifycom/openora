@@ -70,6 +70,8 @@ import {
   BonusGrantSourceSchema,
   ContributionPercentSchema,
   RANK_PERIODIC_BASES,
+  RANK_PERIODIC_REWARD_KINDS,
+  RANK_PERIODIC_REWARD_STATUSES,
 } from './promo.js';
 import { CommandMetadataSchema } from './chat-command.js';
 import { SystemEventMetadataSchema } from './chat-command-metadata.js';
@@ -957,6 +959,27 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     amount: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
+  }),
+  // A claim-mode daily, weekly or monthly rank reward is waiting for the player. Written to the
+  // outbox in the payout run's transaction that created it; `amount` is in `currency`.
+  'promo.rank.reward.claimable': z.object({
+    userId: UuidSchema,
+    rewardId: UuidSchema,
+    kind: z.enum(RANK_PERIODIC_REWARD_KINDS),
+    periodKey: z.string(),
+    currency: CurrencyTickerSchema,
+    amount: MoneyAmountSchema,
+  }),
+  // A rank reward reached the real balance: claimed by the player, or `auto_paid` on
+  // self-exclusion or account closure. Written to the outbox in the transaction that credited it.
+  'promo.rank.reward.claimed': z.object({
+    userId: UuidSchema,
+    rewardId: UuidSchema,
+    kind: z.enum(RANK_PERIODIC_REWARD_KINDS),
+    currency: CurrencyTickerSchema,
+    amount: MoneyAmountSchema,
+    transactionId: UuidSchema,
+    outcome: z.enum(RANK_PERIODIC_REWARD_STATUSES).exclude(['claimable']),
   }),
   'promo.rank.changed': z.object({
     userId: UuidSchema,

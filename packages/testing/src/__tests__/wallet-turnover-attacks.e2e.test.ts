@@ -12,7 +12,7 @@ import {
   walletTurnoverEntry,
 } from '@openora/core/wallet/schema';
 import { flushAudit, readJson, registerAndMaterializePlayer, type TestClient } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
 
 const {
   app,

@@ -150,7 +150,7 @@ export function walletBalanceChannel(userId: User['id']): string {
   return `wallet:balance:${userId}`;
 }
 
-export function createWalletBalanceStream(
+function createWalletBalanceStream(
   realtime: RealtimeTransport,
   userId: User['id'],
   signal: AbortSignal | undefined,
@@ -191,7 +191,7 @@ export type WalletRouterDeps = {
 };
 
 /** Same pairing rule as the swap one: one vendor's key verifies that vendor's format. */
-export type OnRampWebhookPort = {
+type OnRampWebhookPort = {
   verify(
     rawBody: string,
     headers: Record<string, string | string[] | undefined>,

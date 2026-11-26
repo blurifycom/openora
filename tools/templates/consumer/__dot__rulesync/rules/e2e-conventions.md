@@ -18,6 +18,14 @@ Two kinds of spec live here:
 - **Browser specs** (`tests/<app>/**`) - a player or admin journey through the UI.
 - **API specs** (`tests/api/**`) - the `api` Playwright project: no browser, no `page`. Drives the real API over HTTP against real Postgres, with each external vendor replaced by a stub HTTP server the API is pointed at by env. This is the tier that proves an overlay end to end: request -> route -> service -> rows -> webhook -> resulting state. `USE_MOCKS` does not apply here at all.
 
+## Which kind a check belongs to
+
+Each check goes to the cheapest kind that still sees it:
+
+- **Browser spec** - what a player or admin sees: the balance updating live after a money action, a saved option still there after a reload, the journey itself. One happy path plus the refusal the user must see. Every money, KYC and responsible-gambling journey keeps at least one browser spec; API specs add to it, never replace it.
+- **API spec** - rule matrices: every status, limit and refusal reason the browser spec does not show, and the ledger and audit effects a follow-up request reports. A browser spec never loops over these.
+- **Desktop and mobile** (player app) - a behaviour both layouts render with the same component is tested once, at the mobile viewport. A difference in CSS only counts as the same component; a separate component or a branch per viewport gets a spec on each. Back-office specs stay desktop.
+
 ## Real stack by default
 
 Every spec runs against the real seeded stack - API, Postgres, and the apps under test - and that
@@ -35,7 +43,7 @@ used it.
 ## Rules
 
 - Import `test`/`expect` from `fixtures.ts`, NEVER from `@playwright/test` - fixtures add `cleanup()` and shared setup.
-- Set up state through the product: seed data or drive the API, so the spec exercises the same path a player would. `mockApi(page, routes)` (from `lib/mocks.ts`) is the escape hatch above - reach for it only after the real setup is genuinely impossible, and never branch test logic on the mode.
+- Set up state through the product: seed data or drive the API, so the spec exercises the same path a player would. A browser-side route mock is the escape hatch above - reach for it only after the real setup is genuinely impossible, and never branch test logic on the mode.
 - A mock that stays is typed: fixture shapes in `mocks/<domain>.ts` mirror the response contract - type platform-endpoint fixtures with the `z.infer` contract type from `@openora/*` so a contract change fails typecheck. No loose hand-written JSON.
 - Selectors use `data-testid` - kebab-case, domain-prefixed (`chat-message`, `chat-input`). Never assert on CSS classes or component-library structure; shared UI components spread props so `data-testid` passes through.
 - Page objects in `pages/<name>.page.ts` are functional factories - no classes, no `this`; locators + actions returned as a plain object.

@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { promoGrant } from '@openora/core/promo/schema/bonus';
 import { wallet, walletTransaction, walletTurnoverEntry } from '@openora/core/wallet/schema';
 import { readJson } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
 
 const CONVERT = '/backoffice/promo/grants/convert-transfer-grants';
 

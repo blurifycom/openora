@@ -8,8 +8,8 @@ import { user } from '@openora/core/pam/schema/identity';
 import { promoGrant, promoGrantRound } from '@openora/core/promo/schema/bonus';
 import { wallet, walletTransaction, walletTurnoverEntry } from '@openora/core/wallet/schema';
 import { flushAudit, readJson, registerAndMaterializePlayer } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
-import { TEST_TURNOVER_LOCKED_MESSAGE } from './fixtures/turnover-gate-config.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
+import { TEST_TURNOVER_LOCKED_MESSAGE } from './support/turnover-gate-config.js';
 
 const CONVERT = '/backoffice/promo/grants/convert-transfer-grants';
 

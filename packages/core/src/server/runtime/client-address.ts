@@ -3,7 +3,7 @@ import { BlockList, isIP } from 'node:net';
 // A same-host reverse proxy works without configuration. Private ranges are deliberately not
 // trusted by default: a VPN user, pod, or another workload can reach an API from one of them
 // directly and would otherwise be able to choose its own forwarding headers.
-export const DEFAULT_TRUSTED_PROXIES: readonly string[] = ['127.0.0.0/8', '::1/128'];
+const DEFAULT_TRUSTED_PROXIES: readonly string[] = ['127.0.0.0/8', '::1/128'];
 
 export type TrustedProxies = { contains(address: string): boolean };
 
@@ -14,7 +14,7 @@ function normalizeAddress(address: string): string {
 
 // Throws on an entry that is neither an IP nor a CIDR, so a typo in the list fails the boot
 // instead of silently trusting nobody (or everybody behind the proxy it meant to name).
-export function parseTrustedProxies(entries: readonly string[]): TrustedProxies {
+function parseTrustedProxies(entries: readonly string[]): TrustedProxies {
   const list = new BlockList();
   for (const raw of entries) {
     // Anchored so an empty suffix (`10.0.0.1/`) cannot slip through as `Number('') === 0` - a

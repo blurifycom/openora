@@ -12,7 +12,8 @@ export const catalogCacheKeys = {
   games: (input: ListGamesInput) => `games:${JSON.stringify(input)}`,
   game: (id: string) => `game:${id}`,
   gameBySlug: (slug: string) => `game-slug:${slug}`,
-  providers: ({ page, limit }: PageInput) => `providers:${page}:${limit}`,
+  providers: ({ page, limit, categoryId }: PageInput & { categoryId?: string }) =>
+    `providers:${page}:${limit}:${categoryId ?? ''}`,
   provider: (slug: string) => `provider:${slug}`,
   categories: ({ page, limit }: PageInput) => `categories:${page}:${limit}`,
   category: (slug: string) => `category:${slug}`,

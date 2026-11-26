@@ -17,6 +17,7 @@ import {
   type TestClient,
   type TestDb,
 } from '../index.js';
+import { scheduledIds, waitForSchedule } from './support/job-schedules.js';
 
 const fixture = (name: string) => fileURLToPath(new URL(name, import.meta.url));
 
@@ -97,7 +98,7 @@ beforeAll(async () => {
       ...(await loadExtensions()),
       {
         id: 'testing-wallet-turnover-config',
-        path: fixture('./fixtures/test-wallet-turnover-config-plugin.ts'),
+        path: fixture('./support/test-wallet-turnover-config-plugin.ts'),
       },
     ],
   }));
@@ -117,6 +118,15 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await closeE2e({ app, db });
+});
+
+describe('turnover pricing schedule', () => {
+  it('schedules the pricing job once the multiplier is on', async () => {
+    await waitForSchedule(app.redisUrl, 'wallet-turnover-pricing', 'wallet-turnover-pricing.cron');
+    expect(await scheduledIds(app.redisUrl, 'wallet-turnover-pricing')).toEqual([
+      'wallet-turnover-pricing.cron',
+    ]);
+  });
 });
 
 describe('player turnover reads', () => {

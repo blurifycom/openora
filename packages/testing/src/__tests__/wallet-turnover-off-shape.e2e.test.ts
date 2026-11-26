@@ -8,7 +8,7 @@ import {
   walletTurnoverEntry,
 } from '@openora/core/wallet/schema';
 import { readJson } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
 
 const { drizzle, player, grant, bet, withdraw, deposit } = useBonusLockHarness('block', {
   config: {

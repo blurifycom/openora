@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { moneyScaleBy, type createLogger } from '@openora/core/server';
 import { WalletTurnoverConfigSchema, type ExchangeRateReader } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter, makeEventBus, mock } from '../../testing/mock.js';
+import { makeAuditWriter, makeEventBus, mock } from './support/doubles.js';
 import { migrate } from '../migrate.js';
 import { walletTurnover, walletTurnoverEntry } from '../schema/index.js';
 import { TurnoverService } from '../service/turnover.service.js';

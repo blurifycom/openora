@@ -9,8 +9,8 @@
     "packages/core": {
       "entry": [
         "src/**/drizzle.config.ts",
+        "src/audit/service/audit-copy.service.ts",
         "src/{compliance,casino/*,engagement/*,fx/*,pam/*,promo/*,sportsbook/*}/index.ts",
-        "src/**/__tests__/fixtures/**/*.ts",
         "vitest.mutation.config.ts",
         "vitest.mutation.setup.ts"
       ],

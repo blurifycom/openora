@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { WalletCommands } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter, makeEventBus, mock } from '../../../testing/mock.js';
+import { makeAuditWriter, makeEventBus } from './support/doubles.js';
 import { migrate } from '../migrate.js';
 import {
   GrantConversionService,
@@ -42,7 +42,7 @@ describe('GrantConversionService wallet ports', () => {
   });
 
   it('refuses as wallet_unavailable when the wallet lacks the turnover commands', async () => {
-    const wallet = mock<WalletCommands>({ credit: vi.fn() });
+    const wallet = { credit: vi.fn() } as unknown as WalletCommands;
 
     await expect(
       service(wallet).convert({ ...input, sources: ['gift'] }, actor),

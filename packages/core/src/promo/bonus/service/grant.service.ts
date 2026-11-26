@@ -323,6 +323,9 @@ export class GrantService implements BonusGrantCommands {
     const rows = await tx
       .select({
         profileId: promoWeightProfile.id,
+        contributionMode: promoWeightProfile.contributionMode,
+        referenceEdge: promoWeightProfile.referenceEdge,
+        version: promoWeightProfile.version,
         scope: promoWeight.scope,
         scopeRef: promoWeight.scopeRef,
         contributionPercent: promoWeight.contributionPercent,
@@ -335,8 +338,8 @@ export class GrantService implements BonusGrantCommands {
           : eq(promoWeightProfile.id, terms.weightProfileId),
       );
 
-    const profileId = rows[0]?.profileId;
-    if (profileId === undefined) {
+    const profile = rows[0];
+    if (profile === undefined) {
       throw new WagerWeightProfileNotFoundError(
         terms.weightProfileId ?? DEFAULT_WEIGHT_PROFILE_NAME,
       );
@@ -353,8 +356,11 @@ export class GrantService implements BonusGrantCommands {
     const maxBet = resolveMaxBet(grantedAmount, terms);
     return {
       ...terms,
-      weightProfileId: profileId,
+      weightProfileId: profile.profileId,
       weights,
+      contributionMode: profile.contributionMode,
+      ...(profile.referenceEdge === null ? {} : { referenceEdge: profile.referenceEdge }),
+      weightProfileVersion: profile.version,
       ...(maxBet === null ? {} : { maxBet }),
     };
   }

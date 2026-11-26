@@ -15,6 +15,7 @@ import {
   type TestApp,
   type TestDb,
 } from '../index.js';
+import { scheduledIds, waitForSchedule } from './support/job-schedules.js';
 
 let db: TestDb;
 let app: TestApp;
@@ -28,7 +29,7 @@ beforeAll(async () => {
       ...(await loadExtensions()),
       {
         id: 'testing-wallet-turnover-off-config',
-        path: fixture('./fixtures/test-wallet-turnover-off-config-plugin.ts'),
+        path: fixture('./support/test-wallet-turnover-off-config-plugin.ts'),
       },
       { id: 'testing-swap-desk', path: fixture('../test-swap-desk-plugin.ts') },
     ],
@@ -37,6 +38,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await closeE2e({ app, db });
+});
+
+it('schedules no pricing job while the multiplier is 0', async () => {
+  await waitForSchedule(app.redisUrl, 'wallet-ledger-invariant', 'wallet-ledger-invariant.cron');
+  expect(await scheduledIds(app.redisUrl, 'wallet-turnover-pricing')).toEqual([]);
 });
 
 it('reads as off with zeros and writes nothing while the multiplier is 0', async () => {

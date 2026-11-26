@@ -12,9 +12,9 @@ export default defineConfig({
     exclude: ['dist/**', 'node_modules/**'],
     setupFiles: ['./vitest.setup.ts'],
     globalSetup: ['./src/global-setup.ts'],
-    // Two, not more: this tier owns 8 of Redis's 16 logical databases and a single suite
-    // can keep three booted apps alive at once, so a worker needs a slice of 4 (see
-    // src/redis.ts). More workers than slices and two suites flush each other's keys.
+    // Two, not more: this tier owns 8 of Redis's 16 logical databases, split into a slice
+    // of 4 per worker (src/redis.ts). More workers than slices and two suites flush each
+    // other's keys.
     maxWorkers: 2,
     testTimeout: 30_000,
     // 60s, not the usual 30: a teardown sweep of the per-suite databases forces one

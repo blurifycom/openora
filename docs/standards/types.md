@@ -13,7 +13,7 @@ Detail for the "infer, never hand-write" line in `conventions`. Read this when a
   ```
 
 - **No type casts (`as`) to silence the compiler - fix the root cause.** (`as const` is fine.) `as unknown as X` turns type-checking off entirely. If a symbol needs a type, give it one at the source (`createToken<T>()`), don't cast at use sites. Exactly two sanctioned exceptions:
-  1. **Test doubles** - route through the `mock` helper (`packages/core/src/testing/mock.ts`) so the cast lives in one audited place, never inline in a test.
+  1. **Test doubles** - route through the shared `mock` helper in `packages/core/src/testing/` so the cast lives in one audited place, never inline in a test.
   2. **Third-party type-inference boundaries** a library gives you no honest way to satisfy - one cast with a one-line `// Library boundary:` note.
 
   ```ts

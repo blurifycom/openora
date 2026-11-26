@@ -7,9 +7,9 @@ import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import { promoGrant } from '@openora/core/promo/schema/bonus';
 import { wallet, walletTransaction, walletTurnoverEntry } from '@openora/core/wallet/schema';
 import { readJson, type TestClient } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
-import { TEST_LOCKED_FUNDS_MESSAGE } from './fixtures/test-bonus-withdrawal-block-config-plugin.js';
-import { TEST_TURNOVER_LOCKED_MESSAGE } from './fixtures/turnover-gate-config.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
+import { TEST_LOCKED_FUNDS_MESSAGE } from './support/test-bonus-withdrawal-block-config-plugin.js';
+import { TEST_TURNOVER_LOCKED_MESSAGE } from './support/turnover-gate-config.js';
 
 const {
   admin,

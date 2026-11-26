@@ -32,7 +32,7 @@ import {
   ledgerOf,
   txId,
   type SportsbookPlayer,
-} from './fixtures/sportsbook.js';
+} from './support/sportsbook.js';
 
 let db: TestDb;
 let app: TestApp;

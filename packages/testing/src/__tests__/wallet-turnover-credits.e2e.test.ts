@@ -91,7 +91,7 @@ beforeAll(async () => {
       ...(await loadExtensions()),
       {
         id: 'testing-wallet-turnover-credits-config',
-        path: fixture('./fixtures/test-wallet-turnover-credits-config-plugin.ts'),
+        path: fixture('./support/test-wallet-turnover-credits-config-plugin.ts'),
       },
       { id: 'testing-swap-desk', path: fixture('../test-swap-desk-plugin.ts') },
     ],

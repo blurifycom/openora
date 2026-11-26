@@ -5,8 +5,10 @@
  * the other's DB module.
  */
 import type {
+  BonusBetClass,
   BonusExistingBalanceMode,
   BonusFreeFundsOrder,
+  BonusGrantBucket,
   BonusGrantSource,
   BonusGrantStatus,
   BonusRolloverBase,
@@ -30,6 +32,8 @@ export type BonusFundSettings = {
   decimals: number;
   /** Ties A and B to the grant's currency against outflows. Absent: only a deposit grant locks. */
   lockWithdrawals?: boolean;
+  /** The grant buckets each bet class may draw on. An absent class may draw on all three. */
+  betClassBuckets?: Partial<Record<BonusBetClass, BonusGrantBucket[]>>;
 };
 
 /**

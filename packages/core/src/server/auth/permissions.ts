@@ -7,11 +7,12 @@ export const statement = adminStatement;
 
 export const ac = createAccessControl(statement);
 
-export const adminRole = ac.newRole({
+const adminRole = ac.newRole({
   player: ['view', 'update', 'ban'],
   transaction: ['view', 'refund'],
   game: ['view', 'enable', 'disable'],
   content: ['create', 'update', 'delete', 'publish'],
+  'help-center': ['manage'],
   compliance: ['view', 'override-limit', 'manage-rg', 'manage-geo'],
   report: ['view'],
   withdrawal: ['view', 'approve', 'reject', 'hold', 'auto-rule'],

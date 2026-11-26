@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import { readJson, registerAndMaterializePlayer } from '../index.js';
-import { expectMoney, useBonusLockHarness } from './fixtures/bonus-lock-harness.js';
-import { TEST_TURNOVER_LOCKED_MESSAGE } from './fixtures/turnover-gate-config.js';
+import { expectMoney, useBonusLockHarness } from './support/bonus-lock-harness.js';
+import { TEST_TURNOVER_LOCKED_MESSAGE } from './support/turnover-gate-config.js';
 
 const { app, admin, drizzle, commands, withdraw, bet } = useBonusLockHarness('block', {
   config: {

@@ -10,7 +10,7 @@ import {
   type PlayEligibilityPort,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeAuditWriter, makeOutboxEventBus, mock } from '../../testing/mock.js';
+import { makeAuditWriter, makeOutboxEventBus, mock } from './support/doubles.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTurnover, walletTurnoverEntry } from '../schema/index.js';
 import { TurnoverService } from '../service/turnover.service.js';
