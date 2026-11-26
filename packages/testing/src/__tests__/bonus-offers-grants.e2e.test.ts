@@ -787,7 +787,7 @@ describe('admin sets how bets contribute', () => {
     });
     return z
       .object({ id: z.string() })
-      .passthrough()
+      .loose()
       .parse(await bodyOf(res));
   };
   const saveWeights = (id: string, body: Record<string, unknown>) =>
@@ -810,7 +810,7 @@ describe('admin sets how bets contribute', () => {
     expect(res.status).toBe(200);
     const saved = z
       .object({ referenceEdge: z.string() })
-      .passthrough()
+      .loose()
       .parse(await bodyOf(res));
     expect(saved).toMatchObject({ contributionMode: 'house_edge', version: 2 });
     expect(Number(saved.referenceEdge)).toBe(0.04);
@@ -831,7 +831,7 @@ describe('admin sets how bets contribute', () => {
 
     expect(res.status).toBe(400);
     const listed = z
-      .array(z.object({ id: z.string() }).passthrough())
+      .array(z.object({ id: z.string() }).loose())
       .parse(await bodyOf(await e2e.admin.get('/backoffice/promo/weight-profiles')));
     expect(listed.find((p) => p.id === created.id)).toMatchObject({
       contributionMode: 'flat',
@@ -844,7 +844,7 @@ describe('admin sets how bets contribute', () => {
 
     const saved = z
       .object({ referenceEdge: z.string() })
-      .passthrough()
+      .loose()
       .parse(await bodyOf(await saveWeights(created.id, {})));
 
     expect(saved).toMatchObject({ contributionMode: 'house_edge', version: 2 });
