@@ -257,6 +257,21 @@ describe('retry and dead-letter', () => {
 });
 
 describe('startup', () => {
+  it('a group created at 0 receives events published before its first subscribe, one at $ does not', async () => {
+    const topic = newTopic();
+    const published = envelope(topic);
+    await redis.client.xAdd(streamOf(topic), '*', { data: JSON.stringify(published) });
+    const fromStart: EventEnvelope[] = [];
+    const fromTail: EventEnvelope[] = [];
+    const replaying = newBroker({ serviceName: newGroup(), startId: '0' });
+    const tailing = newBroker({ serviceName: newGroup(), startId: '$' });
+    replaying.subscribe(topic, (item) => void fromStart.push(item));
+    tailing.subscribe(topic, (item) => void fromTail.push(item));
+    await vi.waitFor(() => expect(fromStart).toEqual([published]));
+    await settle();
+    expect(fromTail).toEqual([]);
+  });
+
   it('creating a consumer group that already exists does not fail', async () => {
     const topic = newTopic();
     const group = newGroup();

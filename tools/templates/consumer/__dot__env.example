@@ -30,7 +30,8 @@ WITHDRAWAL_PIN_HMAC_SECRET=
 # call each other over a signed internal API; set a shared secret of 32+ characters
 # (openssl rand -base64 32). Local dev runs every module in one process and ignores it.
 # compose.prod.yml sets the rest: SERVICE_NAME, REALTIME_NAMESPACE, SERVICE_MANIFEST (chat only),
-# CHAT_SERVICE_URL, CHAT_BLOCK_READER_CALLERS, CHAT_TRANSFER_CHECK_CALLERS and JOB_WORKERS.
+# CHAT_SERVICE_URL, CHAT_BLOCK_READER_CALLERS, CHAT_TRANSFER_CHECK_CALLERS, JOB_WORKERS and
+# EVENT_BUS_START_ID=0 (the chat service's new consumer group replays retained events, so none are missed).
 # INTERNAL_API_SECRETS=
 
 # Backoffice super-admin that `pnpm db:seed` creates (local only). Re-seeding resets the password.

@@ -40,7 +40,7 @@ The broker (`RedisStreamsBroker`) creates one consumer group per (topic, `SERVIC
 
 So: one distinct `SERVICE_NAME` per service, and the same value on all replicas of that service.
 
-The name is a durable identity. Never rename one in production. Renaming strands the old group's delivered-but-unacked entries, and the new group is created at the stream tail, so anything published while the group did not exist is not delivered to it. That is also why `createApp` will not derive the name from `SERVICE_MANIFEST`: that list reorders and grows.
+The name is a durable identity. Never rename one in production. Renaming strands the old group's delivered-but-unacked entries, and the new group is created at the stream tail, so anything published while the group did not exist is not delivered to it unless `EVENT_BUS_START_ID=0` is set on first start. That is also why `createApp` will not derive the name from `SERVICE_MANIFEST`: that list reorders and grows.
 
 ## REALTIME_NAMESPACE: the realtime prefix
 
@@ -180,7 +180,7 @@ The account closed and account reopened jobs read the account fresh from the ide
 2. Move the chat prefixes above to the chat service at the load balancer.
 3. Deploy the main API with `CHAT_SERVICE_URL` set, which drops chat from it.
 
-Until step 3 the main API still loads chat, so chat handlers run in both services, idempotently. Its consumer group does not move, so step 3 loses nothing. The chat service's group is new: it starts at the stream tail, so deploy it (step 1) before you depend on it.
+Until step 3 the main API still loads chat, so chat handlers run in both services, idempotently. Its consumer group does not move, so step 3 loses nothing. The chat service's group is new: it starts at the stream tail, so deploy it (step 1) before you depend on it, or set `EVENT_BUS_START_ID=0` on it so the new group starts at the oldest retained event instead and a one-step rollout (as in `compose.prod.yml`) misses nothing. The chat handlers then replay up to seven days of retained events once, idempotently. The setting applies only when a group is first created; an existing group keeps its cursor.
 
 Rollback is routing and that variable. Redeploy the main API with `CHAT_SERVICE_URL` unset, and point the prefixes back at it.
 

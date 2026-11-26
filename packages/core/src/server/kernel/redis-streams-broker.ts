@@ -23,6 +23,16 @@ const LAG_LOG_INTERVAL_MS = 60_000;
 // Deliveries (first read + reclaims) after which a still-failing entry is dead-lettered.
 const MAX_DELIVERIES = 5;
 
+export function streamStartIdFromEnv(raw: string | undefined): '$' | '0' {
+  if (raw === undefined || raw === '' || raw === '$') {
+    return '$';
+  }
+  if (raw === '0') {
+    return '0';
+  }
+  throw new Error(`EVENT_BUS_START_ID must be "$" or "0", got "${raw}".`);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
