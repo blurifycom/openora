@@ -117,7 +117,7 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It returns one clip path per AC, and one per Before cell on a fix.
 
 - A spec that fails here -> back to `builder` with it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
-- Every AC that needs a clip has its row in the Evidence table -> 5.
+- Every AC that needs a clip has its row in the Evidence table, or a look-only change has its before and after screenshots -> 5.
 
 ### 5. Open the MR
 
@@ -143,7 +143,7 @@ Run the **babysit** skill's loop on the MR, with step 6 above as its fix rules: 
 - `green` -> check the MR is ready (below). Ready: mark the draft ready for review (`docs/agents/forge.md`), report "Ready for review:" and the MR URL, then watch again without `--until-green`. Not ready: it stays a draft. Fix what is yours (the description, an unanswered thread) and watch again with `--until-green`; what only a person can supply (an UNCHECKED row) -> report "Draft, missing:" and the list, stop.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `watched` (another session has it) or `error ...` -> report it, stop.
 
-Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer or a drafted reply listed in the report as waiting for the user to post, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table with its UNCHECKED rows and, for a visible change, the Evidence table with a clip per AC.
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer or a drafted reply listed in the report as waiting for the user to post, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table with its UNCHECKED rows and, for a visible change, the Evidence table with a clip per AC, or the before and after screenshots when the change only alters how a screen looks.
 
 Keep watching until the MR merges or closes, for as long as the session lives. You never merge it: who approves and who merges is in `docs/agents/forge.md`. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 

@@ -98,7 +98,8 @@ above) if this repo has no UI apps.
   lines often beat a tree.
 - **A feature or fix PR ships its own tests** - no separate test PR. It ships the change, the
   manual verification pass that proves it (drive the running stack by hand, attach a clip per acceptance
-  criterion in the Evidence table, or the request/response sample for an API-only change, to the PR
+  criterion in the Evidence table, before and after screenshots for a look-only change, or the
+  request/response sample for an API-only change, to the PR
   description), and the tests that pass exercised. The diff shows them; the description does not list them.
   Which tier each one belongs to, and how to run the manual pass: `docs/standards/testing.md`.
 - **Green before review:** `/check` (typecheck + lint + unit tests) while iterating, `pnpm verify`

@@ -20,7 +20,8 @@ Before the PR opens:
 2. Capture the evidence once, on the final commit, after the tests are green and review is clean:
    one clip per acceptance criterion with its whole flow in one take, from the screen the user starts
    on to the outcome it names (never a few seconds of the end state), plus a "before" clip
-   recorded on the base branch on a fix (`ui-verify` "Video evidence"). Run every browser spec that drives an AC in one command with video on
+   recorded on the base branch on a fix (`ui-verify` "Video evidence"); a change that only alters how a
+   screen looks gets before and after screenshots instead. Run every browser spec that drives an AC in one command with video on
    (`test.use({ video: 'on' })` or the repo's record switch); `playwright-cli` with `video-start` /
    `video-stop` only for an AC no spec drives. An API-only AC still gets its row, with sample
    request/response output instead of a clip.
