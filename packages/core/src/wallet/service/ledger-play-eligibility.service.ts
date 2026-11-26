@@ -85,6 +85,11 @@ const fromExcluded = {
   updatedAt: sql`now()`,
 };
 
+type EligibilityRead = { row: typeof ledgerPlayEligibility.$inferSelect; now: Date };
+
+const rgBlockedNow = ({ row, now }: EligibilityRead): boolean =>
+  row.rgBlocked && (row.rgBlockedUntil === null || row.rgBlockedUntil > now);
+
 export class LedgerPlayEligibilityService
   implements LedgerPlayEligibilityPort, PlayEligibilityProjectionPort
 {
@@ -95,9 +100,8 @@ export class LedgerPlayEligibilityService
 
   private readonly lateAlert = lateAlertClock();
 
-  private async read(userId: User['id'], tx?: unknown) {
+  private async read(userId: User['id'], tx: unknown, refuses: (read: EligibilityRead) => boolean) {
     const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
-    await assertFresh(db, 'play_eligibility', this.freshness, this.lateAlert);
     const query = db
       .select({
         row: ledgerPlayEligibility,
@@ -107,25 +111,24 @@ export class LedgerPlayEligibilityService
       .where(eq(ledgerPlayEligibility.userId, userId))
       .limit(1);
     const [read] = tx ? await query.for('share') : await query;
+    if (!read || !refuses(read)) {
+      await assertFresh(db, 'play_eligibility', this.freshness, this.lateAlert);
+    }
     return read;
   }
 
   async isRestricted(userId: User['id'], tx?: unknown): Promise<boolean> {
-    const read = await this.read(userId, tx);
-    if (!read) {
-      return true;
-    }
-    const { row, now } = read;
-    return row.rgBlocked && (row.rgBlockedUntil === null || row.rgBlockedUntil > now);
+    const read = await this.read(userId, tx, rgBlockedNow);
+    return read ? rgBlockedNow(read) : true;
   }
 
   async checkPlay(userId: User['id'], tx?: unknown): Promise<PlayRefusal | null> {
-    const read = await this.read(userId, tx);
+    const read = await this.read(userId, tx, ({ row, now }) => playRefusalOf(row, now) !== null);
     return read ? playRefusalOf(read.row, read.now) : 'account_inactive';
   }
 
   async stateOf(userId: User['id'], tx?: unknown): Promise<PlayEligibilityState | null> {
-    const read = await this.read(userId, tx);
+    const read = await this.read(userId, tx, () => false);
     return read ? stateOf(read.row) : null;
   }
 
