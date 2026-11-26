@@ -25,6 +25,11 @@ import {
   WALLET_TRANSACTION_TYPES,
   WAGER_PRODUCTS,
   WagerProductSchema,
+  AdminTurnoverEntrySchema,
+  TurnoverCreditTypeSchema,
+  TurnoverPercentSchema,
+  TurnoverEntrySchema,
+  TurnoverSummarySchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
@@ -154,6 +159,14 @@ export function isWalletAddressValidForNetwork(address: string, network: string)
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
+  // Present when a bonus module is loaded: the real money live bonuses hold back from a swap or
+  // transfer, and from a withdrawal in `block` mode; `free` is `balance` minus it, never below 0.
+  // In the default `forfeit` mode any withdrawal is paid in full and forfeits every live bonus.
+  locked: MoneyAmountSchema.optional(),
+  free: MoneyAmountSchema.optional(),
+  // What the bonus lock alone holds back. An unmet turnover requirement (ADR-0065) can make
+  // `locked` the whole balance but never stops a swap; only this amount does.
+  bonusLocked: MoneyAmountSchema.optional(),
 });
 
 export const WalletBalancesSchema = z.object({
@@ -459,6 +472,59 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
   velocityCount: VelocityCountSchema.nullable(),
   velocityWindowHours: VelocityWindowHoursSchema,
 });
+
+export const TurnoverEntriesQuerySchema = z.object({
+  /** The last entry id of the previous page. */
+  cursor: UuidSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+export type TurnoverEntriesQuery = z.infer<typeof TurnoverEntriesQuerySchema>;
+
+const TurnoverPlayerKeySchema = z.object({ userId: UuidSchema });
+
+export const AdminTurnoverEntriesQuerySchema = TurnoverEntriesQuerySchema.extend(
+  TurnoverPlayerKeySchema.shape,
+);
+
+export const TurnoverEntriesPageSchema = z.object({
+  items: z.array(TurnoverEntrySchema),
+  nextCursor: UuidSchema.nullable(),
+});
+export type TurnoverEntriesPage = z.infer<typeof TurnoverEntriesPageSchema>;
+
+export const AdminTurnoverEntriesPageSchema = z.object({
+  items: z.array(AdminTurnoverEntrySchema),
+  nextCursor: UuidSchema.nullable(),
+});
+export type AdminTurnoverEntriesPage = z.infer<typeof AdminTurnoverEntriesPageSchema>;
+
+export const ClearTurnoverInputSchema = TurnoverPlayerKeySchema.extend({
+  reason: z.string().trim().min(3).max(500),
+});
+
+export const ClearTurnoverResultSchema = z.object({
+  cleared: z.boolean(),
+  summary: TurnoverSummarySchema,
+});
+
+export const TurnoverConfigViewSchema = z.object({
+  multiplier: MoneyAmountSchema,
+  creditTypes: z.array(TurnoverCreditTypeSchema),
+  countAtSettle: z.array(WagerProductSchema),
+  dustThreshold: MoneyAmountSchema,
+  pivotCurrency: z.string(),
+  /** The percent each product counts at: the config's, overridden by staff. */
+  productPercent: z.record(WagerProductSchema, TurnoverPercentSchema),
+  /** Staff overrides only; a product absent here uses the platform config. */
+  overrides: z.partialRecord(WagerProductSchema, TurnoverPercentSchema),
+});
+export type TurnoverConfigView = z.infer<typeof TurnoverConfigViewSchema>;
+
+export const UpdateTurnoverConfigInputSchema = z.object({
+  /** `null` drops the override, so the product counts at the platform config's percent again. */
+  productPercent: z.partialRecord(WagerProductSchema, TurnoverPercentSchema.nullable()),
+});
+export type UpdateTurnoverConfigInput = z.infer<typeof UpdateTurnoverConfigInputSchema>;
 
 // Kept only for `schema/index.ts` to type the now-unused `wallet_bonus_credit` /
 // `wallet_bonus_rollover_config` tables and their enums. Chat gifts and rain read and write
@@ -866,6 +932,71 @@ export const walletContract = {
       .route({ method: 'PUT', path: '/wallet/auto-withdrawal-config' })
       .input(SetWalletAutoWithdrawalConfigInputSchema)
       .output(WalletAutoWithdrawalConfigSchema),
+  },
+
+  turnover: {
+    get: oc
+      .route({ method: 'GET', path: '/wallet/turnover', summary: 'Read own turnover requirement' })
+      .output(TurnoverSummarySchema),
+
+    entries: oc
+      .route({
+        method: 'GET',
+        path: '/wallet/turnover/entries',
+        summary: 'List own turnover entries',
+      })
+      .input(TurnoverEntriesQuerySchema)
+      .output(TurnoverEntriesPageSchema),
+  },
+
+  admin: {
+    turnover: {
+      get: oc
+        .route({
+          method: 'GET',
+          path: '/wallet/admin/players/{userId}/turnover',
+          summary: "Read a player's turnover requirement",
+        })
+        .input(TurnoverPlayerKeySchema)
+        .output(TurnoverSummarySchema),
+
+      entries: oc
+        .route({
+          method: 'GET',
+          path: '/wallet/admin/players/{userId}/turnover/entries',
+          summary: "List a player's turnover entries",
+        })
+        .input(AdminTurnoverEntriesQuerySchema)
+        .output(AdminTurnoverEntriesPageSchema),
+
+      clear: oc
+        .route({
+          method: 'POST',
+          path: '/wallet/admin/players/{userId}/turnover/clear',
+          summary: "Clear a player's turnover requirement",
+        })
+        .input(ClearTurnoverInputSchema)
+        .output(ClearTurnoverResultSchema),
+    },
+
+    turnoverConfig: {
+      get: oc
+        .route({
+          method: 'GET',
+          path: '/wallet/admin/turnover-config',
+          summary: 'Read the turnover settings',
+        })
+        .output(TurnoverConfigViewSchema),
+
+      update: oc
+        .route({
+          method: 'PUT',
+          path: '/wallet/admin/turnover-config',
+          summary: 'Override turnover product percents',
+        })
+        .input(UpdateTurnoverConfigInputSchema)
+        .output(TurnoverConfigViewSchema),
+    },
   },
 
   // Unauthenticated by design - which assets exist is not secret.

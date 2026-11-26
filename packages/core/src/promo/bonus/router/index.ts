@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { implement } from '@orpc/server';
 import {
   assertRateLimit,
@@ -24,13 +25,20 @@ export function bonusBalanceChannel(userId: Uuid): string {
 }
 import { BonusSlotTakenError } from '../shared/grant-slot.js';
 import {
+  GrantConversionService,
+  TransferGrantConversionUnavailableError,
+  TransferGrantConversionWalletUnavailableError,
+} from '../service/grant-conversion.service.js';
+import {
   GrantLifecycleService,
   GrantActivationRestrictedError,
   GrantNotActivatableError,
   GrantNotForfeitableError,
   GrantNotFoundError as GrantNotForfeitableNotFoundError,
+  PlayerForfeitNotAllowedError,
 } from '../service/grant-lifecycle.service.js';
 import { GrantNotFoundError, GrantReaderService } from '../service/grant-reader.service.js';
+import type { PlayerFundsService } from '../service/player-funds.service.js';
 import {
   InvalidOfferTermsError,
   OfferClaimedError,
@@ -63,18 +71,22 @@ function canForfeit(granted: readonly (typeof FORFEIT_PERMISSIONS)[number][]): b
 
 export function createBonusRouter({
   grants,
+  funds,
   offers,
   weights,
   lifecycle,
+  conversion,
   realtime,
   adminGuard,
   limiter,
   geoCheck,
 }: {
   grants: GrantReaderService;
+  funds: PlayerFundsService;
   offers: OfferService;
   weights: WeightService;
   lifecycle: GrantLifecycleService;
+  conversion: GrantConversionService;
   realtime: RealtimeTransport;
   adminGuard: AdminGuard;
   limiter: RateLimiterAdapter<RateLimitKey>;
@@ -116,6 +128,15 @@ export function createBonusRouter({
     },
 
     admin: {
+      players: {
+        // Real-money balances, so the wallet's own read permission as well as the bonus one.
+        funds: os.admin.players.funds.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'transaction', 'view');
+          await adminGuard.assert(context, 'bonus', 'view');
+          return funds.read(input.userId);
+        }),
+      },
+
       grants: {
         list: os.admin.grants.list.handler(async ({ input, context }) => {
           await adminGuard.assert(context, 'bonus', 'view');
@@ -148,6 +169,37 @@ export function createBonusRouter({
             },
           );
         }),
+
+        convertTransferGrants: os.admin.grants.convertTransferGrants.handler(
+          async ({ input, context }) => {
+            const { userId } = await adminGuard.assertSuperAdmin(context, {
+              resource: 'bonus',
+              action: 'convert-transfer-grants',
+            });
+            const result = await mapErrors(
+              {
+                CONFLICT: [
+                  TransferGrantConversionUnavailableError,
+                  TransferGrantConversionWalletUnavailableError,
+                ],
+              },
+              () => conversion.convert(input, { id: userId, meta: context.clientMeta }),
+            );
+            if (!input.dryRun) {
+              // A refetch signal only: a dropped one leaves the next balance read correct.
+              for (const grant of result.converted) {
+                await Promise.resolve(
+                  realtime.publish(bonusBalanceChannel(grant.userId), {
+                    eventId: randomUUID(),
+                    currency: grant.currency,
+                    reason: 'completed',
+                  } satisfies BonusBalanceUpdate),
+                ).catch(() => undefined);
+              }
+            }
+            return result;
+          },
+        ),
       },
 
       offers: {
@@ -245,6 +297,25 @@ export function createBonusRouter({
           grants.entries(getUserId(context), input.id, input),
         ),
       ),
+
+      forfeit: os.grants.forfeit.handler(({ input, context }) => {
+        const userId = getUserId(context);
+        return mapErrors(
+          {
+            FORBIDDEN: PlayerForfeitNotAllowedError,
+            CONFLICT: GrantNotForfeitableError,
+            NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
+          },
+          async () => {
+            await lifecycle.forfeitByPlayer({
+              userId,
+              grantId: input.id,
+              meta: context.clientMeta,
+            });
+            return grants.get(userId, input.id);
+          },
+        );
+      }),
     },
   });
 }

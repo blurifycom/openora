@@ -34,6 +34,12 @@ export const GrantActivationRestrictedError = makeConflictError(
   'Your account cannot start a bonus right now',
   { code: 'BONUS_PLAY_RESTRICTED' },
 );
+export const PlayerForfeitNotAllowedError = makeConflictError(
+  'PlayerForfeitNotAllowedError',
+  'This bonus can only be forfeited by support',
+);
+
+const PLAYER_FORFEIT_NOTE = 'Forfeited by the player';
 
 /** A grant that can still be taken away. `completed`, `expired` and `forfeited` cannot. */
 const LIVE_STATUSES = ['pending', 'active'] as const;
@@ -309,6 +315,55 @@ export class GrantLifecycleService {
   }
 
   /**
+   * The player giving up one of their own grants, only where its terms allow it. Another
+   * player's grant reads as missing, so the route cannot confirm the id exists.
+   */
+  async forfeitByPlayer({
+    userId,
+    grantId,
+    meta,
+  }: {
+    userId: Uuid;
+    grantId: PromoGrant['id'];
+    meta?: ClientMeta | undefined;
+  }): Promise<ClosedGrant> {
+    const actor = { id: userId, isAdmin: false };
+    const [owned] = await this.drizzle.db
+      .select({ terms: promoGrant.terms })
+      .from(promoGrant)
+      .where(and(eq(promoGrant.id, grantId), eq(promoGrant.userId, userId)));
+    if (!owned) {
+      await this.recordRefusal({
+        grantId,
+        userId: null,
+        actor,
+        note: PLAYER_FORFEIT_NOTE,
+        status: 'not_found',
+        meta,
+      });
+      throw new GrantNotFoundError(grantId);
+    }
+    if (owned.terms.allowPlayerForfeit !== true) {
+      await this.recordRefusal({
+        grantId,
+        userId,
+        actor,
+        note: PLAYER_FORFEIT_NOTE,
+        status: 'not_allowed',
+        meta,
+      });
+      throw new PlayerForfeitNotAllowedError();
+    }
+    return this.forfeit({
+      grantId,
+      reason: 'player_opt_out',
+      actor,
+      note: PLAYER_FORFEIT_NOTE,
+      meta,
+    });
+  }
+
+  /**
    * An attempt that took nothing is still an attempt on a money resource, and the record has to
    * tell a probe apart from a forfeit that landed.
    */
@@ -385,6 +440,9 @@ export class GrantLifecycleService {
         // The requirement dies with the funds. A terminal grant still reporting progress reads,
         // on the backoffice screen the rule is written for, as a bonus part-way to converting.
         wageringProgress: ZERO,
+        // B is released and A unlocked: the real cash stays in the wallet, free.
+        linkedCash: ZERO,
+        unlinkedCash: ZERO,
         ...(outcome.reason === undefined ? {} : { forfeitReason: outcome.reason }),
         ...(outcome.actor === undefined ? {} : { forfeitedBy: outcome.actor.id }),
         ...(outcome.note === undefined ? {} : { forfeitNote: outcome.note }),

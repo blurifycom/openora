@@ -11,6 +11,8 @@ import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-
 import { createToken } from '../adapters/token.js';
 import { BannerImageCountBoundsOverridesSchema } from './cms-banner.js';
 import { MIN_PLAYER_AGE_YEARS } from './player.js';
+import { TurnoverCreditTypeSchema } from '../adapters/turnover.js';
+import { WagerProductSchema } from '../adapters/wager-context.js';
 import { GRANT_CONCURRENCY_MODES, RANK_PERIODIC_BASES, RANK_PROGRESS_BASES } from './promo.js';
 
 /**
@@ -75,8 +77,63 @@ export const AutoWithdrawalConfigSchema = z
 
 export type AutoWithdrawalConfig = z.infer<typeof AutoWithdrawalConfigSchema>;
 
+/**
+ * Structural check on a cron expression: 5 fields, or 6 with a leading seconds field.
+ * Not a full parse - the driver owns that - but it turns the typo class that would
+ * otherwise surface as one `logger.error` at boot and a job that never ticks into a
+ * config-validation failure.
+ */
+export const CronExpressionSchema = z
+  .string()
+  .regex(
+    /^[0-9A-Za-z*?,\-/]+( [0-9A-Za-z*?,\-/]+){4,5}$/,
+    'must be a 5- or 6-field cron expression',
+  );
+
+/** The percent of a stake that counts toward turnover, per product. */
+export const TurnoverPercentSchema = z.number().int().min(0).max(100);
+
+const TURNOVER_DEFAULT_LOCKED_MESSAGE = 'Wager your deposits before withdrawing or sending funds.';
+
+/** Deposit turnover requirement (ADR-0065). `multiplier` '0' turns it off entirely. */
+export const WalletTurnoverConfigSchema = z
+  .object({
+    multiplier: MoneyAmountSchema.default('0'),
+    creditTypes: z.array(TurnoverCreditTypeSchema).default(['deposit']),
+    /** Percent of a real stake's pivot value that counts, per product. */
+    productPercent: z
+      .object({
+        casino: TurnoverPercentSchema.default(100),
+        'live-casino': TurnoverPercentSchema.default(100),
+        sportsbook: TurnoverPercentSchema.default(100),
+        pvp: TurnoverPercentSchema.default(0),
+      })
+      .strict()
+      .prefault({}),
+    /** Products whose stake counts when its round settles rather than when it is placed. */
+    countAtSettle: z.array(WagerProductSchema).default(['sportsbook']),
+    /** Remaining requirement, in the pivot currency, at or below which nothing is locked. */
+    dustThreshold: MoneyAmountSchema.default('0.01'),
+    pricingCron: CronExpressionSchema.default('*/5 * * * *'),
+    /** The refusal's player-facing message (errors.md). */
+    lockedMessage: z.string().min(1).default(TURNOVER_DEFAULT_LOCKED_MESSAGE),
+  })
+  .strict();
+
+export type WalletTurnoverConfig = z.infer<typeof WalletTurnoverConfigSchema>;
+
+export const WALLET_TRANSFER_CREDIT_MODES = ['bonus_grant', 'cash'] as const;
+/** The player-to-player credits `transferCredits` decides. */
+export const WALLET_TRANSFER_CREDIT_KINDS = ['gift', 'rain', 'donation'] as const;
+
 export const WalletConfigSchema = z
   .object({
+    turnover: WalletTurnoverConfigSchema.optional(),
+    /**
+     * How a gift, rain or donation credit lands: as a bonus grant (today's behaviour) or as real
+     * cash carrying a turnover requirement. Absent = `bonus_grant`.
+     */
+    transferCredits: z.enum(WALLET_TRANSFER_CREDIT_MODES).optional(),
     /**
      * Currency codes routed to the crypto rail by `railFor` (case-insensitive).
      * Absent = the built-in default (BTC, ETH, USDT, USDC). Lets an operator add or
@@ -218,6 +275,20 @@ export function resolveWalletReferenceCurrency(config: WalletConfig | undefined)
   return (config?.defaultReferenceCurrency ?? DEFAULT_REFERENCE_CURRENCY).toUpperCase();
 }
 
+/** Turnover settings with their defaults, also when no wallet config is bound. */
+export function resolveWalletTurnoverConfig(
+  config: WalletConfig | undefined,
+): WalletTurnoverConfig {
+  return WalletTurnoverConfigSchema.parse(config?.turnover ?? {});
+}
+
+/** Whether the turnover requirement is on: a multiplier above '0'. */
+export function isTurnoverEnabled({
+  multiplier,
+}: Pick<WalletTurnoverConfig, 'multiplier'>): boolean {
+  return /[1-9]/.test(multiplier);
+}
+
 const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
 
 export const ExchangeRateConfigSchema = z
@@ -282,19 +353,6 @@ export const RegistrationConfigSchema = z
   .strict();
 
 /**
- * Structural check on a cron expression: 5 fields, or 6 with a leading seconds field.
- * Not a full parse - the driver owns that - but it turns the typo class that would
- * otherwise surface as one `logger.error` at boot and a job that never ticks into a
- * config-validation failure.
- */
-export const CronExpressionSchema = z
-  .string()
-  .regex(
-    /^[0-9A-Za-z*?,\-/]+( [0-9A-Za-z*?,\-/]+){4,5}$/,
-    'must be a 5- or 6-field cron expression',
-  );
-
-/**
  * Offset off the :00/:15/:30/:45 tick the wallet custody sweep owns, so the in-process
  * driver never runs the moderation-expiry sweep alongside a money path. Cadence sets
  * audit-trail latency only - a lapsed mute stops being enforced at its own `expiresAt`
@@ -322,6 +380,11 @@ export const RAKEBACK_PAYOUTS = ['instant', 'claim'] as const;
 export type RakebackBasis = (typeof RAKEBACK_BASES)[number];
 export type RakebackPayout = (typeof RAKEBACK_PAYOUTS)[number];
 
+export const BONUS_WITHDRAWAL_MODES = ['block', 'forfeit'] as const;
+export type BonusWithdrawalMode = (typeof BONUS_WITHDRAWAL_MODES)[number];
+export const DEFAULT_LOCKED_FUNDS_MESSAGE =
+  'Part of this balance is tied to an active bonus and cannot be moved until the bonus ends';
+
 export const PromoConfigSchema = z
   .object({
     bonus: z
@@ -331,6 +394,13 @@ export const PromoConfigSchema = z
          * grant source, `multiple` no limit. A grant over the limit is created pending.
          */
         grantConcurrency: z.enum(GRANT_CONCURRENCY_MODES).default('multiple'),
+        /**
+         * `forfeit` lets a withdrawal through and forfeits every live bonus; `block` refuses a
+         * withdrawal that would take money a locking bonus ties up.
+         */
+        withdrawalWhileActive: z.enum(BONUS_WITHDRAWAL_MODES).default('forfeit'),
+        /** Fallback message on a refused outflow; a UI reads the error's `data`. */
+        lockedFundsMessage: z.string().min(1).default(DEFAULT_LOCKED_FUNDS_MESSAGE),
       })
       .strict()
       .prefault({}),
@@ -577,6 +647,11 @@ export const PlatformConfigSchema = z
 
 export type PlatformConfig = z.infer<typeof PlatformConfigSchema>;
 export type PlatformConfigInput = z.input<typeof PlatformConfigSchema>;
+
+/** Promo settings with their defaults, also when no platform config is bound. */
+export function resolvePromoConfig(config: Pick<PlatformConfig, 'promo'> | undefined): PromoConfig {
+  return PromoConfigSchema.parse(config?.promo ?? {});
+}
 
 /**
  * Validate and normalize a platform config. Throws a precise, agent-legible

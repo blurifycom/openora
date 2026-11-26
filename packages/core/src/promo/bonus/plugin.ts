@@ -1,25 +1,30 @@
 import * as z from 'zod';
 import {
   AUDIT_WRITER,
+  BONUS_DEPOSITS,
+  BONUS_FUND_LOCKS,
   BONUS_GRANTS,
   BONUS_GRANT_LEDGER,
   BONUS_LIFECYCLE,
   BONUS_WAGERING,
   BonusForfeitReasonSchema,
+  type BonusDepositCommands,
   type BonusLifecycleCommands,
-  CurrencyTickerSchema,
+  EXCHANGE_RATE_READER,
   GEO_CHECK_COMMANDS,
   JOB_QUEUE,
-  MoneyAmountSchema,
   PLATFORM_CONFIG,
   PLAY_ELIGIBILITY,
-  PromoConfigSchema,
+  resolvePromoConfig,
   RATE_LIMITER,
   REALTIME_TRANSPORT,
   UuidSchema,
   WAGER_TRACKING,
+  WALLET_COMMANDS,
   WALLET_READER,
   domainEventSchemas,
+  isTurnoverEnabled,
+  resolveWalletTurnoverConfig,
   queue,
   type JobQueueAdapter,
   type RealtimeTransport,
@@ -31,13 +36,15 @@ import {
   EVENT_BUS,
   createLogger,
   type CoreTokenCatalog,
-  type DrizzleService,
-  type EventBus,
+  type DrizzleTx,
   type Plugin,
   type TypedContainer,
 } from '@openora/core/server';
+import { GrantConversionService } from './service/grant-conversion.service.js';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
+import { FundLockService } from './service/fund-lock.service.js';
+import { PlayerFundsService } from './service/player-funds.service.js';
 import { GrantReaderService, bonusGrantLedger } from './service/grant-reader.service.js';
 import { GrantService } from './service/grant.service.js';
 import { GrantsFindService } from './service/grants-find.service.js';
@@ -56,7 +63,6 @@ const logger = createLogger('promo-bonus');
 
 const EXPIRY_QUEUE = queue('promo-bonus-expiry');
 const FORFEIT_QUEUE = queue('promo-bonus-forfeit');
-const DEPOSIT_QUEUE = queue('promo-offer-deposit');
 const EXPIRY_CRON = '*/15 * * * *';
 // Shared by every money-adjacent job in this plugin - a bare enqueue() takes the driver's
 // default of one attempt, which turns one transient failure into a bonus the player earned and
@@ -76,7 +82,7 @@ function initiatedByOf(data: unknown): 'player' | 'admin' | 'system' | undefined
 const EmptyJobPayloadSchema = z.object({});
 
 const grantConcurrency = (c: TypedContainer<CoreTokenCatalog>) =>
-  PromoConfigSchema.parse(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).promo : {}).bonus
+  resolvePromoConfig(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined).bonus
     .grantConcurrency;
 
 /**
@@ -91,23 +97,16 @@ const ForfeitJobSchema = z.object({
   actorIsAdmin: z.boolean(),
 });
 
-/**
- * A deposit turning an opt-in into a bonus is a money movement, so it runs as a durable job for
- * the same reason a forfeit does: the event that triggers it is best-effort, and a grant that
- * never gets created is a bonus the player was promised and did not receive. The grant's own
- * `(user, source, source_ref)` index makes the retry harmless.
- */
-const DepositJobSchema = z.object({
-  userId: UuidSchema,
-  amount: MoneyAmountSchema,
-  currency: CurrencyTickerSchema,
-  transactionId: UuidSchema,
-});
-
 export default {
   id: 'bonus',
   dependsOn: ['audit'],
   requiresPorts: [PLAY_ELIGIBILITY],
+  optionalPorts: [
+    {
+      port: EXCHANGE_RATE_READER,
+      without: 'a grant in a currency other than USD has no dust threshold',
+    },
+  ],
   controlPorts: [
     {
       port: GEO_CHECK_COMMANDS,
@@ -116,7 +115,15 @@ export default {
     },
   ],
   register(ctx) {
-    ctx.provide(BONUS_GRANTS, (c) => new GrantService(c.get(AUDIT_WRITER), grantConcurrency(c)));
+    ctx.provide(
+      BONUS_GRANTS,
+      (c) =>
+        new GrantService(
+          c.get(AUDIT_WRITER),
+          grantConcurrency(c),
+          c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        ),
+    );
     ctx.provide(BONUS_GRANT_LEDGER, () => bonusGrantLedger);
     ctx.mcp.tool(grantsSummaryTool, (c) => {
       const summary = new GrantsSummaryService(c.get(DRIZZLE));
@@ -128,31 +135,60 @@ export default {
     });
     ctx.provideSealed(
       BONUS_WAGERING,
-      (c) => new WageringService(c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined),
+      (c) =>
+        new WageringService(
+          c.get(AUDIT_WRITER),
+          c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined,
+        ),
     );
+    // On the wallet's deposit transaction: the grant, and the outbox row announcing it, commit
+    // with the deposit that earned it.
+    ctx.provide(BONUS_DEPOSITS, (c): BonusDepositCommands => {
+      const service = new OfferService(
+        c.get(DRIZZLE),
+        c.get(AUDIT_WRITER),
+        c.get(BONUS_GRANTS),
+        c.get(WALLET_READER),
+        c.get(PLAY_ELIGIBILITY),
+        logger,
+      );
+      const bus = c.get(EVENT_BUS);
+      return {
+        async applyDeposit(tx: DrizzleTx, deposit) {
+          for (const bonus of await service.applyDeposit(tx, deposit)) {
+            await bus.emitInTransaction(tx, 'promo.bonus.granted', { ...bonus, source: 'deposit' });
+          }
+        },
+      };
+    });
+    // Built off the container rather than in the router factory: a job or the wallet calling
+    // these ports must not depend on the router having been resolved first.
+    let lifecycleSvc: GrantLifecycleService | null = null;
+    const grantLifecycle = (c: TypedContainer<CoreTokenCatalog>) =>
+      (lifecycleSvc ??= new GrantLifecycleService(
+        c.get(DRIZZLE),
+        c.get(AUDIT_WRITER),
+        c.get(EVENT_BUS),
+        c.get(PLAY_ELIGIBILITY),
+        grantConcurrency(c),
+      ));
     // A thin command port over GrantLifecycleService.forfeit - the shape an external
     // system/job context needs (no admin session to assert, one named grant rather than every
-    // grant a player holds). Constructed off the container directly, not the module-scoped
-    // `lifecycle` variable below: that one is only built lazily when the router resolves, and a
-    // job calling this port must not depend on the router having been requested first.
+    // grant a player holds).
     ctx.provide(
       BONUS_LIFECYCLE,
-      (c): BonusLifecycleCommands =>
-        createBonusLifecyclePort(
-          new GrantLifecycleService(
-            c.get(DRIZZLE),
-            c.get(AUDIT_WRITER),
-            c.get(EVENT_BUS),
-            c.get(PLAY_ELIGIBILITY),
-            grantConcurrency(c),
-          ),
+      (c): BonusLifecycleCommands => createBonusLifecyclePort(grantLifecycle(c)),
+    );
+    ctx.provideSealed(
+      BONUS_FUND_LOCKS,
+      (c) =>
+        new FundLockService(
+          grantLifecycle(c),
+          resolvePromoConfig(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined).bonus,
         ),
     );
 
-    let lifecycle: GrantLifecycleService | null = null;
     let offers: OfferService | null = null;
-    let drizzle: DrizzleService | null = null;
-    let events: EventBus | null = null;
     let jobs: JobQueueAdapter | null = null;
     let realtime: RealtimeTransport | null = null;
 
@@ -192,11 +228,11 @@ export default {
       queue: EXPIRY_QUEUE,
       schema: EmptyJobPayloadSchema,
       handler: async () => {
-        if (!lifecycle) {
-          logger.warn('promo-bonus-expiry sweep skipped - service not constructed');
+        if (!lifecycleSvc) {
+          logger.warn('promo-bonus-expiry sweep skipped - grant lifecycle not resolved yet');
           return;
         }
-        const closed = await lifecycle.expireDue();
+        const closed = await lifecycleSvc.expireDue();
         if (closed.length > 0) {
           logger.info({ grants: closed.length }, 'promo bonus grants expired');
         }
@@ -207,10 +243,10 @@ export default {
       queue: FORFEIT_QUEUE,
       schema: ForfeitJobSchema,
       handler: async ({ payload }) => {
-        if (!lifecycle) {
-          throw new Error('promo-bonus-forfeit: service not constructed');
+        if (!lifecycleSvc) {
+          throw new Error('promo-bonus-forfeit: grant lifecycle not resolved yet');
         }
-        await lifecycle.forfeitAllFor(
+        await lifecycleSvc.forfeitAllFor(
           payload.userId,
           payload.reason,
           payload.actorId === null
@@ -291,55 +327,7 @@ export default {
       forfeitEverything('identity.user.deactivated', 'account_deactivated'),
     );
 
-    ctx.jobs.worker({
-      queue: DEPOSIT_QUEUE,
-      schema: DepositJobSchema,
-      handler: async ({ payload }) => {
-        if (!offers || !drizzle) {
-          throw new Error('promo-offer-deposit: service not constructed');
-        }
-        const service = offers;
-        const bus = events;
-        // Through the outbox in the grant's own transaction: the player is told about the
-        // credit and what it obliges them to wager if and only if the grant committed.
-        await drizzle.db.transaction(async (tx) => {
-          for (const bonus of await service.applyDeposit(tx, payload)) {
-            await bus?.emitInTransaction(tx, 'promo.bonus.granted', {
-              ...bonus,
-              source: 'deposit',
-            });
-          }
-        });
-      },
-    });
-
-    // A confirmed deposit is what turns an opt-in into a bonus.
-    ctx.events.on('wallet.deposit.completed', async (payload: unknown) => {
-      const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
-      if (!parsed.success) {
-        logger.error('promo offer deposit skipped - event payload failed validation');
-        return;
-      }
-      if (!jobs) {
-        throw new Error('promo offer deposit - job queue not bound yet');
-      }
-      const { userId, amount, currency, transactionId } = parsed.data;
-      await jobs.enqueue(
-        DEPOSIT_QUEUE,
-        { userId, amount, currency, transactionId },
-        { idempotencyKey: `promo-offer-deposit:${transactionId}`, ...MONEY_JOB_RETRY },
-      );
-    });
-
     ctx.routers.add('promo-bonus', (c, options) => {
-      lifecycle = new GrantLifecycleService(
-        c.get(DRIZZLE),
-        c.get(AUDIT_WRITER),
-        c.get(EVENT_BUS),
-        c.get(PLAY_ELIGIBILITY),
-        grantConcurrency(c),
-      );
-      drizzle = c.get(DRIZZLE);
       offers = new OfferService(
         c.get(DRIZZLE),
         c.get(AUDIT_WRITER),
@@ -349,7 +337,6 @@ export default {
         logger,
         grantConcurrency(c),
       );
-      events = c.get(EVENT_BUS);
       jobs = c.get(JOB_QUEUE);
       realtime = c.get(REALTIME_TRANSPORT);
       if (options?.mounted !== false) {
@@ -359,10 +346,28 @@ export default {
       }
       return createBonusRouter({
         grants: new GrantReaderService(c.get(DRIZZLE)),
+        funds: new PlayerFundsService(
+          c.get(DRIZZLE),
+          c.get(WALLET_READER),
+          c.get(BONUS_FUND_LOCKS),
+        ),
         offers,
         realtime: c.get(REALTIME_TRANSPORT),
         weights: new WeightService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
-        lifecycle,
+        lifecycle: grantLifecycle(c),
+        conversion: new GrantConversionService(
+          c.get(DRIZZLE),
+          c.get(AUDIT_WRITER),
+          c.get(EVENT_BUS),
+          // Resolved per call: WALLET_COMMANDS is built from this module's own ports.
+          () => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined),
+          isTurnoverEnabled(
+            resolveWalletTurnoverConfig(
+              c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
+            ),
+          ),
+          logger,
+        ),
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),
         geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,

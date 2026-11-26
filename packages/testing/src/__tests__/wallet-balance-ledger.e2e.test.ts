@@ -66,12 +66,22 @@ describe('player balances and transaction history', () => {
     expect(res.status).toBe(200);
     const body = WalletBalancesSchema.parse(await res.json());
     expect(body.activeCurrency).toBe(mine.currency);
-    expect(body.balances).toContainEqual({ currency: mine.currency, balance: amountOf('100') });
+    expect(body.balances).toContainEqual({
+      currency: mine.currency,
+      balance: amountOf('100'),
+      locked: amountOf('0'),
+      free: amountOf('100'),
+    });
     expect(body.balances.map((entry) => entry.currency)).not.toContain(theirs.currency);
     const other = WalletBalancesSchema.parse(
       await (await theirs.client.get('/wallet/balances')).json(),
     );
-    expect(other.balances).toContainEqual({ currency: theirs.currency, balance: amountOf('40') });
+    expect(other.balances).toContainEqual({
+      currency: theirs.currency,
+      balance: amountOf('40'),
+      locked: amountOf('0'),
+      free: amountOf('40'),
+    });
     expect(other.activeCurrency).not.toBe(mine.currency);
   });
 

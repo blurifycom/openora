@@ -39,7 +39,7 @@ export type BonusLifecycleCommands = {
    * Every live grant the player held when the caller's transaction began, in every currency,
    * taken away on that transaction - so the forfeit commits or rolls back with the movement that
    * caused it. A grant another path closed first is skipped, never refused: the player made no
-   * attempt on it. Emits nothing; the caller announces `promo.bonus.forfeited` after its commit.
+   * attempt on it. Each forfeit is announced as `promo.bonus.forfeited` on that transaction.
    */
   forfeitHeld(tx: unknown, args: BonusForfeitHeldArgs): Promise<BonusForfeitedGrant[]>;
 };
