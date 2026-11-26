@@ -124,7 +124,7 @@ function mirrorTargetOf(rule: { redirectIp: boolean; mirrorUrl: string | null })
 
 // A blacklisted country that is redirected plays on the mirror, so the API lets it through
 // and keeping it off the primary domain is left to whoever serves that domain.
-function deniesAccess(rule: {
+export function deniesAccess(rule: {
   blacklisted: boolean;
   redirectIp: boolean;
   mirrorUrl: string | null;

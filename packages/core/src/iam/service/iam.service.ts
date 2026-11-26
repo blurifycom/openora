@@ -8,7 +8,8 @@ import {
   pageToOffset,
   serializeRow,
   statement,
-  readActions,
+  readActionsOf,
+  actionsOf,
   SUPPORTED_LEVELS,
   levelRank,
   isLevelSufficient,
@@ -110,15 +111,15 @@ function buildCatalog() {
       .map((resource) => ({
         resource,
         actions: (statement[resource] as readonly string[]).slice(),
-        readActions: (readActions[resource] ?? []).slice(),
+        readActions: readActionsOf(statement[resource] as readonly string[]),
       })),
     levels: SUPPORTED_LEVELS.slice(),
   };
 }
 
-function validateGrants(grants: ReadonlyArray<{ resource: string; level: string }>): void {
+export function validateGrants(grants: ReadonlyArray<{ resource: string; level: string }>): void {
   for (const g of grants) {
-    const known = statement[g.resource as ResourceName] as readonly string[] | undefined;
+    const known = actionsOf(g.resource);
     // `admin` grants are super-admin-only (A6) and must not be assignable via the matrix.
     if (!known || NON_ASSIGNABLE_MODULES.has(g.resource)) {
       throw new InvalidGrantError();
@@ -129,7 +130,7 @@ function validateGrants(grants: ReadonlyArray<{ resource: string; level: string 
   }
 }
 
-function grantsToLevelMap(grants: readonly AdminGrant[]) {
+export function grantsToLevelMap(grants: readonly AdminGrant[]) {
   const byResource = new Map<string, Set<string>>();
   for (const g of grants) {
     let actions = byResource.get(g.resource);
@@ -141,14 +142,14 @@ function grantsToLevelMap(grants: readonly AdminGrant[]) {
   }
   const map: Record<string, PermissionLevel> = {};
   for (const [resource, actions] of byResource) {
-    const all = statement[resource as ResourceName] as readonly string[] | undefined;
+    const all = actionsOf(resource);
     if (!all) {
       continue;
     }
     if (all.every((a) => actions.has(a))) {
       map[resource] = 'read_write';
     } else {
-      const read = readActions[resource as ResourceName] ?? [];
+      const read = readActionsOf(all);
       map[resource] = read.length > 0 && read.every((a) => actions.has(a)) ? 'read' : 'no_access';
     }
   }
