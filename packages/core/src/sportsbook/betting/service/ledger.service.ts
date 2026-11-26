@@ -139,7 +139,7 @@ class LedgerRefusal extends Error {
  * same tx id committed first, or the ref is taken for good. The run retries once and answers a
  * second loss with `refusal`, so no raw error reaches the provider.
  */
-class LedgerRaceLost extends Error {
+export class LedgerRaceLost extends Error {
   readonly refusal: LedgerRefusal;
 
   constructor(
@@ -155,7 +155,7 @@ class LedgerRaceLost extends Error {
     // Its own dedupe key, so it never folds into a request fingerprint mismatch on the same tx.
     this.refusal = new LedgerRefusal('fingerprint_mismatch', {
       kind: 'fingerprint_mismatch',
-      dedupeKey: `fingerprint_mismatch:${provider}:${providerTxId}:wallet_ref`,
+      dedupeKey: `wallet_ref:${provider}:${providerTxId}`,
       provider,
       ...owner,
       detail: {
@@ -214,7 +214,7 @@ const canonicalMoney = (amount: string | undefined) =>
   amount === undefined ? '' : moneyFloorToScale(amount, MONEY_SCALE);
 
 /** Parts added after the first release are appended only when present, so older requests keep their hash. */
-function requestFingerprint(parts: FingerprintParts): string {
+export function requestFingerprint(parts: FingerprintParts): string {
   const { promotion, promotionAmount, promotionPotential } = parts;
   const canonical = JSON.stringify([
     parts.kind,
@@ -320,7 +320,7 @@ type Exact = { digits: bigint; scale: number };
 const EXACT_ONE: Exact = { digits: 1n, scale: 0 };
 
 /** Exact, untruncated: `digits / 10^scale` times a decimal string. */
-function timesDecimal(product: Exact, decimal: string): Exact {
+export function timesDecimal(product: Exact, decimal: string): Exact {
   const [whole, fraction = ''] = decimal.split('.');
   return {
     digits: product.digits * BigInt(`${whole}${fraction}`),
@@ -328,7 +328,7 @@ function timesDecimal(product: Exact, decimal: string): Exact {
   };
 }
 
-function compareExact(a: Exact, b: Exact): number {
+export function compareExact(a: Exact, b: Exact): number {
   const scale = Math.max(a.scale, b.scale);
   const left = a.digits * 10n ** BigInt(scale - a.scale);
   const right = b.digits * 10n ** BigInt(scale - b.scale);
@@ -352,7 +352,7 @@ export function isUnusualPromotionPayout(
   return compareExact(timesDecimal(EXACT_ONE, payout), ceiling) > 0;
 }
 
-function fitsDecimals(amount: string, decimals: number): boolean {
+export function fitsDecimals(amount: string, decimals: number): boolean {
   return moneyEquals(moneyFloorToScale(amount, decimals), amount);
 }
 
@@ -473,7 +473,7 @@ export function invalidTerms(
 /** Core's own align transactions; a provider callback may not use an id under it. */
 export const ALIGN_TX_PREFIX = 'core-align:';
 
-function providerRequest<T extends TxKey>(args: T): T {
+export function providerRequest<T extends TxKey>(args: T): T {
   if (!args.providerTxId.startsWith(ALIGN_TX_PREFIX)) {
     return args;
   }
@@ -485,7 +485,7 @@ function providerRequest<T extends TxKey>(args: T): T {
   });
 }
 
-function invalidAmount(
+export function invalidAmount(
   { provider, providerTxId }: TxKey,
   detail: Record<string, unknown>,
   owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'> = {},
@@ -556,7 +556,7 @@ async function stakeToReverse(
  * The wallet or the debt does not hold what the ledger expects of a settlement or cancel: final,
  * and filed for an operator.
  */
-function ledgerMismatch(
+export function ledgerMismatch(
   { provider, providerTxId }: TxKey,
   owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'>,
   detail: Record<string, string>,
@@ -571,7 +571,7 @@ function ledgerMismatch(
 }
 
 /** A provider callback for a bet core already moved past it, or dropped: refused and filed. */
-function transitionRefused(
+export function transitionRefused(
   { provider, providerTxId }: TxKey,
   kind: SportsbookTransactionKind,
   bet: SportsbookBetRow | undefined,
@@ -627,7 +627,7 @@ const RequestTxKeySchema = SportsbookConfirmArgsSchema.pick({
  * half-read. A malformed amount or leg odds refuse as `invalid_amount` and are filed; a malformed session id
  * refuses as `session_invalid`. Anything else malformed is the overlay's bug and throws the ZodError.
  */
-function parseRequest<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
+export function parseRequest<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
   const parsed = schema.safeParse(input);
   if (parsed.success) {
     return parsed.data;
@@ -649,7 +649,7 @@ function parseRequest<S extends z.ZodType>(schema: S, input: unknown): z.output<
 }
 
 /** A callback's own move, apart from the `offset:` and `collect:` refs debt collections use. */
-function walletRef({
+export function walletRef({
   provider,
   providerTxId,
   providerBetId,

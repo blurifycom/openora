@@ -54,7 +54,7 @@ export class SportsbookAlignRefusedError extends Error {
 }
 
 /** Deterministic, so a repeated align of the same observation replays instead of moving twice. */
-function alignTxId(
+export function alignTxId(
   bet: Pick<SportsbookBetRow, 'id'>,
   version: number,
   kind: SportsbookTransactionKind,

@@ -46,7 +46,7 @@ function phoneVerificationInvalidError() {
   return new ORPCError('UNPROCESSABLE_CONTENT', { message: 'The code is invalid or expired.' });
 }
 
-function isPhoneNumberCollision(error: unknown): boolean {
+export function isPhoneNumberCollision(error: unknown): boolean {
   const cause = error instanceof DatabaseError ? error : (error as Error)?.cause;
   return (
     cause instanceof DatabaseError &&

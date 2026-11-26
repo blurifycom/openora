@@ -1,8 +1,10 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import type { SportsbookProviderBetStatus } from '@openora/core/contracts';
-import { alignmentSteps } from '../align.service.js';
-import { ALIGN_TX_PREFIX } from '../ledger.service.js';
+import { SportsbookProviderIdSchema } from '@openora/core/contracts';
+import { SPORTSBOOK_TRANSACTION_KINDS } from '../../contract/index.js';
+import { alignTxId, alignmentSteps } from '../align.service.js';
+import { ALIGN_TX_PREFIX, providerRequest } from '../ledger.service.js';
 import type { SportsbookBetRow } from '../../schema/index.js';
 
 const BET_ID = '11111111-1111-4111-8111-111111111111';
@@ -265,5 +267,57 @@ describe('alignmentSteps', () => {
         id(8, 'settle'),
       ]);
     });
+  });
+});
+
+describe('alignTxId', () => {
+  const kindArb = fc.constantFrom(...SPORTSBOOK_TRANSACTION_KINDS);
+  const versionArb = fc.integer({ min: 1, max: 2 ** 31 - 1 });
+
+  it('is the bet id, version and kind under the core prefix', () => {
+    expect(alignTxId({ id: BET_ID }, 4, 'settle')).toBe(`${ALIGN_TX_PREFIX}${BET_ID}:v4:settle`);
+  });
+
+  it('is the same for the same bet, version and kind', () => {
+    fc.assert(
+      fc.property(fc.uuid(), versionArb, kindArb, (betId, version, kind) => {
+        expect(alignTxId({ id: betId }, version, kind)).toBe(
+          alignTxId({ id: betId }, version, kind),
+        );
+      }),
+    );
+  });
+
+  it('differs whenever the bet, version or kind differs', () => {
+    fc.assert(
+      fc.property(
+        fc.tuple(fc.uuid(), versionArb, kindArb),
+        fc.tuple(fc.uuid(), versionArb, kindArb),
+        ([b1, v1, k1], [b2, v2, k2]) => {
+          const same = b1 === b2 && v1 === v2 && k1 === k2;
+          expect(alignTxId({ id: b1 }, v1, k1) === alignTxId({ id: b2 }, v2, k2)).toBe(same);
+        },
+      ),
+    );
+  });
+
+  it('fits the provider id schema unchanged, so an align step parses as a ledger request', () => {
+    fc.assert(
+      fc.property(fc.uuid(), versionArb, kindArb, (betId, version, kind) => {
+        const txId = alignTxId({ id: betId }, version, kind);
+        expect(SportsbookProviderIdSchema.parse(txId)).toBe(txId);
+      }),
+    );
+  });
+
+  it('is refused when a provider callback sends it', () => {
+    fc.assert(
+      fc.property(fc.uuid(), versionArb, kindArb, (betId, version, kind) => {
+        const providerTxId = alignTxId({ id: betId }, version, kind);
+        expect(() => providerRequest({ provider: 'acme-sports', providerTxId })).toThrow(
+          expect.objectContaining({ reason: 'fingerprint_mismatch' }),
+        );
+      }),
+    );
   });
 });

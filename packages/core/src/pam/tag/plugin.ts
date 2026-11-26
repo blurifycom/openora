@@ -55,7 +55,7 @@ function preconditionOutcome(refusal: string | null) {
 
 // send_to_manual_review declares no tag_not_found: a catalog without withdrawal_review is an
 // operator misconfiguration, which the kernel reports as internal_error.
-function manualReviewRefusal(refusal: TagAssignmentRefusal | null) {
+export function manualReviewRefusal(refusal: TagAssignmentRefusal | null) {
   return refusal === 'tag_already_active' ? 'already_in_manual_review' : refusal;
 }
 

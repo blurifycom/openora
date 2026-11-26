@@ -77,7 +77,7 @@ type ProjectedState = {
   version: number;
 };
 
-function snapshotOf(userId: User['id'], state: ProjectedState): PlayEligibilitySnapshot {
+export function snapshotOf(userId: User['id'], state: ProjectedState): PlayEligibilitySnapshot {
   return {
     ...state,
     userId,

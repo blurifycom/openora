@@ -22,7 +22,7 @@ export const inPopulation = (): SQL | undefined =>
 
 const isUuid = (id: string) => UuidSchema.safeParse(id).success;
 
-function tagKeysOf(tags: readonly string[]): TagKey[] {
+export function tagKeysOf(tags: readonly string[]): TagKey[] {
   if (tags.length === 0) {
     throw new RangeError('tags must name at least one tag');
   }

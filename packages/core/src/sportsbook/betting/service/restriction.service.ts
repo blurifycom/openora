@@ -33,7 +33,7 @@ function toRestriction(userId: User['id'], row: RestrictionRow | undefined): Spo
   };
 }
 
-function changed(before: SportsbookRestriction, after: SportsbookRestriction): boolean {
+export function changed(before: SportsbookRestriction, after: SportsbookRestriction): boolean {
   return before.restricted !== after.restricted || before.reason !== after.reason;
 }
 
