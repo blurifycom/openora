@@ -41,6 +41,10 @@ const CORE_PLUGIN_MODULES = [
  * Compose your registry as `[...corePlugins(), ...overlays]`. To opt a module
  * out, filter by id, together with the modules that depend on it, e.g. chat:
  * `corePlugins().filter((p) => !['chat', 'chat-commands', 'social'].includes(p.id))`.
+ * `player-management` requires `CHAT_BLOCK_READER`, so without chat an overlay must bind it:
+ * `ctx.provide(CHAT_BLOCK_READER, ...)` with a reader whose `getExcludedUserIds`,
+ * `getBlockedUserIds` and `getBlockerIds` resolve to `[]`, or keep `chat-remote` with
+ * `CHAT_SERVICE_URL` to read them from a chat service.
  */
 export function corePlugins(): PluginEntry[] {
   return CORE_PLUGIN_MODULES.map((module) => ({
