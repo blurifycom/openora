@@ -1,72 +1,67 @@
 <!--
-A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. Plain words and diagrams, no code, paths or symbol names; generated from the diff, the schema diff and real spans, never invented. This repo is public: bare ticket keys only, no internal URLs, hosts, operator names or personal data.
-Keep a section only when its trigger fires; delete the rest. "How it was checked" and the three artifacts a reviewer looks at instead of the code ("Request path", "Data model", "Trace") stay open as headings, in that order; every other section stays collapsed, its summary line carrying the gist. Budget: the words that show before anything is expanded fit one screen (about 1500 characters, the open diagrams aside), and each collapsed section fits one screen (about 1500 characters plus its diagram); the detail lives in the diagram or table, not in paragraphs. Mermaid: always horizontal (`flowchart LR`, an erDiagram with `direction LR`; a row too wide to read is split in two diagrams, never turned vertical), no theme or `style` lines; what the change adds, changes or removes is filled: `classDef added fill:#3fb95033,stroke:#3fb950,stroke-width:2px`, `classDef changed fill:#d2992233,stroke:#d29922,stroke-width:2px`, `classDef removed fill:#f8514933,stroke:#f85149,stroke-width:2px,stroke-dasharray:4`.
-First line: the bare ticket key, or `Closes #<issue>`. The collapsed sections keep their numbers: 2 and 6 are the open "Request path" and "Data model", 7 (e2e steps) and 11 (video) are left out because this repo is headless, so the trace is its walkthrough.
+A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. First line: the bare ticket key, or `Closes #<issue>`. Then one summary line and the generated "Touches:" line. The same 14 slots in every PR, every heading kept, open, in this order; a slot that does not apply says "N/A: <reason>". Size changes nothing. This repo is public: no internal URLs, hosts, operator names or personal data. Plain words and diagrams, no code, paths or symbol names. Mermaid is horizontal (`flowchart LR`, an erDiagram or stateDiagram-v2 with `direction LR`), no theme or `style` lines, what changed filled with the added / changed / removed classes and the legend line under it. No `<details>` folds and no tables outside slot 12. What nobody measured stays visible: "not labelled", "not measured", "not traced".
 -->
 
-## How it was checked
+## 1. Decisions made
 
-<!-- Checks result for the head SHA, then each test that proves the change, named by the behaviour it proves. Review findings dropped as not holding, each with why; a dropped security finding as a count only. -->
+<!-- Per call the issue did not settle: Chose / Instead of / Set by. -->
 
-## Request path
+## 2. Origin
 
-<!-- Trigger: a route, procedure, middleware, service or query on a request path changes. A flowchart LR of the whole path of the main changed request, nothing cut, each hop named by its role (no hosts or URLs): the caller, every middleware and gate in the order it runs, the handler, each service and port it calls, then the database, cache, queue and adapters it reaches. Take the hops from the procedure's real middleware chain and the spans of its trace, not from memory. Numbered edges say what each hop carries. Every hop the change adds, changes or removes carries the added / changed / removed class. One diagram per changed entry point, at most three, the rest named in a list. -->
+<!-- A fix: "Found:" (report, CI, a consumer), "Lives in:" (module or package), "Cause:", "Reproduced:". Docs, deps, tests or tooling: rename to "## 2. Why", at most three bullets; a temporary CI change ends with "Revert when: <condition>". -->
 
-## Data model
+## 3. How it was checked
 
-<!-- Trigger: a route, procedure, service or query on a request path changes, or a migration or schema change. An erDiagram, `direction LR` on its first line, of the tables the changed flow reads and writes plus every table one foreign key away, with their relations, keys and the columns the flow touches. A new, changed or removed table carries the added / changed / removed class (`ledger_entries:::added`), a new or changed column says "new" or "changed" in its comment. No schema change: one line under the diagram saying so. With a migration: locks, backfill, safety under traffic, config fields added or removed, as a list. -->
+<!-- The hostile cases tried, one line. Never "green" or a test count: the checks and the diff show them. -->
 
-## Trace
+## 4. Env
 
-<!-- Trigger: a route, procedure, service or query on a request path changes. The gantt from packages/testing/scripts/trace-report.ts for the happy path, one per acceptance criterion a request proves, and each refusal in its own nested <details>; "trace: none" only when the integration suite exported no spans for it. Spans from a local run on test data only, no ids, emails or amounts from real data. -->
+<!-- Per config field or env variable added, changed or removed: name, Lives in, Set in, Default, Copy value from, a bold "Before release:" line. Never a value. -->
 
-<details><summary><b>1. Architecture diff</b>: </summary>
+## 5. Consumer impact
 
-<!-- Trigger: a new module, package, external call or dependency between modules, or 3+ modules touched. Changed nodes plus one neighbour each side, max ~10 nodes. -->
+<!-- Which exports, routes, events or config fields change for a consumer, and whether it is backward compatible. -->
 
-</details>
+## 6. Related PRs
 
-<details><summary><b>3. Business logic</b>: </summary>
+<!-- The paired consumer change by its shared branch name, or the release it ships in. -->
 
-<!-- Trigger: 3+ new branches or a changed error outcome. Decision flowchart LR, exact status and reason per caller. -->
+## 7. Flow
 
-</details>
+<!-- ### Request path: one flowchart LR, caller to response status and total, every middleware and gate in order, every step with its ms, every arrow labelled with what crosses it (from the trace span, else the code, else "not labelled"). ### Event flow: producer, outbox write, "after commit +lag ms", handler, each sink. ### Pipeline for a CI change. -->
 
-<details><summary><b>4. Endpoints and permissions</b>: </summary>
+🟩 added · 🟨 changed · 🟥 removed
 
-<!-- Trigger: a route, contract, event payload or status code changes. flowchart LR caller -> endpoint, payload on the edge, response in the node; backward compatible or not. -->
+## 8. Data model
 
-</details>
+<!-- One erDiagram, "direction LR" first: changed tables plus one foreign key away, keys and marked columns only. -->
 
-<details><summary><b>5. Queries and indexes</b>: </summary>
+🟩 added · 🟨 changed · 🟥 removed
 
-<!-- Trigger: new or changed queries on a request path, or a money path. A sequenceDiagram, one arrow per query with its index, the queries the change adds inside `rect rgba(63, 185, 80, 0.15)`. Then performance conclusions as a list: index per new query, N+1, queries added per request, sequential queries that could run in parallel, repeated reads. -->
+## 9. Migration
 
-</details>
+<!-- Per file: lock (from the SQL), time and rows (a run on a seeded copy, else "not measured"), "Data loss:" (drop, type change, removed enum value). -->
 
-<details><summary><b>8. AC -> evidence</b>: </summary>
+## 10. Trace
 
-<!-- Trigger: the work has acceptance criteria. -->
+<!-- One #### METHOD /path per changed or added procedure: the gantt from packages/testing/scripts/trace-report.ts; "not traced" when missing; a removed one says "removed, nothing to trace". ### Queries and indexes when a query is new. -->
 
-| AC  | behaviour | test | trace | result @sha |
-| --- | --------- | ---- | ----- | ----------- |
+## 11. Performance
 
-</details>
+<!-- ### Load on a hot path: players reached of 1000, p95, CPU and RAM for api and database before and after, queries per request at 1/10/100 items. ### Measurement for a benchmarked change. -->
 
-<details><summary><b>9. Decisions to accept</b>: </summary>
+## 12. Evidence
 
-<!-- Trigger: a tradeoff the issue did not settle; always on money, KYC, responsible-gambling or authz (then first). Numbered, each with an owner. Alternatives considered go here. -->
+<!-- ### Sample output for a script, CLI or generator. ### Video (table Flow | Before | Now | AC, one row per AC, each clip the whole flow of its AC in one take, from the screen the user starts on to the outcome the AC names, never a few seconds of the end state) or ### Screenshots before | after when a UI package changes. -->
 
-</details>
+## 13. Business logic
 
-<details><summary><b>10. Test quality and rollout</b>: </summary>
+<!-- A decision flowchart LR when a branch has three or more outcomes; ### State machine (stateDiagram-v2, direction LR) when a status is added, removed or moved. -->
 
-<!-- Trigger: a large or risky change, any money, KYC, responsible-gambling or authz change, or a config change. Mutation and hostile cases, what is not covered, migration order, consumer impact, what a revert leaves behind, docs and ADRs to update. -->
+🟩 added · 🟨 changed · 🟥 removed
 
-</details>
+## 14. Endpoints and permissions
 
-<details><summary><b>12. Code review guide</b>: </summary>
+<!-- flowchart LR caller to endpoint, guard and role on the edge, response and new status codes in the node; "backward compatible" or "breaking". -->
 
-<!-- Trigger: a large change. Ordered stops: contract -> tables -> server -> writes, each named by what it does. -->
-
-</details>
+🟩 added · 🟨 changed · 🟥 removed

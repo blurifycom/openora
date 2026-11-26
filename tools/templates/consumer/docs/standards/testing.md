@@ -18,7 +18,8 @@ Before the PR opens:
    read for layout defects and given a PASS or FAIL line. Screenshots are for the agent, videos
    for the reviewer.
 2. Capture the evidence once, on the final commit, after the tests are green and review is clean:
-   one short clip per acceptance criterion, ending on the outcome it names, and the "after" twin
+   one clip per acceptance criterion with its whole flow in one take, from the screen the user starts
+   on to the outcome it names (never a few seconds of the end state), and the "after" twin
    of a fix's "before" clip, joined with the four shots per changed screen into one walkthrough
    video (`ui-verify` "Video evidence"). Run every browser spec that drives an AC in one command with video on
    (`test.use({ video: 'on' })` or the repo's record switch); `playwright-cli` with `video-start` /

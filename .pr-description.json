@@ -1,0 +1,237 @@
+{
+  "name": "openora",
+  "paths": {
+    "test": "__tests__|\\.test\\.|\\.spec\\.|^apps/e2e/|/testing/|/test/",
+    "nonRuntime": "\\.(md|mdx|json|ya?ml)$|(^|/)\\.npmrc$"
+  },
+  "schema": {
+    "migrationSql": "/drizzle/migrations/[^/]+\\.sql$",
+    "snapshot": "/drizzle/migrations/meta/\\d+_snapshot\\.json$",
+    "runtimeTs": "^(apps/api/src|packages/core/src)/.*\\.ts$",
+    "exclude": "/drizzle/",
+    "tableGlob": "*.ts"
+  },
+  "env": {
+    "sources": [
+      {
+        "file": "(^|/)\\.env\\.example$",
+        "vars": "^#?\\s*([A-Z][A-Z0-9_]+)=",
+        "kind": "runtime"
+      },
+      {
+        "file": "^apps/api/src/env\\.ts$",
+        "vars": "^\\s*([A-Z][A-Z0-9_]+)\\s*:",
+        "kind": "runtime",
+        "optionalMarker": "optional|default"
+      },
+      {
+        "file": "vite-env\\.d\\.ts$",
+        "vars": "readonly (VITE_[A-Z0-9_]+)",
+        "kind": "build arg"
+      },
+      {
+        "file": "Dockerfile[^/]*$",
+        "vars": "^ARG ([A-Z][A-Z0-9_]+)",
+        "kind": "build arg"
+      }
+    ]
+  },
+  "endpoints": {
+    "runtimeTs": "^(apps/api/src|packages/core/src|packages/[a-z0-9-]+-contract)/.*\\.ts$",
+    "contracts": [
+      {
+        "contract": "^(packages/core/src/.*)/contract/[^/]+\\.ts$",
+        "router": "^$1/router/.*\\.ts$",
+        "module": "$1/"
+      }
+    ]
+  },
+  "topology": {
+    "stores": ["PG", "RD", "S3"],
+    "groups": [
+      {
+        "id": "CL",
+        "label": "consumers",
+        "nodes": [
+          {
+            "id": "CON",
+            "label": "consumer template",
+            "sub": "create-openora",
+            "shape": ["([", "])"]
+          },
+          {
+            "id": "SDK",
+            "label": "react sdk",
+            "sub": "",
+            "shape": ["([", "])"]
+          },
+          {
+            "id": "ADM",
+            "label": "admin console",
+            "sub": "",
+            "shape": ["([", "])"]
+          }
+        ]
+      },
+      {
+        "id": "CORE",
+        "label": "core modules",
+        "nodes": [
+          {
+            "id": "IAM",
+            "label": "identity and access",
+            "sub": "pam, iam",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "WAL",
+            "label": "wallet",
+            "sub": "ledger, money",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "GAME",
+            "label": "casino and sportsbook",
+            "sub": "",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "PROMO",
+            "label": "promo",
+            "sub": "",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "ENG",
+            "label": "engagement",
+            "sub": "chat, social, notifications",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "CMP",
+            "label": "compliance",
+            "sub": "kyc, rg, aml",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "CONT",
+            "label": "content",
+            "sub": "cms, mail, fx",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "OBS",
+            "label": "audit and analytics",
+            "sub": "",
+            "shape": ["[", "]"]
+          }
+        ]
+      },
+      {
+        "id": "PLAT",
+        "label": "platform",
+        "nodes": [
+          {
+            "id": "SRV",
+            "label": "server and contracts",
+            "sub": "",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "ADP",
+            "label": "adapter seams",
+            "sub": "",
+            "shape": ["[", "]"]
+          },
+          {
+            "id": "TOOL",
+            "label": "tooling",
+            "sub": "mcp, testing",
+            "shape": ["[", "]"]
+          }
+        ]
+      },
+      {
+        "id": "ST",
+        "label": "stores",
+        "nodes": [
+          {
+            "id": "PG",
+            "label": "postgres",
+            "sub": "",
+            "shape": ["[(", ")]"]
+          },
+          {
+            "id": "RD",
+            "label": "redis, queues",
+            "sub": "",
+            "shape": ["[(", ")]"]
+          }
+        ]
+      }
+    ],
+    "rules": [
+      {
+        "match": "/drizzle/migrations/.*\\.sql$",
+        "nodes": ["PG"]
+      },
+      {
+        "match": "^packages/core/src/([^/]+)",
+        "capture": {
+          "group": 1,
+          "map": {
+            "pam": "IAM",
+            "iam": "IAM",
+            "wallet": "WAL",
+            "casino": "GAME",
+            "sportsbook": "GAME",
+            "promo": "PROMO",
+            "engagement": "ENG",
+            "compliance": "CMP",
+            "compliance.ts": "CMP",
+            "cms": "CONT",
+            "mail": "CONT",
+            "fx": "CONT",
+            "audit": "OBS",
+            "analytics": "OBS",
+            "server": "SRV",
+            "contracts": "SRV",
+            "common": "SRV",
+            "scripts": "SRV",
+            "testing": "TOOL",
+            "react": "SDK",
+            "admin-console": "ADM"
+          },
+          "onUnmapped": "new",
+          "label": "openora dir",
+          "baseDir": "packages/core/src",
+          "newParent": "CORE"
+        }
+      },
+      {
+        "match": "^packages/create-openora/",
+        "nodes": ["CON"]
+      },
+      {
+        "match": "^(packages/(mcp|testing)|apps/mcp-server-dev)/",
+        "nodes": ["TOOL"]
+      },
+      {
+        "match": "/(adapters?|ports?)/",
+        "nodes": ["ADP"]
+      }
+    ]
+  },
+  "pipeline": {
+    "kind": "github",
+    "files": "^\\.github/workflows/.*\\.ya?ml$",
+    "trigger": "^\\.github/workflows/"
+  },
+  "evidence": {
+    "uiPaths": ["^packages/react/", "^packages/core/src/admin-console/"]
+  },
+  "reasons": {
+    "Consumer impact": "no public surface changed",
+    "Origin": "feature, the linked issue says why"
+  }
+}

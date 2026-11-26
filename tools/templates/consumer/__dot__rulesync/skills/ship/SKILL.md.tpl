@@ -117,7 +117,7 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It joins them with the four shots per changed screen into one walkthrough video and returns its path and chapter list.
 
 - A spec that fails here -> back to `builder` with it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
-- Every AC that needs a clip has one in the walkthrough -> 5.
+- Every AC that needs a clip has its row in the Evidence table -> 5.
 
 ### 5. Open the MR
 
