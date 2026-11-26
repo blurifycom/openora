@@ -313,6 +313,10 @@ describe('Self-exclusion', () => {
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('60'));
   });
 
+  it.todo(
+    'GAP: a self-excluded player cannot withdraw their remaining real-money balance: the exclusion revokes every session and login is refused (packages/core/src/pam/identity/service/rg-guard.service.ts:70), and POST /wallet/withdraw is the only payout route, player-only (packages/core/src/wallet/contract/index.ts:802)',
+  );
+
   it('permanent self-exclusion cannot be lifted by an admin', async () => {
     const player = await newRgPlayer(e2e);
     const started = await startSelfExclusion(player, {

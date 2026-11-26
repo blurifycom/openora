@@ -328,6 +328,7 @@ describe('phone login', () => {
     const player = await newPhonePlayer();
     await postJson(e2e, '/identity/phone-login/request', { phone: player.phone });
     const [code = ''] = smsCodesFor(player.phone);
+    expect(code).toMatch(/^\d{6}$/);
     const wrong = code === '000000' ? '111111' : '000000';
     const verify = (attempt: string) =>
       postJson(e2e, '/identity/phone-login/verify', { phone: player.phone, code: attempt });

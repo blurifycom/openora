@@ -401,7 +401,7 @@ describe('Admin limit changes and projection', () => {
     expect((await limitRow(e2e, view.id))?.amount).toBe(scaled('50'));
   });
 
-  it('admin cannot remove a player limit and the cap and its removal state stay', async () => {
+  it('the player limit removal route refuses a non-owner admin, there is no admin removal route, and the cap stays', async () => {
     const player = await newRgPlayer(e2e);
     const view = await putLimit(player.client, player.currency, { amount: '50' });
     const before = await limitRow(e2e, view.id);
@@ -409,6 +409,7 @@ describe('Admin limit changes and projection', () => {
     const res = await readBody(await e2e.admin.del(`/compliance/limits/${view.id}`));
 
     expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ message: 'You do not own this Limit' });
     expect(await limitRow(e2e, view.id)).toEqual(before);
     const over = await postDeposit(player.client, player.currency, '60');
     expect(over.status).toBe(409);

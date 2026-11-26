@@ -76,7 +76,7 @@ describe('player balances and transaction history', () => {
   });
 
   it.todo(
-    'BUG: setting an active currency the operator does not offer returns 200 and stores it, the service only updates wallet.currency (packages/core/src/wallet/service/wallet.service.ts:1762)',
+    'GAP: core has no offered-currency allowlist, so setting an active currency the operator does not offer returns 200 and stores it (packages/core/src/wallet/service/wallet.service.ts:1759-1762)',
   );
   it('a player listing transactions sees their own rows with their status and none of another player', async () => {
     const mine = await newFundedPlayer(e2e, '100');
