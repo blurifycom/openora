@@ -72,7 +72,7 @@ describe('player launches a game and plays a round', () => {
   });
 
   it.todo(
-    'BUG: a provider launch that fails after the stake is debited leaves the stake taken and an active round, with no refund (casino/gaming/service/gaming.service.ts:727-742)',
+    'GAP: a provider launch that fails after the stake is debited has no refund path; the stake stays taken and the round stays active by design (casino/gaming/service/gaming.service.ts:727-742)',
   );
 
   it('starting a round on an inactive or unknown game is refused and leaves the balance unchanged', async () => {

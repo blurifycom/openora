@@ -802,18 +802,18 @@ describe('invitations', () => {
 
 describe('two person approval', () => {
   it.todo(
-    'GAP: a request that needs approval stays pending until a different admin approves it (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
+    'GAP: a request that needs approval stays pending until a different admin approves it (no pending request or second approver exists; the request permission is declared but unused at contracts/schemas/iam.ts:49-54 and the approve permission only gates bulkApproveKyc at compliance/router/index.ts:388)',
   );
   it.todo(
-    'GAP: the requesting admin cannot approve their own request (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
+    'GAP: the requesting admin cannot approve their own request (no pending request or second approver exists; the request permission is declared but unused at contracts/schemas/iam.ts:49-54 and the approve permission only gates bulkApproveKyc at compliance/router/index.ts:388)',
   );
   it.todo(
-    'GAP: an admin without the approve permission cannot approve (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
+    'GAP: an admin without the approve permission cannot approve (no pending request or second approver exists; the request permission is declared but unused at contracts/schemas/iam.ts:49-54 and the approve permission only gates bulkApproveKyc at compliance/router/index.ts:388)',
   );
   it.todo(
-    'GAP: a request approved twice applies once (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
+    'GAP: a request approved twice applies once (no pending request or second approver exists; the request permission is declared but unused at contracts/schemas/iam.ts:49-54 and the approve permission only gates bulkApproveKyc at compliance/router/index.ts:388)',
   );
   it.todo(
-    'GAP: a rejected request never applies and records the reason (no approval request exists; the request and approval permissions are declared but unused at contracts/schemas/iam.ts:49-54 and compliance/router/index.ts:386)',
+    'GAP: a rejected request never applies and records the reason (no pending request or second approver exists; the request permission is declared but unused at contracts/schemas/iam.ts:49-54 and the approve permission only gates bulkApproveKyc at compliance/router/index.ts:388)',
   );
 });
