@@ -1,11 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { and, eq } from 'drizzle-orm';
+import { vi } from 'vitest';
 import type { PaymentWebhookEvent } from '@openora/core/contracts';
+import { auditLog } from '@openora/core/audit/schema';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import {
   DepositAddressSchema,
+  TransactionResultSchema,
   WalletReconciliationFindingSchema,
 } from '@openora/core/wallet/contract';
 import {
@@ -13,12 +16,15 @@ import {
   walletBalance,
   walletReconciliationFinding,
   walletTransaction,
+  walletWithdrawalAddress,
 } from '@openora/core/wallet/schema';
 import {
   asAdmin,
   bootE2e,
+  flushAudit,
   closeE2e,
   registerAndMaterializePlayer,
+  type BootE2eOptions,
   type E2e,
   type TestClient,
 } from '../../index.js';
@@ -38,12 +44,15 @@ export type DepositStatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_s
 
 export type WalletE2e = E2e & { admin: TestClient };
 
-export async function bootWalletE2e(): Promise<WalletE2e> {
+export async function bootWalletE2e(
+  extraPlugins: NonNullable<BootE2eOptions['plugins']> = [],
+): Promise<WalletE2e> {
   const e2e = await bootE2e({
     plugins: [
       ...(await loadExtensions()),
       { id: 'testing-payment-webhook', path: pluginPath('../../test-payment-webhook-plugin.ts') },
       { id: 'testing-deposit-hold', path: pluginPath('./test-deposit-hold-plugin.ts') },
+      ...extraPlugins,
     ],
   });
   try {
@@ -200,3 +209,121 @@ export async function resolveFinding(
 }
 
 export const parseFinding = (body: unknown) => WalletReconciliationFindingSchema.parse(body);
+
+export async function saveMaturedWithdrawalAddress(
+  { app }: WalletE2e,
+  player: { client: TestClient; userId: string },
+  currency: string,
+) {
+  const address = `dest-${randomUUID()}`;
+  const saved = await player.client.post('/wallet/withdrawal-addresses', {
+    label: 'e2e payout',
+    currency,
+    network: NETWORK,
+    address,
+    currentPassword: 'password1234',
+  });
+  if (saved.status !== 200) {
+    throw new Error(`save withdrawal address failed (${saved.status}): ${await saved.text()}`);
+  }
+  await app.container
+    .get(DRIZZLE)
+    .db.update(walletWithdrawalAddress)
+    .set({ createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000) })
+    .where(
+      and(
+        eq(walletWithdrawalAddress.userId, player.userId),
+        eq(walletWithdrawalAddress.address, address),
+      ),
+    );
+  return address;
+}
+
+export async function newFundedPlayer(e2e: WalletE2e, amount = '100') {
+  const player = await newDepositScenario(e2e);
+  const res = await deliverWebhook(e2e, player.deposit({ amount }));
+  if (res.status !== 200) {
+    throw new Error(`funding deposit failed (${res.status}): ${await res.text()}`);
+  }
+  const destinationAddress = await saveMaturedWithdrawalAddress(e2e, player, player.currency);
+  return { ...player, destinationAddress };
+}
+
+export const withdrawalBody = (
+  { currency, destinationAddress }: { currency: string; destinationAddress?: string },
+  overrides: Record<string, unknown> = {},
+) => ({
+  amount: '10',
+  currency,
+  network: NETWORK,
+  idempotencyKey: randomUUID(),
+  destinationAddress: destinationAddress ?? `dest-${randomUUID()}`,
+  ...overrides,
+});
+
+export async function postWithdrawal(
+  client: TestClient,
+  scenario: { currency: string; destinationAddress?: string },
+  overrides: Record<string, unknown> = {},
+) {
+  const res = await client.post('/wallet/withdraw', withdrawalBody(scenario, overrides));
+  const body = (await res.json()) as unknown;
+  return { status: res.status, body };
+}
+
+export async function requestWithdrawalId(
+  client: TestClient,
+  scenario: { currency: string },
+  overrides: Record<string, unknown> = {},
+) {
+  const { status, body } = await postWithdrawal(client, scenario, overrides);
+  if (status !== 200) {
+    throw new Error(`withdrawal request failed (${status}): ${JSON.stringify(body)}`);
+  }
+  return TransactionResultSchema.parse(body).transactionId;
+}
+
+export async function transactionById({ app }: WalletE2e, id: string) {
+  const [row] = await app.container
+    .get(DRIZZLE)
+    .db.select()
+    .from(walletTransaction)
+    .where(eq(walletTransaction.id, id));
+  return row;
+}
+
+export async function waitForAudit(e2e: WalletE2e, action: string, resourceId: string) {
+  return vi.waitFor(
+    async () => {
+      await flushAudit(e2e.app);
+      const rows = await e2e.app.container
+        .get(DRIZZLE)
+        .db.select()
+        .from(auditLog)
+        .where(and(eq(auditLog.action, action), eq(auditLog.resourceId, resourceId)));
+      if (rows.length === 0) {
+        throw new Error(`no ${action} audit row for ${resourceId} yet`);
+      }
+      return rows;
+    },
+    { timeout: 10_000, interval: 100 },
+  );
+}
+
+export async function waitForCompleted(e2e: WalletE2e, id: string) {
+  return vi.waitFor(
+    async () => {
+      const row = await transactionById(e2e, id);
+      if (row?.status !== 'completed') {
+        throw new Error(`transaction ${id} is ${row?.status ?? 'missing'}`);
+      }
+      return row;
+    },
+    { timeout: 10_000, interval: 100 },
+  );
+}
+
+export const autoWithdrawalPlugin = {
+  id: 'testing-auto-withdrawal',
+  path: pluginPath('./test-auto-withdrawal-plugin.ts'),
+};
