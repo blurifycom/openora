@@ -113,6 +113,13 @@
       "when": 1795079043502,
       "tag": "0015_bonus_fund_buckets",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795085074470,
+      "tag": "0016_bonus_wager_contribution",
+      "breakpoints": true
     }
   ]
 }

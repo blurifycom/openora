@@ -6,9 +6,10 @@ import {
   moneySubtract,
 } from '@openora/core/server';
 import type {
-  BonusFreeFundsOrder,
+  BonusBetClass,
   BonusFundSettings,
   BonusRolloverBase,
+  WagerContext,
 } from '@openora/core/contracts';
 import { grantAmountFor } from './grant-amount.js';
 
@@ -16,7 +17,7 @@ const ZERO = '0';
 
 /** Free real money, bucket A (unlinked), bucket B (linked) and bucket C (bonus). */
 export type FundSplit = { free: string; unlinked: string; linked: string; bonus: string };
-type FundBucket = keyof FundSplit;
+export type FundBucket = keyof FundSplit;
 
 export const DEFAULT_FUND_SETTINGS: BonusFundSettings = {
   rolloverBase: 'bonus',
@@ -75,35 +76,33 @@ export function clampCounters(args: { real: string; unlinked: string; linked: st
   return { unlinked, linked };
 }
 
-function spendOrder(order: BonusFreeFundsOrder): readonly FundBucket[] {
-  return order === 'first'
-    ? ['free', 'unlinked', 'linked', 'bonus']
-    : ['unlinked', 'linked', 'bonus', 'free'];
+/** A PvP bet is its own class whatever its weight; otherwise it contributes or it does not. */
+export function betClass(context: WagerContext, effectivePercent: string): BonusBetClass {
+  if (context.product === 'pvp') {
+    return 'pvp';
+  }
+  return moneyCompare(effectivePercent, ZERO) > 0 ? 'contributing' : 'zero';
 }
 
-/** The stake taken bucket by bucket in spend order, or null when all of them together fall short. */
-export function splitStake(args: {
-  stake: string;
-  available: FundSplit;
-  order: BonusFreeFundsOrder;
-  bonusAllowed: boolean;
-}): FundSplit | null {
-  const split: FundSplit = { ...EMPTY_SPLIT };
-  let remaining = args.stake;
-  for (const bucket of spendOrder(args.order)) {
-    if (moneyCompare(remaining, ZERO) <= 0) {
-      break;
-    }
-    if (bucket === 'bonus' && !args.bonusAllowed) {
-      continue;
-    }
-    const taken = min(remaining, args.available[bucket]);
-    if (moneyCompare(taken, ZERO) > 0) {
-      split[bucket] = taken;
-      remaining = moneySubtract(remaining, taken);
-    }
+const GRANT_BUCKETS = ['unlinked', 'linked', 'bonus'] as const satisfies readonly FundBucket[];
+
+/**
+ * The buckets a bet of `cls` may draw on: free real money always, the grant buckets its class is
+ * configured for (all three when it is not), and never C on a product the grant excludes.
+ */
+export function allowedBuckets(
+  settings: BonusFundSettings,
+  cls: BonusBetClass,
+  bonusExcluded: boolean,
+): ReadonlySet<FundBucket> {
+  const allowed = new Set<FundBucket>([
+    'free',
+    ...(settings.betClassBuckets?.[cls] ?? GRANT_BUCKETS),
+  ]);
+  if (bonusExcluded) {
+    allowed.delete('bonus');
   }
-  return moneyCompare(remaining, ZERO) > 0 ? null : split;
+  return allowed;
 }
 
 /**

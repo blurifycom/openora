@@ -1,5 +1,10 @@
-import { isWagerProduct, type WagerContext } from '@openora/core/contracts';
-import { moneyDivide, moneyScaleBy } from '@openora/core/server';
+import {
+  isUsableRtp,
+  isWagerProduct,
+  type WagerContext,
+  type WagerContributionMode,
+} from '@openora/core/contracts';
+import { moneyCompare, moneyDivide, moneyScaleBy, moneySubtract } from '@openora/core/server';
 import type { WagerWeightScope } from '../contract/index.js';
 
 /** One row of a weight profile: how much a bet matching `scope`/`scopeRef` contributes. */
@@ -55,4 +60,42 @@ export function resolveContributionPercent(
  */
 export function weightedStake(stake: string, contributionPercent: string): string {
   return moneyDivide(moneyScaleBy(stake, contributionPercent), '100');
+}
+
+type Contribution = {
+  /** The profile row's percent for this bet. */
+  categoryPercent: string;
+  /** What a stake is scored at: the row's percent, scaled by the house edge in that mode. */
+  effectivePercent: string;
+  /** The reference edge the score was scaled against; null when the mode did not use one. */
+  referenceEdge: string | null;
+};
+
+/**
+ * How much of a bet counts, by the grant's mode. In `house_edge` mode the profile percent is
+ * scaled by `min(1, (1 - rtp) / referenceEdge)`; a bet with no usable rtp counts nothing, since
+ * guessing its edge could release a bonus on a game that never earned it. Truncating throughout.
+ */
+export function effectiveContribution(args: {
+  rows: readonly WagerWeightRow[];
+  context: WagerContext;
+  mode: WagerContributionMode;
+  referenceEdge?: string | null | undefined;
+}): Contribution {
+  const categoryPercent = resolveContributionPercent(args.rows, args.context);
+  if (args.mode === 'flat') {
+    return { categoryPercent, effectivePercent: categoryPercent, referenceEdge: null };
+  }
+  const { rtp } = args.context;
+  const edge = args.referenceEdge ?? null;
+  if (!isUsableRtp(rtp) || !isUsableRtp(edge)) {
+    return { categoryPercent, effectivePercent: '0', referenceEdge: edge };
+  }
+  const scaled = moneyDivide(moneySubtract('1', rtp), edge);
+  const base = moneyCompare(scaled, '1') > 0 ? '1' : scaled;
+  return {
+    categoryPercent,
+    effectivePercent: moneyScaleBy(categoryPercent, base),
+    referenceEdge: edge,
+  };
 }

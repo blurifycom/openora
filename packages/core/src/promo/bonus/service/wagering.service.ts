@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   type AuditWritePort,
   type BonusFreeFundsOrder,
@@ -9,13 +9,14 @@ import {
   type BonusWagerArgs,
   type BonusWagerOutcome,
   type BonusWageringCommands,
+  isWagerRtp,
   type Uuid,
   type WagerTrackingCommands,
 } from '@openora/core/contracts';
 import {
   moneyAdd,
   moneyCompare,
-  moneyDivide,
+  moneyMultiplyDivide,
   moneyScaleBy,
   moneySubtract,
   withAdvisoryXactLock,
@@ -28,14 +29,17 @@ import {
   type PromoGrant,
   type PromoGrantEntry,
 } from '../schema/index.js';
-import { isRealMoneyOnlyProduct } from '../contract/index.js';
+import { isRealMoneyOnlyProduct, type StakeWagerInputs } from '../contract/index.js';
 import { attributeStake } from '../shared/stake-attribution.js';
-import { resolveContributionPercent, weightedStake } from '../shared/wagering-weight.js';
+import { effectiveContribution, weightedStake } from '../shared/wagering-weight.js';
 import {
   DEFAULT_FUND_SETTINGS,
+  allowedBuckets,
+  betClass,
   clampCounters,
   isDepleted,
   splitAcross,
+  type FundBucket,
   type FundSplit,
 } from '../shared/fund-buckets.js';
 
@@ -71,7 +75,8 @@ type RoundStake = {
   realStake: string;
   unlinkedStake: string;
   linkedStake: string;
-  weightedTotal: string;
+  /** Progress the round has credited so far, net of reversals. */
+  credited: string;
   /** Funds of this round already returned by an earlier reversal, per bucket. */
   bonusReturned: string;
   realReturned: string;
@@ -146,24 +151,50 @@ export class WageringService implements BonusWageringCommands {
           linked: counters[i]?.linked ?? ZERO,
           bonus: plan.grant.bonusBalance,
         },
-        bonusAllowed: plan.bonusAllowed,
+        allowed: plan.allowed,
       })),
       order: primary.settings.freeFundsOrder,
     });
     if (spent === null) {
+      if (grants.some((plan) => plan.classRestricted)) {
+        const permitted = grants.reduce(
+          (sum, plan, i) =>
+            moneyAdd(
+              sum,
+              sumAllowed(
+                {
+                  free: ZERO,
+                  unlinked: counters[i]?.unlinked ?? ZERO,
+                  linked: counters[i]?.linked ?? ZERO,
+                  bonus: plan.grant.bonusBalance,
+                },
+                plan.allowed,
+              ),
+            ),
+          realLeft,
+        );
+        return { ok: false, reason: 'restricted_funds', permitted };
+      }
       const bonusAvailable = grants
-        .filter((plan) => plan.bonusAllowed)
+        .filter((plan) => plan.allowed.has('bonus'))
         .reduce((sum, plan) => moneyAdd(sum, plan.grant.bonusBalance), ZERO);
       return { ok: false, reason: 'insufficient_bonus', bonusAvailable };
     }
 
     // Each grant's own buckets progress that grant alone; free real money fills the requirements
-    // in rollover order. Progress is capped at each grant's room and never completes a grant here:
-    // completion waits for the round to close.
+    // in rollover order. Progress waits on the round and is credited when it settles, so what
+    // open rounds already hold counts against the room left.
+    const pending = await this.pendingProgress(
+      tx,
+      grants.map((plan) => plan.grant.id),
+    );
     const attribution = attributeStake(
       grants.map((plan, i) => {
         const own = spent.grants[i] ?? EMPTY_GRANT_SPEND;
-        const room = moneySubtract(plan.grant.wageringRequired, plan.grant.wageringProgress);
+        const room = moneySubtract(
+          moneySubtract(plan.grant.wageringRequired, plan.grant.wageringProgress),
+          pending.get(plan.grant.id) ?? ZERO,
+        );
         return {
           id: plan.grant.id,
           headroom: isPositive(room) ? room : ZERO,
@@ -209,9 +240,6 @@ export class WageringService implements BonusWageringCommands {
         // The row is locked and its balance was read under that lock, so this cannot happen.
         throw new Error(`bonus grant ${plan.grant.id} refused a stake it was locked to cover`);
       }
-      if (isPositive(share.progress)) {
-        await this.advanceProgress(tx, plan.grant.id, share.progress);
-      }
       balanceAfter.set(plan.grant.id, after.balanceAfter);
       bonusSpent = sumOf(bonusSpent, own.bonus);
       attributedTo ??= plan.grant.id;
@@ -225,11 +253,12 @@ export class WageringService implements BonusWageringCommands {
         realAmount: sumOf(share.realStake, sumOf(own.unlinked, own.linked)),
         unlinkedAmount: own.unlinked,
         linkedAmount: own.linked,
-        wageringDelta: share.progress,
+        wageringDelta: ZERO,
+        wagerInputs: plan.wagerInputs,
         balanceAfter: after.balanceAfter,
         ...round,
       });
-      await this.openRound(tx, plan.grant.id, args);
+      await this.openRound(tx, args, { grantId: plan.grant.id, weighted: share.progress });
     }
 
     const walletCredits =
@@ -297,6 +326,7 @@ export class WageringService implements BonusWageringCommands {
   }
 
   private async settleLocked(tx: DrizzleTx, args: BonusSettleArgs): Promise<BonusSettleOutcome> {
+    const lockedGrantIds = await this.lockRoundGrants(tx, args);
     const stakes = await this.roundStakes(
       tx,
       args.userId,
@@ -326,7 +356,7 @@ export class WageringService implements BonusWageringCommands {
 
     if (!isPositive(totalStake)) {
       // Already fully reversed by an earlier callback: nothing is outstanding for either balance.
-      await this.settleRound(tx, args);
+      await this.settleRound(tx, args, lockedGrantIds);
       return { bonusShare: ZERO, realShare: ZERO, completed: [] };
     }
 
@@ -378,7 +408,7 @@ export class WageringService implements BonusWageringCommands {
       }
 
       const applied = reversal
-        ? await this.reverseRound(tx, row.stake, slice)
+        ? await this.reverseRound(tx, args, { outstanding: row, slice })
         : await this.creditBonus(tx, row.stake.grantId, slice);
       if (applied === null) {
         // A completed grant's bonus funds already converted at completion, so its slice falls
@@ -435,7 +465,7 @@ export class WageringService implements BonusWageringCommands {
     if (!args.final && !(reversal && moneyCompare(applyAmount, totalStake) >= 0)) {
       return { bonusShare: settled, realShare, completed: [] };
     }
-    const grantIds = await this.settleRound(tx, args);
+    const grantIds = await this.settleRound(tx, args, lockedGrantIds);
     const completed = await this.resolveAll(tx, grantIds, moneyAdd(args.realBalance, realShare));
     return { bonusShare: settled, realShare, completed };
   }
@@ -541,18 +571,12 @@ export class WageringService implements BonusWageringCommands {
     return row ?? null;
   }
 
-  /** Capped, never completing: completion waits until no bet of the grant is still open. */
-  private async advanceProgress(tx: DrizzleTx, grantId: PromoGrant['id'], weighted: string) {
-    await tx
-      .update(promoGrant)
-      .set({
-        wageringProgress: sql`LEAST(${promoGrant.wageringRequired}, ${promoGrant.wageringProgress} + ${weighted}::numeric)`,
-      })
-      .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'active')));
-  }
-
-  /** A second stake on a round already settled opens it again. */
-  private async openRound(tx: DrizzleTx, grantId: PromoGrant['id'], args: BonusWagerArgs) {
+  /** A second stake on a round already settled opens it again, its weight waiting with the rest. */
+  private async openRound(
+    tx: DrizzleTx,
+    args: BonusWagerArgs,
+    { grantId, weighted }: { grantId: PromoGrant['id']; weighted: string },
+  ) {
     await tx
       .insert(promoGrantRound)
       .values({
@@ -561,6 +585,7 @@ export class WageringService implements BonusWageringCommands {
         currency: args.currency,
         providerName: args.providerName,
         externalRoundId: args.externalRoundId,
+        progressPending: weighted,
       })
       .onConflictDoUpdate({
         target: [
@@ -568,26 +593,141 @@ export class WageringService implements BonusWageringCommands {
           promoGrantRound.providerName,
           promoGrantRound.externalRoundId,
         ],
-        set: { settledAt: null },
+        set: {
+          settledAt: null,
+          progressPending: sql`${promoGrantRound.progressPending} + ${weighted}::numeric`,
+        },
       });
   }
 
-  /** Closes the round on every grant it was open on, and names those grants. */
-  private async settleRound(tx: DrizzleTx, args: RoundKey): Promise<PromoGrant['id'][]> {
+  /** Progress waiting on each grant's open rounds; read under the grant locks that guard it. */
+  private async pendingProgress(
+    tx: DrizzleTx,
+    grantIds: PromoGrant['id'][],
+  ): Promise<Map<PromoGrant['id'], string>> {
+    if (grantIds.length === 0) {
+      return new Map();
+    }
     const rows = await tx
-      .update(promoGrantRound)
-      .set({ settledAt: sql`now()` })
+      .select({
+        grantId: promoGrantRound.grantId,
+        pending: sql<string>`sum(${promoGrantRound.progressPending})`,
+      })
+      .from(promoGrantRound)
       .where(
         and(
-          eq(promoGrantRound.userId, args.userId),
-          eq(promoGrantRound.currency, args.currency),
-          eq(promoGrantRound.providerName, args.providerName),
-          eq(promoGrantRound.externalRoundId, args.externalRoundId),
+          inArray(promoGrantRound.grantId, grantIds),
           isNull(promoGrantRound.settledAt),
+          gt(promoGrantRound.progressPending, ZERO),
         ),
       )
-      .returning({ grantId: promoGrantRound.grantId });
-    return [...new Set(rows.map((row) => row.grantId))].sort();
+      .groupBy(promoGrantRound.grantId);
+    return new Map(rows.map((row) => [row.grantId, row.pending]));
+  }
+
+  // Grants before round rows, as `wager` takes them, so a stake and a settlement cannot deadlock.
+  private async lockRoundGrants(tx: DrizzleTx, args: RoundKey): Promise<PromoGrant['id'][]> {
+    const rows = await tx
+      .selectDistinct({ grantId: promoGrantRound.grantId })
+      .from(promoGrantRound)
+      .where(roundWhere(args));
+    const ids = rows.map((row) => row.grantId).sort();
+    if (ids.length > 0) {
+      await tx
+        .select({ id: promoGrant.id })
+        .from(promoGrant)
+        .where(inArray(promoGrant.id, ids))
+        .orderBy(asc(promoGrant.id))
+        .for('update');
+    }
+    return ids;
+  }
+
+  /** Closes the round on the locked grants, crediting pending a settled round may still hold. */
+  private async settleRound(
+    tx: DrizzleTx,
+    args: RoundKey,
+    lockedGrantIds?: PromoGrant['id'][],
+  ): Promise<PromoGrant['id'][]> {
+    const grantIds = lockedGrantIds ?? (await this.lockRoundGrants(tx, args));
+    if (grantIds.length === 0) {
+      return [];
+    }
+    const rounds = await tx
+      .select({
+        id: promoGrantRound.id,
+        grantId: promoGrantRound.grantId,
+        progressPending: promoGrantRound.progressPending,
+      })
+      .from(promoGrantRound)
+      .where(
+        and(
+          roundWhere(args),
+          inArray(promoGrantRound.grantId, grantIds),
+          or(isNull(promoGrantRound.settledAt), gt(promoGrantRound.progressPending, ZERO)),
+        ),
+      )
+      .orderBy(asc(promoGrantRound.grantId))
+      .for('update');
+    if (rounds.length === 0) {
+      return [];
+    }
+    await tx
+      .update(promoGrantRound)
+      .set({ settledAt: sql`coalesce(${promoGrantRound.settledAt}, now())`, progressPending: ZERO })
+      .where(
+        inArray(
+          promoGrantRound.id,
+          rounds.map((round) => round.id),
+        ),
+      );
+    for (const round of rounds) {
+      if (isPositive(round.progressPending)) {
+        await this.creditProgress(tx, args, {
+          grantId: round.grantId,
+          pending: round.progressPending,
+        });
+      }
+    }
+    return [...new Set(rounds.map((round) => round.grantId))].sort();
+  }
+
+  private async creditProgress(
+    tx: DrizzleTx,
+    args: RoundKey,
+    { grantId, pending }: { grantId: PromoGrant['id']; pending: string },
+  ) {
+    const [grant] = await tx
+      .select({
+        wageringRequired: promoGrant.wageringRequired,
+        wageringProgress: promoGrant.wageringProgress,
+        bonusBalance: promoGrant.bonusBalance,
+      })
+      .from(promoGrant)
+      .where(and(eq(promoGrant.id, grantId), eq(promoGrant.status, 'active')));
+    if (!grant) {
+      return;
+    }
+    const headroom = moneySubtract(grant.wageringRequired, grant.wageringProgress);
+    const credited = moneyCompare(pending, headroom) < 0 ? pending : headroom;
+    if (!isPositive(credited)) {
+      return;
+    }
+    await tx
+      .update(promoGrant)
+      .set({ wageringProgress: sql`${promoGrant.wageringProgress} + ${credited}::numeric` })
+      .where(eq(promoGrant.id, grantId));
+    await tx.insert(promoGrantEntry).values({
+      grantId,
+      userId: args.userId,
+      currency: args.currency,
+      type: 'progress',
+      bonusAmount: ZERO,
+      wageringDelta: credited,
+      balanceAfter: grant.bonusBalance,
+      providerName: args.providerName,
+      externalRoundId: args.externalRoundId,
+    });
   }
 
   private async resolveAll(
@@ -746,6 +886,7 @@ export class WageringService implements BonusWageringCommands {
     // the same id independently can never net against this one.
     const onStake = sql`${promoGrantEntry.type} = 'stake'`;
     const onReversal = sql`${promoGrantEntry.type} = 'reversal'`;
+    const always = sql`true`;
     const total = (
       when: typeof onStake,
       column: (typeof promoGrantEntry)[
@@ -762,7 +903,8 @@ export class WageringService implements BonusWageringCommands {
         realStake: total(onStake, promoGrantEntry.realAmount),
         unlinkedStake: total(onStake, promoGrantEntry.unlinkedAmount),
         linkedStake: total(onStake, promoGrantEntry.linkedAmount),
-        weightedTotal: total(onStake, promoGrantEntry.wageringDelta),
+        // Stakes from before settlement-time credit carry their progress on the stake row itself.
+        credited: total(always, promoGrantEntry.wageringDelta),
         bonusReturned: total(onReversal, promoGrantEntry.bonusAmount),
         realReturned: total(onReversal, promoGrantEntry.realAmount),
         unlinkedReturned: total(onReversal, promoGrantEntry.unlinkedAmount),
@@ -775,7 +917,7 @@ export class WageringService implements BonusWageringCommands {
           eq(promoGrantEntry.currency, currency),
           eq(promoGrantEntry.providerName, providerName),
           eq(promoGrantEntry.externalRoundId, round),
-          inArray(promoGrantEntry.type, ['stake', 'reversal']),
+          inArray(promoGrantEntry.type, ['stake', 'reversal', 'progress']),
         ),
       )
       .groupBy(promoGrantEntry.grantId)
@@ -810,21 +952,21 @@ export class WageringService implements BonusWageringCommands {
     return row ? { balanceAfter: row.balanceAfter, progressReversed: ZERO } : null;
   }
 
-  /**
-   * A voided round returns its stake to the buckets it came from and takes back the progress it
-   * bought, in proportion: a partial void must not erase the whole round's contribution. The
-   * proportion is taken against the round's whole stake - `wager()` weights the full stake
-   * regardless of which bucket paid it, so a void of a cash-funded bet still takes progress back.
-   */
-  private async reverseRound(tx: DrizzleTx, stake: RoundStake, slice: FundSplit) {
-    const totalStake = moneyAdd(stake.bonusStake, stake.realStake);
+  /** Takes back credited and pending progress in the share of the outstanding stake returned. */
+  private async reverseRound(
+    tx: DrizzleTx,
+    args: RoundKey,
+    { outstanding, slice }: { outstanding: Outstanding; slice: FundSplit },
+  ) {
+    const { stake } = outstanding;
+    const total = moneyAdd(outstanding.bonus, outstanding.realTotal);
     const returned = moneyAdd(
       moneyAdd(slice.bonus, slice.free),
       moneyAdd(slice.unlinked, slice.linked),
     );
-    const progressReversed = isPositive(totalStake)
-      ? moneyDivide(moneyScaleBy(stake.weightedTotal, returned), totalStake)
-      : ZERO;
+    const shareOf = (amount: string) =>
+      isPositive(total) && isPositive(amount) ? moneyMultiplyDivide(amount, returned, total) : ZERO;
+    const progressReversed = shareOf(stake.credited);
     const [row] = await tx
       .update(promoGrant)
       .set({
@@ -833,13 +975,45 @@ export class WageringService implements BonusWageringCommands {
       })
       .where(and(eq(promoGrant.id, stake.grantId), eq(promoGrant.status, 'active')))
       .returning({ balanceAfter: promoGrant.bonusBalance });
-    return row ? { balanceAfter: row.balanceAfter, progressReversed } : null;
+    if (!row) {
+      return null;
+    }
+    const [round] = await tx
+      .select({ id: promoGrantRound.id, progressPending: promoGrantRound.progressPending })
+      .from(promoGrantRound)
+      .where(and(roundWhere(args), eq(promoGrantRound.grantId, stake.grantId)))
+      .for('update');
+    const pendingReversed = round ? shareOf(round.progressPending) : ZERO;
+    if (round && isPositive(pendingReversed)) {
+      await tx
+        .update(promoGrantRound)
+        .set({
+          progressPending: sql`GREATEST(0, ${promoGrantRound.progressPending} - ${pendingReversed}::numeric)`,
+        })
+        .where(eq(promoGrantRound.id, round.id));
+    }
+    return { balanceAfter: row.balanceAfter, progressReversed };
   }
 }
 
 function roundLockKey(args: RoundKey) {
   return `promo-round-settle:${args.userId}:${args.providerName}:${args.currency}:${args.externalRoundId}`;
 }
+
+function roundWhere(args: RoundKey) {
+  return and(
+    eq(promoGrantRound.userId, args.userId),
+    eq(promoGrantRound.currency, args.currency),
+    eq(promoGrantRound.providerName, args.providerName),
+    eq(promoGrantRound.externalRoundId, args.externalRoundId),
+  );
+}
+
+function sumAllowed(available: FundSplit, allowed: ReadonlySet<FundBucket>): string {
+  return [...allowed].reduce((sum, bucket) => moneyAdd(sum, available[bucket]), ZERO);
+}
+
+type Outstanding = ReturnType<typeof outstandingOf>;
 
 function outstandingOf(stake: RoundStake) {
   const unlinked = moneySubtract(stake.unlinkedStake, stake.unlinkedReturned);
@@ -887,14 +1061,41 @@ const EMPTY_COUNTERS = { unlinked: ZERO, linked: ZERO };
 /** Within one grant, the cash it ties up goes before its bonus funds. */
 const GRANT_SPEND_ORDER = ['unlinked', 'linked', 'bonus'] as const;
 
-/** How one grant treats this bet: its weight, its fund settings, and whether C may pay. */
+/** How one grant treats this bet: its weight, its fund settings, and which buckets may pay. */
 function planGrant(grant: LiveGrant, args: BonusWagerArgs, realOnly: boolean) {
   const excluded = grant.terms.excludedProducts?.includes(args.context.product) === true;
+  const settings = grant.terms.funds ?? DEFAULT_FUND_SETTINGS;
+  const mode = grant.terms.contributionMode ?? 'flat';
+  const contribution = effectiveContribution({
+    rows: grant.terms.weights,
+    context: args.context,
+    mode,
+    referenceEdge: grant.terms.referenceEdge,
+  });
+  // A real-money-only product keeps to its own rule: it earns nothing, never takes C, and the
+  // class rules do not apply.
+  const percent = realOnly ? ZERO : contribution.effectivePercent;
+  const cls = betClass(args.context, percent);
+  const fundRules = realOnly ? DEFAULT_FUND_SETTINGS : settings;
+  const allowed = allowedBuckets(fundRules, cls, realOnly || excluded);
+  const unrestricted = allowedBuckets(DEFAULT_FUND_SETTINGS, cls, realOnly || excluded);
+  const { rtp } = args.context;
+  const wagerInputs: StakeWagerInputs = {
+    mode,
+    rtp: rtp !== undefined && isWagerRtp(rtp) ? rtp : null,
+    categoryPercent: contribution.categoryPercent,
+    referenceEdge: contribution.referenceEdge,
+    effectivePercent: percent,
+    profileVersion: grant.terms.weightProfileVersion ?? null,
+    betClass: cls,
+  };
   return {
     grant,
-    settings: grant.terms.funds ?? DEFAULT_FUND_SETTINGS,
-    bonusAllowed: !realOnly && !excluded,
-    percent: realOnly ? ZERO : resolveContributionPercent(grant.terms.weights, args.context),
+    settings,
+    allowed,
+    classRestricted: allowed.size < unrestricted.size,
+    percent,
+    wagerInputs,
   };
 }
 
@@ -931,7 +1132,7 @@ function strictestMaxBet(
 function splitAcrossGrants(args: {
   stake: string;
   free: string;
-  grants: readonly { available: GrantSpend; bonusAllowed: boolean }[];
+  grants: readonly { available: GrantSpend; allowed: ReadonlySet<FundBucket> }[];
   order: BonusFreeFundsOrder;
 }): { free: string; grants: GrantSpend[] } | null {
   let remaining = args.stake;
@@ -944,10 +1145,10 @@ function splitAcrossGrants(args: {
     return taken;
   };
   const fromFree = args.order === 'first' ? take(args.free) : ZERO;
-  const grants = args.grants.map(({ available, bonusAllowed }) => {
+  const grants = args.grants.map(({ available, allowed }) => {
     const spend: GrantSpend = { ...EMPTY_GRANT_SPEND };
     for (const bucket of GRANT_SPEND_ORDER) {
-      if (bucket !== 'bonus' || bonusAllowed) {
+      if (allowed.has(bucket)) {
         spend[bucket] = take(available[bucket]);
       }
     }
