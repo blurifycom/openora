@@ -212,7 +212,9 @@ describe('role management', () => {
     expect(created).toMatchObject({ actorType: 'admin', resourceType: 'role' });
   });
 
-  it.todo('a role name that already exists is refused with a conflict');
+  it.todo(
+    'GAP: a role name that already exists is refused with a conflict (only the role key is unique, createRole inserts the name unchecked)',
+  );
 
   it('a super admin updates the permissions of a role and the change is audited', async () => {
     const admin = await newSuperAdmin();
@@ -488,7 +490,9 @@ describe('role assignment', () => {
     }
   });
 
-  it.todo('a role change ends the sessions of the affected admin');
+  it.todo(
+    'GAP: a role change ends the sessions of the affected admin (changeGrants revokes only MCP tokens)',
+  );
   it.todo('a role change does not end the sessions of other admins');
 });
 
@@ -743,7 +747,9 @@ describe('invitations', () => {
     expect((await invitationRow(invitation.id))?.status).toBe('pending');
   });
 
-  it.todo('inviting an email that already has an account is refused');
+  it.todo(
+    'GAP: inviting an email that already has an account is refused (inviteAdmin never looks the email up; only acceptInvitation fails)',
+  );
 
   it('accepting an invitation for an email that already has an account creates no admin', async () => {
     const creator = await newSuperAdmin();
@@ -780,9 +786,19 @@ describe('invitations', () => {
 });
 
 describe('two person approval', () => {
-  it.todo('a request that needs approval stays pending until a different admin approves it');
-  it.todo('the requesting admin cannot approve their own request');
-  it.todo('an admin without the approve permission cannot approve');
-  it.todo('a request approved twice applies once');
-  it.todo('a rejected request never applies and records the reason');
+  it.todo(
+    'GAP: a request that needs approval stays pending until a different admin approves it (no approval request exists; the request and approval permissions are declared but unused)',
+  );
+  it.todo(
+    'GAP: the requesting admin cannot approve their own request (no approval request exists; the request and approval permissions are declared but unused)',
+  );
+  it.todo(
+    'GAP: an admin without the approve permission cannot approve (no approval request exists; the request and approval permissions are declared but unused)',
+  );
+  it.todo(
+    'GAP: a request approved twice applies once (no approval request exists; the request and approval permissions are declared but unused)',
+  );
+  it.todo(
+    'GAP: a rejected request never applies and records the reason (no approval request exists; the request and approval permissions are declared but unused)',
+  );
 });
