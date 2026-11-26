@@ -58,6 +58,17 @@ export const AUDIT_COVERAGE_GAPS = {
     writer: 'SwapService via recordInTransaction',
     reason: 'joins the ledger rows of both legs',
   },
+  'wallet.turnover.cleared': {
+    kind: 'atSource',
+    writer: 'TurnoverService.clear via recordInTransaction',
+    reason:
+      'joins the clear, with the staff actor, reason, cleared entries and the requirement before and after',
+  },
+  'wallet.turnover.met': {
+    kind: 'exempt',
+    reason:
+      'derived from the counted stakes on wallet_transaction and the wallet_turnover row; the ledger is the record',
+  },
   'promo.bonus.granted': {
     kind: 'atSource',
     writer: 'GrantService.grant via recordInTransaction',

@@ -17,6 +17,7 @@ import {
   PaymentRejectedError,
   SwapLimitExceededError,
   SwapRefusedError,
+  TurnoverLockedError,
   OnRampRefusedError,
   DepositRefusedError,
   OnRampVendorUnavailableError,
@@ -101,6 +102,7 @@ import {
   DepositAlreadyRefundedError,
   LEDGER_INVARIANT_QUEUE,
 } from '../service/reconciliation.service.js';
+import type { TurnoverService } from '../service/turnover.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
 // a DB lookup) per request with nothing else gating it. Keyed on client IP, not a
@@ -178,6 +180,7 @@ export type WalletRouterDeps = {
   jobQueue: JobQueueAdapter;
   reconciliationQueue: QueueName;
   realtime: RealtimeTransport;
+  turnover: TurnoverService;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   /** Absent when no SWAP_ADAPTER is bound - every swap route then refuses. */
   swap?: SwapService;
@@ -222,6 +225,7 @@ export function createWalletRouter({
   jobQueue,
   reconciliationQueue,
   realtime,
+  turnover,
   limiter,
   swap,
   swapWebhook,
@@ -329,6 +333,7 @@ export function createWalletRouter({
             WithdrawalPinLockedError,
             WithdrawalDisabledError,
             BonusFundsLockedError,
+            TurnoverLockedError,
           ],
           SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
         },
@@ -503,6 +508,54 @@ export function createWalletRouter({
           wallet.getAutoWithdrawalConfig(),
         );
       }),
+    },
+
+    turnover: {
+      get: os.turnover.get.handler(({ context }) => turnover.summary(getUserId(context))),
+
+      entries: os.turnover.entries.handler(({ input, context }) =>
+        turnover.entries(getUserId(context), input),
+      ),
+    },
+
+    admin: {
+      turnover: {
+        get: os.admin.turnover.get.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'turnover', 'view');
+          return turnover.adminSummary(input.userId);
+        }),
+
+        entries: os.admin.turnover.entries.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'turnover', 'view');
+          const { userId, ...page } = input;
+          return turnover.adminEntries(userId, page);
+        }),
+
+        clear: os.admin.turnover.clear.handler(async ({ input, context }) => {
+          const {
+            userId: adminId,
+            ip,
+            userAgent,
+          } = await adminGuard.assert(context, 'turnover', 'clear');
+          return turnover.clear(adminId, input, { ip, userAgent });
+        }),
+      },
+
+      turnoverConfig: {
+        get: os.admin.turnoverConfig.get.handler(async ({ context }) => {
+          await adminGuard.assert(context, 'turnover-config', 'view');
+          return turnover.getConfig();
+        }),
+
+        update: os.admin.turnoverConfig.update.handler(async ({ input, context }) => {
+          const {
+            userId: adminId,
+            ip,
+            userAgent,
+          } = await adminGuard.assert(context, 'turnover-config', 'update');
+          return turnover.updateConfig(adminId, input, { ip, userAgent });
+        }),
+      },
     },
 
     listAssets: os.listAssets.handler(() => wallet.listEnabledWalletAssets()),

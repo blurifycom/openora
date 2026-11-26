@@ -28,10 +28,13 @@ export const PLAYER_IP = '203.0.113.20';
 
 const pluginPath = (file: string) => fileURLToPath(new URL(`../../${file}`, import.meta.url));
 
-export async function bootSportsbookApp(): Promise<E2e> {
+export async function bootSportsbookApp({
+  fixtures = [],
+}: { fixtures?: readonly { id: string; file: string }[] } = {}): Promise<E2e> {
   return bootE2e({
     plugins: [
       ...(await loadExtensions()),
+      ...fixtures.map(({ id, file }) => ({ id, path: pluginPath(`__tests__/support/${file}`) })),
       { id: 'testing-geo-ip', path: pluginPath('test-geo-ip-plugin.ts') },
       {
         id: 'testing-exchange-rate-provider',

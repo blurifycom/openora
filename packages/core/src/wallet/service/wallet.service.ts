@@ -75,6 +75,7 @@ import {
   type BonusLifecycleCommands,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
+  withTurnoverLock,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -95,6 +96,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
+import type { TurnoverService } from './turnover.service.js';
 import {
   wallet,
   walletBalance,
@@ -962,7 +964,7 @@ const TX_SORT_COLUMNS = {
   reviewedAt: 'reviewed_at',
 } as const satisfies Record<WalletTransactionSortBy, keyof TransactionHistoryRow>;
 
-function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
+export function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
   return [
     hex.slice(0, 8),
@@ -1182,6 +1184,7 @@ export type WalletServiceDeps = {
   // Optional: forfeits on a withdrawal only when no module binds `bonusFundLocks` (a custom bonus engine).
   bonusLifecycle?: BonusLifecycleCommands;
   depositBonus?: BonusDepositCommands;
+  turnover?: TurnoverService;
 };
 
 /**
@@ -1216,6 +1219,7 @@ export class WalletService {
   private readonly bonusFundLocks?: BonusFundLockCommands;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
   private readonly depositBonus?: BonusDepositCommands;
+  private readonly turnover?: TurnoverService;
 
   constructor({
     drizzle,
@@ -1240,6 +1244,7 @@ export class WalletService {
     bonusFundLocks,
     bonusLifecycle,
     depositBonus,
+    turnover,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -1263,9 +1268,13 @@ export class WalletService {
     this.bonusFundLocks = bonusFundLocks;
     this.bonusLifecycle = bonusLifecycle;
     this.depositBonus = depositBonus;
+    this.turnover = turnover;
   }
 
-  /** Every completed deposit ends here, so its bonus commits with the credit or not at all. */
+  /**
+   * Every completed deposit ends here, so its bonus and turnover requirement commit with the
+   * credit or not at all.
+   */
   private async depositCompleted(
     txn: DrizzleTx,
     deposit: DomainEventPayload<'wallet.deposit.completed'>,
@@ -1275,6 +1284,13 @@ export class WalletService {
       amount: deposit.amount,
       currency: deposit.currency,
       transactionId: deposit.transactionId,
+    });
+    await this.turnover?.addCredit(txn, {
+      userId: deposit.userId,
+      kind: 'deposit',
+      sourceRef: deposit.transactionId,
+      currency: deposit.currency,
+      amount: deposit.amount,
     });
     await this.events.emitInTransaction(txn, 'wallet.deposit.completed', deposit);
   }
@@ -1748,18 +1764,27 @@ export class WalletService {
     txn: DrizzleDb,
     userId: User['id'],
     balances: T[],
-  ): Promise<(T & Partial<LockedFunds>)[]> {
-    if (!this.bonusFundLocks || balances.length === 0) {
+  ): Promise<(T & Partial<LockedFunds> & { bonusLocked?: string })[]> {
+    const turnover = this.turnover?.enabled ? this.turnover : undefined;
+    if ((!this.bonusFundLocks && !turnover) || balances.length === 0) {
       return balances;
     }
-    const locks = await this.bonusFundLocks.readLockedFunds(txn, {
-      userId,
-      balances: balances.map(({ currency, balance }) => ({
-        currency: balanceKey(currency),
-        realBalance: balance,
-      })),
-    });
-    return balances.map((balance, i) => ({ ...balance, ...locks[i] }));
+    const locks = this.bonusFundLocks
+      ? await this.bonusFundLocks.readLockedFunds(txn, {
+          userId,
+          balances: balances.map(({ currency, balance }) => ({
+            currency: balanceKey(currency),
+            realBalance: balance,
+          })),
+        })
+      : [];
+    if (!turnover) {
+      return balances.map((balance, i) => ({ ...balance, ...locks[i] }));
+    }
+    const turnoverLocked = (await turnover.summary(userId, txn)).locked;
+    return balances.map((row, i) =>
+      withTurnoverLock(row, locks[i] ?? { locked: '0', free: row.balance }, turnoverLocked),
+    );
   }
 
   /** A player without a wallet reads as empty rather than as an error. */
@@ -2363,6 +2388,8 @@ export class WalletService {
       );
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    // Its own transaction, so a price found here survives the refusal the gate below may answer.
+    await this.turnover?.pricePendingNow(userId);
 
     return this.drizzle.db.transaction(async (txn) => {
       // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.
@@ -2444,6 +2471,8 @@ export class WalletService {
             reason: 'withdrawal_while_active',
             ...forfeitContext,
           }));
+      // Last lock taken; a refusal rolls back the debit and any forfeit above with it.
+      await this.turnover?.assertOutflow(txn, { userId, outflow: 'withdrawal' });
 
       // Screening runs in the tag module off this event, never in this transaction; only its
       // verdict lets the withdrawal be auto-approved (autoApproveScreenedWithdrawal, ADR-0059).

@@ -42,8 +42,10 @@ type GrantOptions = {
   order?: BonusFreeFundsOrder;
 };
 
-/** Boots one app per file with the bonus withdrawal mode under test and an admin that is not the seeded one. */
-export function useBonusLockHarness(mode: 'block' | 'forfeit') {
+export function useBonusLockHarness(
+  mode: 'block' | 'forfeit',
+  { config, rates = true }: { config?: { id: string; file: string }; rates?: boolean } = {},
+) {
   let db: TestDb;
   let app: TestApp;
   let admin: TestClient;
@@ -54,19 +56,25 @@ export function useBonusLockHarness(mode: 'block' | 'forfeit') {
     ({ db, app } = await bootE2e({
       plugins: [
         ...(await loadExtensions()),
-        ...(mode === 'block'
+        ...(config
+          ? [{ id: config.id, path: fixture(config.file) }]
+          : mode === 'block'
+            ? [
+                {
+                  id: 'testing-bonus-withdrawal-block-config',
+                  path: fixture('./test-bonus-withdrawal-block-config-plugin.ts'),
+                },
+              ]
+            : []),
+        { id: 'testing-swap-desk', path: fixture('../../test-swap-desk-plugin.ts') },
+        ...(rates
           ? [
               {
-                id: 'testing-bonus-withdrawal-block-config',
-                path: fixture('./test-bonus-withdrawal-block-config-plugin.ts'),
+                id: 'testing-exchange-rate-provider',
+                path: fixture('../../test-exchange-rate-provider-plugin.ts'),
               },
             ]
           : []),
-        { id: 'testing-swap-desk', path: fixture('../../test-swap-desk-plugin.ts') },
-        {
-          id: 'testing-exchange-rate-provider',
-          path: fixture('../../test-exchange-rate-provider-plugin.ts'),
-        },
       ],
     }));
     const registered = await registerAndMaterializePlayer(app, {
@@ -214,7 +222,6 @@ export function useBonusLockHarness(mode: 'block' | 'forfeit') {
       }),
     );
 
-  /** 0.02 BTC of real money, 0.015 of it tied to a locking manual grant. */
   async function btcHolder() {
     const { client, userId } = await registerAndMaterializePlayer(app, {
       email: `bonus-lock-swap-${randomUUID()}@e2e.test`,
@@ -256,6 +263,7 @@ export function useBonusLockHarness(mode: 'block' | 'forfeit') {
   }
 
   return {
+    app: () => app,
     admin: () => admin,
     drizzle,
     commands,

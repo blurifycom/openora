@@ -56,6 +56,7 @@ export const WalletActivityOutputSchema = z.object({
       // As on the player's balance read: what live bonuses hold back, and the rest (ADR-0064).
       locked: MoneyAmountSchema.optional(),
       free: MoneyAmountSchema.optional(),
+      bonusLocked: MoneyAmountSchema.optional(),
     }),
   ),
   totals: z.array(

@@ -8,6 +8,7 @@ import type { WagerContext } from './wager-context.js';
 import type { BonusGrantTerms } from './bonus-grants.js';
 import type { BonusCompletion } from './bonus-wagering.js';
 import type { WagerTrackingWalletCredit } from './wager-tracking.js';
+import type { AddTurnoverRequirementArgs, AddTurnoverRequirementResult } from './turnover.js';
 
 export type WalletProviderRef = {
   providerName: string;
@@ -80,10 +81,16 @@ export type WalletCreditArgs = {
   amount: string;
   currency: string;
   /**
-   * A `gift`/`rain`/`donation` credit is a bonus grant whose source is this type. A new
-   * bonus-backed transfer type must be in `WALLET_TRANSACTION_TYPES`, in `BONUS_GRANT_SOURCES`
-   * and in the wallet's `bonusSource` check, or the credit is written as cash; the notifications
-   * plugin also skips the bonus-credited email only for those three sources.
+   * A `gift`/`rain`/`donation` credit follows `wallet.transferCredits`. In `'bonus_grant'` mode
+   * (the default) it is a bonus grant whose source is this type, answers `moved: false`, and
+   * writes no ledger row. In `'cash'` mode it is a ledger credit of this type on the real balance,
+   * answers `moved: true` with its `transactionId`, and adds a turnover requirement when the type
+   * is in `wallet.turnover.creditTypes`. Cash mode locks each recipient's wallet row, so a caller
+   * moving money between players first calls `lockWallets` with the sender and every recipient,
+   * then credits the recipients in ascending `userId` order. A new transfer
+   * type must be in `WALLET_TRANSACTION_TYPES`, in `BONUS_GRANT_SOURCES` and in the wallet's
+   * transfer check, or the credit is written as plain cash; the notifications plugin also skips
+   * the bonus-credited email only for those three sources.
    */
   type: WalletTransactionType;
   /** Allow crediting a currency the player does not hold a balance in yet, creating the `wallet_balance` row. Off by default. */
@@ -91,17 +98,18 @@ export type WalletCreditArgs = {
   /** Allow crediting a player who has no `wallet` row at all yet, creating it in the caller's transaction. Off by default. */
   allowNewWallet?: boolean;
   /**
-   * Required for a `gift`/`rain`/`donation` credit: `providerRefId` is the idempotency key of its
-   * bonus grant, matched per recipient and type without `providerName`, so it must be unique per
-   * transfer across provider names. Such a credit returns `{ ok: false }` rather than throwing for
+   * Required for a `gift`/`rain`/`donation` credit: `providerRefId` is its idempotency key. A
+   * bonus grant matches it per recipient and type without `providerName`, so it must be unique per
+   * transfer across provider names; a cash ledger row matches it per recipient, type and
+   * `providerName`. Such a credit returns `{ ok: false }` rather than throwing for
    * "wallet not found" and "currency mismatch", so a caller that has already debited the sender
    * in the same transaction must throw on `ok: false` to roll that debit back. Also required for a
    * `referral_reward` credit, whose replay it is: a retried payout with the same ref books nothing.
    */
   providerRef?: WalletProviderRef;
   /**
-   * Terms a `gift`/`rain`/`donation` credit's underlying bonus grant is created under. Ignored by
-   * any other credit type. Omit it and the grant falls back to the bonus module's own default
+   * Terms a `gift`/`rain`/`donation` credit's underlying bonus grant is created under in
+   * `'bonus_grant'` mode. Ignored in `'cash'` mode and by any other credit type. Omit it and the grant falls back to the bonus module's own default
    * terms.
    */
   terms?: BonusGrantTerms;
@@ -339,20 +347,31 @@ export type WalletWithdrawalHoldArgs = {
 /** Debits `debit` never checks against bonus-locked funds: play, and the operator's own debits. Any other debit over the movable funds is refused with `BonusFundsLockedError`. */
 export const WALLET_LOCK_EXEMPT_DEBIT_TYPES = ['bet', 'loss', 'manual_debit'] as const;
 
+export const WALLET_FUNDS_LOCKS = ['turnover', 'bonus'] as const;
+
 export type MovableFundsArgs = { userId: string; currency: string };
-export type MovableFunds = { real: string; locked: string; free: string };
+export type MovableFunds = {
+  real: string;
+  locked: string;
+  free: string;
+  lockedBy?: (typeof WALLET_FUNDS_LOCKS)[number];
+};
 
 export type WalletCommands = {
   /**
    * A replay that names no currency answers in the currency the first call moved.
    * @throws WalletReplayMismatchError when `providerRef` is already on a different request's move.
    * @throws BonusFundsLockedError when a type outside `WALLET_LOCK_EXEMPT_DEBIT_TYPES` dips into bonus-locked money.
+   * @throws TurnoverLockedError when a type outside `WALLET_LOCK_EXEMPT_DEBIT_TYPES`, other than `swap_out`, moves money while the player's turnover requirement is unmet (ADR-0065); a `withdrawal` debit reports `outflow: 'withdrawal'`, any other `transfer`.
    */
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;
   /**
    * The player's real balance in `currency` and how much of it a live bonus locks. Takes the
    * wallet row and balance row locks a debit takes, so a debit later in `tx` sees the same figure;
    * a transfer check, not a display read. Optional so a custom binding written before it compiles.
+   * While the turnover requirement is unmet, `locked` is the whole balance and `free` is '0',
+   * because a transfer debit would throw `TurnoverLockedError`. `lockedBy` names the lock when
+   * `locked` is above zero: `turnover` when the requirement is unmet, which wins over a bonus lock.
    */
   movableFunds?(tx: unknown, args: MovableFundsArgs): Promise<MovableFunds>;
   /** @throws WalletReplayMismatchError when `providerRef` is already on a different request's move. */
@@ -384,6 +403,27 @@ export type WalletCommands = {
     tx: unknown,
     args: WalletCloseRoundArgs,
   ): Promise<{ completed: BonusCompletion[]; newBalance: string | null }>;
+  /**
+   * Adds a turnover requirement of `requiredInCurrency` (ADR-0065) in `tx`, once per `sourceRef`:
+   * a repeat answers the first entry with `replayed: true`. Priced into the pivot now, or `pending`
+   * until a rate exists. Optional so a custom binding written before it compiles.
+   * @throws TurnoverDisabledError while `wallet.turnover.multiplier` is '0'.
+   * @throws WalletCommandAmountError when `requiredInCurrency` is not above zero.
+   * @throws WalletReplayMismatchError when `sourceRef` already holds another player's, currency's or amount's entry.
+   */
+  addTurnoverRequirement?(
+    tx: unknown,
+    args: AddTurnoverRequirementArgs,
+  ): Promise<AddTurnoverRequirementResult>;
+  /**
+   * Takes the wallet row lock a debit takes for every listed player in `tx`, in ascending `userId`
+   * order, creating nothing; a player with no wallet is skipped. A caller moving money between
+   * players calls it first with the sender and every recipient, so two transfers in opposite
+   * directions queue instead of deadlocking. The core wallet binding always provides it. It is
+   * optional only so a custom binding written before it compiles; on a binding without it, a
+   * caller moving money between players in cash mode has no deadlock-free ordering.
+   */
+  lockWallets?(tx: unknown, args: { userIds: readonly string[] }): Promise<void>;
 };
 
 export const WALLET_COMMANDS: Token<WalletCommands> = createToken('WALLET_COMMANDS');

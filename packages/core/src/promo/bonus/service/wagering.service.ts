@@ -17,7 +17,6 @@ import {
   moneyAdd,
   moneyCompare,
   moneyMultiplyDivide,
-  moneyScaleBy,
   moneySubtract,
   withAdvisoryXactLock,
   type DrizzleTx,
@@ -31,6 +30,7 @@ import {
 } from '../schema/index.js';
 import { isRealMoneyOnlyProduct, type StakeWagerInputs } from '../contract/index.js';
 import { attributeStake } from '../shared/stake-attribution.js';
+import { completeGrant } from '../shared/complete-grant.js';
 import { isLiveGrantIn } from '../shared/live-grant.js';
 import { effectiveContribution, weightedStake } from '../shared/wagering-weight.js';
 import {
@@ -45,23 +45,6 @@ import {
 } from '../shared/fund-buckets.js';
 
 const ZERO = '0';
-
-/**
- * What a completing grant is allowed to turn into real money. Absent multiplier means uncapped;
- * otherwise the ceiling is that multiple of what was originally granted, truncating, so the cap
- * is never rounded in the player's favour.
- */
-function capConversion(
-  balance: string,
-  grantedAmount: string,
-  maxWinMultiplier: string | null | undefined,
-): string {
-  if (maxWinMultiplier === null || maxWinMultiplier === undefined) {
-    return balance;
-  }
-  const ceiling = moneyScaleBy(grantedAmount, maxWinMultiplier);
-  return moneyCompare(balance, ceiling) < 0 ? balance : ceiling;
-}
 
 type RoundKey = Pick<
   BonusCloseRoundArgs,
@@ -766,7 +749,7 @@ export class WageringService implements BonusWageringCommands {
     }
 
     if (moneyCompare(grant.wageringProgress, grant.wageringRequired) >= 0) {
-      return this.complete(tx, grant);
+      return completeGrant(tx, grant);
     }
 
     const counters = clampCounters({
@@ -779,50 +762,6 @@ export class WageringService implements BonusWageringCommands {
       await this.deplete(tx, grant, total);
     }
     return null;
-  }
-
-  private async complete(tx: DrizzleTx, grant: PromoGrant): Promise<BonusCompletion> {
-    // The cap bites here, at the single point where bonus funds become real money, rather than
-    // on every win along the way: what the terms limit is the payout, and winnings that are
-    // still bonus can still be lost back. Anything above it dies with the grant.
-    const convertedAmount = capConversion(
-      grant.bonusBalance,
-      grant.grantedAmount,
-      grant.terms.maxWinMultiplier,
-    );
-    await tx
-      .update(promoGrant)
-      .set({
-        status: 'completed',
-        bonusBalance: ZERO,
-        unlinkedCash: ZERO,
-        linkedCash: ZERO,
-        closedAt: sql`now()`,
-      })
-      .where(eq(promoGrant.id, grant.id));
-
-    const capped = moneySubtract(grant.bonusBalance, convertedAmount);
-    await tx.insert(promoGrantEntry).values({
-      grantId: grant.id,
-      userId: grant.userId,
-      currency: grant.currency,
-      type: 'convert',
-      bonusAmount: `-${convertedAmount}`,
-      balanceAfter: capped,
-    });
-    // What the cap took has to leave the ledger too, or a grant's entries stop summing to the
-    // balance they explain and the surplus looks like money still owed to the player.
-    if (isPositive(capped)) {
-      await tx.insert(promoGrantEntry).values({
-        grantId: grant.id,
-        userId: grant.userId,
-        currency: grant.currency,
-        type: 'forfeit',
-        bonusAmount: `-${capped}`,
-        balanceAfter: ZERO,
-      });
-    }
-    return { grantId: grant.id, convertedAmount };
   }
 
   private async deplete(tx: DrizzleTx, grant: PromoGrant, total: string) {

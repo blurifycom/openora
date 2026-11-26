@@ -20,8 +20,11 @@ import {
   REALTIME_TRANSPORT,
   UuidSchema,
   WAGER_TRACKING,
+  WALLET_COMMANDS,
   WALLET_READER,
   domainEventSchemas,
+  isTurnoverEnabled,
+  resolveWalletTurnoverConfig,
   queue,
   type JobQueueAdapter,
   type RealtimeTransport,
@@ -37,6 +40,7 @@ import {
   type Plugin,
   type TypedContainer,
 } from '@openora/core/server';
+import { GrantConversionService } from './service/grant-conversion.service.js';
 import { GrantLifecycleService } from './service/grant-lifecycle.service.js';
 import { createBonusLifecyclePort } from './service/bonus-lifecycle-port.service.js';
 import { FundLockService } from './service/fund-lock.service.js';
@@ -349,6 +353,19 @@ export default {
         realtime: c.get(REALTIME_TRANSPORT),
         weights: new WeightService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         lifecycle: grantLifecycle(c),
+        conversion: new GrantConversionService(
+          c.get(DRIZZLE),
+          c.get(AUDIT_WRITER),
+          c.get(EVENT_BUS),
+          // Resolved per call: WALLET_COMMANDS is built from this module's own ports.
+          () => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined),
+          isTurnoverEnabled(
+            resolveWalletTurnoverConfig(
+              c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
+            ),
+          ),
+          logger,
+        ),
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),
         geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
