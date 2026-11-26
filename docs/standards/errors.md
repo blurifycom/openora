@@ -35,7 +35,7 @@ Detail for the "typed errors at the edge" line in `conventions`. Read this when 
 
   Canonical router to copy: `packages/core/src/wallet/router/index.ts`.
 
-- **`ORPCError.message` is an English fallback for logs/tooling, not player-facing copy** - never render it directly in a UI. Consumers key UI copy off `.code` (the error category) plus typed `.data` fields (e.g. a `reason` discriminator); add a new field to `data`, not to `message`, when a UI needs to tell cases apart.
+- **`ORPCError.message` is an English fallback for logs/tooling, not player-facing copy** - never render it directly in a UI. Consumers key UI copy off `.code` (the error category) plus typed `.data` fields (e.g. a `reason` discriminator); add a new field to `data`, not to `message`, when a UI needs to tell cases apart. The one exception is a message the operator configures for players, such as `promo.bonus.lockedFundsMessage` (ADR-0064) or `wallet.turnover.lockedMessage` (ADR-0065).
 - **A route that speaks a vendor's protocol answers in that protocol.** An overlay route for an inbound vendor callback throws `wireErrorResponse(status, body, { cause })` from `@openora/core/server`: the response carries that status (400-599) and the body (a JSON object or array, sent as JSON), not oRPC's `{ defined, code, status, message, data }` envelope. A 5xx reply is reported through its `cause`; pass the error that caused it, or log it yourself. Every other route keeps throwing `ORPCError` through `mapErrors`.
 - **Money / critical paths are transactional and idempotent** - a DB guard inside the transaction, not just an `idempotencyKey` (delivery is at-least-once):
 

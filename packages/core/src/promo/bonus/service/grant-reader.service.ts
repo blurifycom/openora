@@ -1,5 +1,7 @@
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import {
+  MONEY_PRECISION,
+  MONEY_SCALE,
   type BonusGrantLedgerReader,
   type PageQuery,
   type Paginated,
@@ -12,7 +14,13 @@ import {
   type DrizzleService,
 } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
-import { promoGrant, promoGrantEntry, promoOffer, type PromoGrant } from '../schema/index.js';
+import {
+  promoGrant,
+  promoGrantEntry,
+  promoGrantRound,
+  promoOffer,
+  type PromoGrant,
+} from '../schema/index.js';
 import type { AdminGrant, BonusBalance, PlayerGrant, PlayerGrantEntry } from '../contract/index.js';
 
 export const GrantNotFoundError = makeNotFoundError('Grant');
@@ -23,6 +31,9 @@ const MONEY_FIELDS = [
   'bonusBalance',
   'wageringRequired',
   'wageringProgress',
+  'pendingWagered',
+  'linkedCash',
+  'unlinkedCash',
 ] as const;
 const DATE_FIELDS = ['expiresAt', 'activatedAt', 'closedAt', 'createdAt'] as const;
 const SERIALIZE = { dateFields: [...DATE_FIELDS], decimalFields: [...MONEY_FIELDS] };
@@ -38,8 +49,21 @@ const GRANT_COLUMNS = {
   bonusBalance: promoGrant.bonusBalance,
   wageringRequired: promoGrant.wageringRequired,
   wageringProgress: promoGrant.wageringProgress,
+  // Settlement credits only an active grant, and no more than its requirement has left.
+  pendingWagered: sql<string>`case when ${promoGrant.status} = 'active' then least(
+    (
+      select coalesce(sum(${promoGrantRound.progressPending}), 0)
+      from ${promoGrantRound}
+      where ${promoGrantRound.grantId} = ${promoGrant.id}
+        and ${promoGrantRound.settledAt} is null
+    ),
+    greatest(${promoGrant.wageringRequired} - ${promoGrant.wageringProgress}, 0)
+  ) else 0 end::numeric(${sql.raw(String(MONEY_PRECISION))}, ${sql.raw(String(MONEY_SCALE))})::text`,
+  linkedCash: promoGrant.linkedCash,
+  unlinkedCash: promoGrant.unlinkedCash,
   forfeitReason: promoGrant.forfeitReason,
   maxBet: sql<string | null>`${promoGrant.terms} ->> 'maxBet'`,
+  playerForfeitable: sql<boolean>`coalesce((${promoGrant.terms}->>'allowPlayerForfeit')::boolean, false)`,
   expiresAt: promoGrant.expiresAt,
   activatedAt: promoGrant.activatedAt,
   closedAt: promoGrant.closedAt,
@@ -264,8 +288,11 @@ export class GrantReaderService {
 type OfferLabel = { offerKey: string | null; offerName: string | null };
 
 type PlayerGrantRow = {
-  [K in Exclude<keyof typeof GRANT_COLUMNS, 'maxBet'>]: PromoGrant[K];
-} & OfferLabel & { maxBet: string | null };
+  [K in Exclude<
+    keyof typeof GRANT_COLUMNS,
+    'maxBet' | 'playerForfeitable' | 'pendingWagered'
+  >]: PromoGrant[K];
+} & OfferLabel & { maxBet: string | null; playerForfeitable: boolean; pendingWagered: string };
 
 type AdminGrantRow = PlayerGrantRow & {
   userId: PromoGrant['userId'];

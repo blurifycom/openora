@@ -3,11 +3,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import * as z from 'zod';
 import { DRIZZLE } from '@openora/core/server';
-import { LEDGER_API_V1, LedgerV1MoveOutcomeSchema } from '@openora/core/contracts';
+import {
+  LEDGER_API_V1,
+  LedgerV1MoveOutcomeSchema,
+  type LedgerV1BetArgs,
+} from '@openora/core/contracts';
+import { promoGrant } from '@openora/core/promo/schema/bonus';
 import { game, gameFavorite } from '@openora/core/casino/schema/gaming';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { newPlayer } from '../index.js';
+import { directGrant } from './support/bonus.js';
 import { balanceOf, bootWalletE2e, closeWalletE2e, type WalletE2e } from './support/wallet.js';
 import {
   ALLOWED_IP,
@@ -535,5 +541,122 @@ describe('player favourites and catalog reads', () => {
     expect(ErrorSchema.parse(await bodyOf(unknown)).code).toBe('NOT_FOUND');
     expect(hidden.status).toBe(404);
     expect(visible.status).toBe(200);
+  });
+});
+
+describe('a casino round against a bonus settles at its final result', () => {
+  async function bonusPlayer() {
+    const player = await fundedBettor(e2e, '10');
+    const grantId = await directGrant(e2e, player.userId, player.currency, {
+      amount: '100',
+      terms: { wageringMultiplier: '0.5', expiryDays: 30 },
+    });
+    const { gameId } = await newGame(e2e);
+    const ledger = e2e.app.container.get(LEDGER_API_V1);
+    const betOn = (amount: string, externalRoundId = `round-${randomUUID()}`): LedgerV1BetArgs => ({
+      userId: player.userId,
+      gameId,
+      currency: player.currency,
+      providerName: 'bonus-rounds',
+      providerRefId: `bet-${randomUUID()}`,
+      externalRoundId,
+      amount,
+      wager: { product: 'casino' },
+    });
+    const winOn = (bet: LedgerV1BetArgs, amount: string, isFinal = false) => ({
+      userId: bet.userId,
+      gameId: bet.gameId,
+      currency: bet.currency,
+      providerName: bet.providerName,
+      providerRefId: `win-${randomUUID()}`,
+      externalRoundId: bet.externalRoundId,
+      amount,
+      ...(isFinal ? { isFinal } : {}),
+    });
+    const statusOf = async () => {
+      const [row] = await db().select().from(promoGrant).where(eq(promoGrant.id, grantId));
+      return row?.status;
+    };
+    return { player, grantId, ledger, betOn, winOn, statusOf };
+  }
+
+  it('completes the grant on a final zero win and converts what is left to cash', async () => {
+    const { player, ledger, betOn, winOn, statusOf } = await bonusPlayer();
+    const bet = betOn('50');
+
+    expect(await ledger.bet(bet)).toMatchObject({ status: 'applied' });
+    expect(await statusOf()).toBe('active');
+    expect(await ledger.win(winOn(bet, '0', true))).toMatchObject({ status: 'applied' });
+
+    expect(await statusOf()).toBe('completed');
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('60'));
+  });
+
+  it('keeps the grant active through a non-final win and completes it on the final result', async () => {
+    const { player, ledger, betOn, winOn, statusOf } = await bonusPlayer();
+    const bet = betOn('50');
+    expect(await ledger.bet(bet)).toMatchObject({ status: 'applied' });
+
+    expect(await ledger.win(winOn(bet, '20'))).toMatchObject({ status: 'applied' });
+
+    expect(await statusOf()).toBe('active');
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('4'));
+
+    expect(await ledger.win(winOn(bet, '0', true))).toMatchObject({ status: 'applied' });
+
+    expect(await statusOf()).toBe('completed');
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('80'));
+  });
+
+  it('keeps the grant active through a partial reversal until the rest of the round settles', async () => {
+    const { player, ledger, betOn, winOn, statusOf } = await bonusPlayer();
+    const met = betOn('50');
+    const externalRoundId = `round-${randomUUID()}`;
+    const kept = betOn('10', externalRoundId);
+    const reversed = betOn('10', externalRoundId);
+    for (const bet of [met, kept, reversed]) {
+      expect(await ledger.bet(bet)).toMatchObject({ status: 'applied' });
+    }
+    expect(await ledger.win(winOn(met, '0', true))).toMatchObject({ status: 'applied' });
+    expect(await statusOf()).toBe('active');
+
+    expect(
+      await ledger.reverse({
+        providerName: reversed.providerName,
+        providerRefId: `rb-${randomUUID()}`,
+        userId: reversed.userId,
+        gameId: reversed.gameId,
+        targetRefId: reversed.providerRefId,
+      }),
+    ).toMatchObject({ status: 'applied' });
+
+    expect(await statusOf()).toBe('active');
+
+    expect(await ledger.win(winOn(kept, '0', true))).toMatchObject({ status: 'applied' });
+
+    expect(await statusOf()).toBe('completed');
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('50'));
+  });
+
+  it('closes the round for every provider the player bet with on it', async () => {
+    const { player, ledger, betOn, statusOf } = await bonusPlayer();
+    const externalRoundId = `round-${randomUUID()}`;
+    const first = betOn('25', externalRoundId);
+    const second = { ...betOn('25', externalRoundId), providerName: 'bonus-rounds-second' };
+    expect(await ledger.bet(first)).toMatchObject({ status: 'applied' });
+    expect(await ledger.bet(second)).toMatchObject({ status: 'applied' });
+    expect(await statusOf()).toBe('active');
+
+    expect(
+      await ledger.closeRound({
+        userId: first.userId,
+        gameId: first.gameId,
+        externalRoundId,
+        currency: first.currency,
+      }),
+    ).toMatchObject({ status: 'closed' });
+
+    expect(await statusOf()).toBe('completed');
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('60'));
   });
 });

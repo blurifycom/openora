@@ -32,6 +32,7 @@ import {
   type PaymentWebhookEvent,
   type AdminUserDirectory,
   type PlatformConfig,
+  resolvePromoConfig,
   type KycStatus,
   type RateLimiterAdapter,
   type RateLimitKey,
@@ -67,9 +68,14 @@ import {
   type WalletTransactionStatus,
   type WithdrawalRequeueReason,
   type BonusGrantLedgerReader,
+  type BonusDepositCommands,
+  type DomainEventPayload,
+  type BonusFundLockCommands,
+  type LockedFunds,
   type BonusLifecycleCommands,
   wagerProductOfProviderName,
   wagerProductProviderPrefix,
+  withTurnoverLock,
 } from '@openora/core/contracts';
 import {
   eq,
@@ -90,6 +96,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
+import type { TurnoverService } from './turnover.service.js';
 import {
   wallet,
   walletBalance,
@@ -553,6 +560,19 @@ type DepositAsset = {
   depositEnabled: boolean;
 };
 
+/** `block` mode with no module binding the lock would let every withdrawal through, so it fails the boot. */
+export function requireBonusFundLocks(
+  platformConfig: PlatformConfig | undefined,
+  locks: BonusFundLockCommands | undefined,
+): BonusFundLockCommands | undefined {
+  if (!locks && resolvePromoConfig(platformConfig).bonus.withdrawalWhileActive === 'block') {
+    throw new Error(
+      "promo.bonus.withdrawalWhileActive is 'block' but nothing binds BONUS_FUND_LOCKS: load the bonus module beside the wallet or set the mode to 'forfeit'",
+    );
+  }
+  return locks;
+}
+
 export function assertDepositAllowed(
   assets: readonly DepositAsset[],
   currency: string,
@@ -814,6 +834,10 @@ export async function resolveWalletBalance(
   };
 }
 
+// The balance and the grants from one snapshot, so a bet or withdrawal committing between the two
+// reads cannot pair the old balance with the new grants. Takes no row lock.
+const SNAPSHOT_READ = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const;
+
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
 const WITHDRAW_IDEMPOTENCY_NAMESPACE = 'withdraw';
 const MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE = 'manual-adjustment';
@@ -961,7 +985,7 @@ const TX_SORT_COLUMNS = {
   reviewedAt: 'reviewed_at',
 } as const satisfies Record<WalletTransactionSortBy, keyof TransactionHistoryRow>;
 
-function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
+export function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
   return [
     hex.slice(0, 8),
@@ -1176,8 +1200,12 @@ export type WalletServiceDeps = {
   playEligibility?: PlayEligibilityPort;
   // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
-  // Optional: bound by the bonus module. Absent = there is no bonus a withdrawal could forfeit.
+  // Optional: bound by the bonus module. Absent = no bonus locks funds or is forfeited by a withdrawal.
+  bonusFundLocks?: BonusFundLockCommands;
+  // Optional: forfeits on a withdrawal only when no module binds `bonusFundLocks` (a custom bonus engine).
   bonusLifecycle?: BonusLifecycleCommands;
+  depositBonus?: BonusDepositCommands;
+  turnover?: TurnoverService;
 };
 
 /**
@@ -1209,7 +1237,10 @@ export class WalletService {
   private readonly playEligibility?: PlayEligibilityPort;
 
   private readonly grantLedger?: BonusGrantLedgerReader;
+  private readonly bonusFundLocks?: BonusFundLockCommands;
   private readonly bonusLifecycle?: BonusLifecycleCommands;
+  private readonly depositBonus?: BonusDepositCommands;
+  private readonly turnover?: TurnoverService;
 
   constructor({
     drizzle,
@@ -1231,7 +1262,10 @@ export class WalletService {
     depositAdmission,
     playEligibility,
     grantLedger,
+    bonusFundLocks,
     bonusLifecycle,
+    depositBonus,
+    turnover,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -1252,7 +1286,34 @@ export class WalletService {
     this.depositAdmission = depositAdmission;
     this.playEligibility = playEligibility;
     this.grantLedger = grantLedger;
+    this.bonusFundLocks = bonusFundLocks;
     this.bonusLifecycle = bonusLifecycle;
+    this.depositBonus = depositBonus;
+    this.turnover = turnover;
+  }
+
+  /**
+   * Every completed deposit ends here, so its bonus and turnover requirement commit with the
+   * credit or not at all.
+   */
+  private async depositCompleted(
+    txn: DrizzleTx,
+    deposit: DomainEventPayload<'wallet.deposit.completed'>,
+  ) {
+    await this.depositBonus?.applyDeposit(txn, {
+      userId: deposit.userId,
+      amount: deposit.amount,
+      currency: deposit.currency,
+      transactionId: deposit.transactionId,
+    });
+    await this.turnover?.addCredit(txn, {
+      userId: deposit.userId,
+      kind: 'deposit',
+      sourceRef: deposit.transactionId,
+      currency: deposit.currency,
+      amount: deposit.amount,
+    });
+    await this.events.emitInTransaction(txn, 'wallet.deposit.completed', deposit);
   }
 
   // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
@@ -1698,18 +1759,52 @@ export class WalletService {
   }
 
   getBalance(userId: User['id']) {
-    return resolveWalletBalance(
-      this.drizzle.db,
-      userId,
-      this.platformConfig?.wallet?.defaultCurrency,
-    );
+    return this.drizzle.db.transaction(async (txn) => {
+      const reading = await resolveWalletBalance(
+        txn,
+        userId,
+        this.platformConfig?.wallet?.defaultCurrency,
+      );
+      const [withLocks] = await this.withLockedFunds(txn, userId, [reading]);
+      return withLocks ?? reading;
+    }, SNAPSHOT_READ);
   }
 
-  async getBalances(userId: User['id']) {
-    return readWalletBalances(
-      this.drizzle.db,
-      userId,
-      this.platformConfig?.wallet?.defaultCurrency,
+  getBalances(userId: User['id']) {
+    return this.drizzle.db.transaction(async (txn) => {
+      const reading = await readWalletBalances(
+        txn,
+        userId,
+        this.platformConfig?.wallet?.defaultCurrency,
+      );
+      return { ...reading, balances: await this.withLockedFunds(txn, userId, reading.balances) };
+    }, SNAPSHOT_READ);
+  }
+
+  private async withLockedFunds<T extends { currency: string; balance: string }>(
+    txn: DrizzleDb,
+    userId: User['id'],
+    balances: T[],
+  ): Promise<(T & Partial<LockedFunds> & { bonusLocked?: string })[]> {
+    const turnover = this.turnover?.enabled ? this.turnover : undefined;
+    if ((!this.bonusFundLocks && !turnover) || balances.length === 0) {
+      return balances;
+    }
+    const locks = this.bonusFundLocks
+      ? await this.bonusFundLocks.readLockedFunds(txn, {
+          userId,
+          balances: balances.map(({ currency, balance }) => ({
+            currency: balanceKey(currency),
+            realBalance: balance,
+          })),
+        })
+      : [];
+    if (!turnover) {
+      return balances.map((balance, i) => ({ ...balance, ...locks[i] }));
+    }
+    const turnoverLocked = (await turnover.summary(userId, txn)).locked;
+    return balances.map((row, i) =>
+      withTurnoverLock(row, locks[i] ?? { locked: '0', free: row.balance }, turnoverLocked),
     );
   }
 
@@ -1922,7 +2017,7 @@ export class WalletService {
         return { transactionId: reservation.row.id };
       }
       await creditAndStampBalance(txn, settled.id, reservation.walletRecord.id, currency, amount);
-      await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
+      await this.depositCompleted(txn, {
         userId,
         playerId,
         amount,
@@ -2314,6 +2409,8 @@ export class WalletService {
       );
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    // Its own transaction, so a price found here survives the refusal the gate below may answer.
+    await this.turnover?.pricePendingNow(userId);
 
     return this.drizzle.db.transaction(async (txn) => {
       // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.
@@ -2365,8 +2462,6 @@ export class WalletService {
         return { transactionId: row.id, status: row.status };
       }
 
-      // No bonus-lock subtraction: bonus funds live on their grant and never enter
-      // `wallet_balance`, so everything this row holds is the player's to withdraw.
       const [debited] = await debitWalletBalance(txn, current.id, currency, amount);
       if (!debited) {
         throw new InsufficientBalanceError(
@@ -2375,17 +2470,30 @@ export class WalletService {
         );
       }
       await stampBalanceAfter(txn, row.id, debited.amount);
-      // A player may not cash out while a bonus is live, and the rule holds in every currency.
-      // On this transaction, after the balance lock, so a bet cannot convert the bonus between
-      // the request and the forfeit, and the lock order matches a bet's. A rejected withdrawal
-      // does not bring the bonus back.
-      await this.bonusLifecycle?.forfeitHeld(txn, {
-        userId,
-        reason: 'withdrawal_while_active',
+      // After the balance lock, so a bet cannot move the bonus between the debit and this check,
+      // and the lock order matches a bet's. Either refuses money a bonus locks, rolling the
+      // debit back, or forfeits every live bonus; a rejected withdrawal does not bring it back.
+      const forfeitContext = {
         actor: { id: userId, isAdmin: false },
         note: `withdrawal ${row.id}`,
         meta: { ip: ip ?? null, userAgent: userAgent ?? null },
-      });
+      };
+      await (this.bonusFundLocks
+        ? this.bonusFundLocks.onOutflow(txn, {
+            userId,
+            currency: balanceKey(currency),
+            amount,
+            balanceAfter: debited.amount,
+            outflow: 'withdrawal',
+            ...forfeitContext,
+          })
+        : this.bonusLifecycle?.forfeitHeld(txn, {
+            userId,
+            reason: 'withdrawal_while_active',
+            ...forfeitContext,
+          }));
+      // Last lock taken; a refusal rolls back the debit and any forfeit above with it.
+      await this.turnover?.assertOutflow(txn, { userId, outflow: 'withdrawal' });
 
       // Screening runs in the tag module off this event, never in this transaction; only its
       // verdict lets the withdrawal be auto-approved (autoApproveScreenedWithdrawal, ADR-0059).
@@ -4498,7 +4606,7 @@ export class WalletService {
             event.currency,
             event.amount,
           );
-          await this.events.emitInTransaction(txn, 'wallet.deposit.completed', payload);
+          await this.depositCompleted(txn, payload);
         } else {
           await recordReconciliationFindingInTransaction(
             txn,
@@ -4941,7 +5049,7 @@ export class WalletService {
       transactionId: WalletTransaction['id'];
     },
   ): Promise<void> {
-    await this.events.emitInTransaction(txn, 'wallet.deposit.completed', {
+    await this.depositCompleted(txn, {
       ...deposit,
       playerId: await this.identityReader.getPlayerIdByUserId(deposit.userId, txn),
     });

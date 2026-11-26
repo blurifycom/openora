@@ -51,6 +51,7 @@ import {
   type WagerTrackingCommands,
   type WagerTrackingWalletCredit,
   type WalletCommands,
+  type BonusCompletion,
   type WalletCorrectionDebitArgs,
   type WalletReader,
   type WalletTransactionType,
@@ -1296,6 +1297,7 @@ export class SportsbookLedgerService {
             currency: cancelled.currency,
             type: 'bet_reversal',
             allowNewCurrency: true,
+            closesRound: true,
             providerRef: walletRef(args),
             reversesTransactionId: (await stakeToReverse(tx, cancelled)).id,
           }),
@@ -1532,6 +1534,7 @@ export class SportsbookLedgerService {
           }
         }
       }
+      let completed: readonly BonusCompletion[] = [];
       if (isPositiveMoney(credited)) {
         const raceLost = (heldBy: string | undefined) =>
           new LedgerRaceLost(
@@ -1548,6 +1551,7 @@ export class SportsbookLedgerService {
             currency: settled.currency,
             type: creditType,
             allowNewCurrency: true,
+            closesRound: true,
             providerRef: walletRef(args),
             reversesTransactionId,
           }),
@@ -1562,6 +1566,7 @@ export class SportsbookLedgerService {
         if (!credit.moved) {
           throw raceLost(credit.replayedTransactionId);
         }
+        completed = credit.completed ?? [];
         moves.push({
           transactionId: credit.transactionId,
           amount: credited,
@@ -1589,7 +1594,23 @@ export class SportsbookLedgerService {
           debtChange = offset.change;
         }
       } else {
-        balance = await this.balanceOf(tx, settled);
+        // A losing bet still settles the bonus round it was staked on.
+        const ref = walletRef(args);
+        const closed = await this.wallet.closeRound?.(tx, {
+          userId: settled.userId,
+          currency: settled.currency,
+          providerRef: { providerName: ref.providerName, externalRoundId: ref.externalRoundId },
+        });
+        completed = closed?.completed ?? [];
+        balance = closed?.newBalance ?? (await this.balanceOf(tx, settled));
+      }
+      for (const { grantId, convertedAmount } of completed) {
+        await this.events.emitInTransaction(tx, 'promo.bonus.completed', {
+          userId: settled.userId,
+          grantId,
+          currency: settled.currency,
+          convertedAmount,
+        });
       }
       if (result === 'void') {
         await this.reverseSettledStake(tx, settled, args);

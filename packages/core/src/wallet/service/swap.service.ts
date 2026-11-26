@@ -14,6 +14,7 @@ import {
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
   type AuditWritePort,
+  type BonusFundLockCommands,
   type PlatformConfig,
   type RateLimitKey,
   type RateLimiterAdapter,
@@ -38,6 +39,7 @@ import {
   readWalletBalance,
   stampBalanceAfter,
 } from './wallet.service.js';
+import type { TurnoverService } from './turnover.service.js';
 
 const logger = createLogger('wallet-swap');
 
@@ -98,6 +100,8 @@ export class SwapService {
   private readonly audit: AuditWritePort;
   private readonly platformConfig?: PlatformConfig;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
+  private readonly bonusFundLocks?: BonusFundLockCommands;
+  private readonly turnover?: TurnoverService;
 
   constructor(deps: {
     drizzle: DrizzleService;
@@ -106,6 +110,8 @@ export class SwapService {
     audit: AuditWritePort;
     platformConfig?: PlatformConfig;
     limiter?: RateLimiterAdapter<RateLimitKey>;
+    bonusFundLocks?: BonusFundLockCommands;
+    turnover?: TurnoverService;
   }) {
     this.drizzle = deps.drizzle;
     this.events = deps.events;
@@ -113,6 +119,8 @@ export class SwapService {
     this.audit = deps.audit;
     this.platformConfig = deps.platformConfig;
     this.limiter = deps.limiter;
+    this.bonusFundLocks = deps.bonusFundLocks;
+    this.turnover = deps.turnover;
   }
 
   /**
@@ -198,8 +206,6 @@ export class SwapService {
         return { row: winner, replayed: true };
       }
 
-      // Bonus funds live on their grant and never enter `wallet_balance`, so everything this
-      // row holds is the player's own money and swappable.
       const [debited] = await debitWalletBalance(txn, current.id, fromCurrency, fromAmount);
       if (!debited) {
         throw new InsufficientBalanceError(
@@ -208,6 +214,14 @@ export class SwapService {
         );
       }
       await stampBalanceAfter(txn, inserted.id, debited.amount);
+      // Real money a live bonus ties up cannot leave its currency, whatever the withdrawal mode.
+      await this.bonusFundLocks?.onOutflow(txn, {
+        userId,
+        currency: balanceKey(fromCurrency),
+        amount: fromAmount,
+        balanceAfter: debited.amount,
+        outflow: 'swap',
+      });
 
       return { row: inserted, replayed: false };
     });
@@ -315,18 +329,31 @@ export class SwapService {
       // back with it instead of leaving the in-leg uncredited and the out-leg processing.
       const userId = await this.userIdForWallet(txn, out.walletId);
       const [credited] = await creditWalletBalance(txn, out.walletId, toCurrency, toAmount);
-      await txn.insert(walletTransaction).values({
-        walletId: out.walletId,
-        type: 'swap_in',
-        amount: toAmount,
+      const [inLeg] = await txn
+        .insert(walletTransaction)
+        .values({
+          walletId: out.walletId,
+          type: 'swap_in',
+          amount: toAmount,
+          currency: balanceKey(toCurrency),
+          balanceAfter: credited?.amount,
+          status: 'completed',
+          direction: 'credit',
+          rail: railFor(toCurrency, this.platformConfig?.wallet?.cryptoCurrencies),
+          // Not providerRefId: that column is globally unique, and the vendor's id already
+          // belongs to the out-leg. The in-leg points back at its own pair instead.
+          metadata: JSON.stringify({ swapTransactionId: out.id, externalId }),
+        })
+        .returning({ id: walletTransaction.id });
+      if (!inLeg) {
+        throw new Error(`wallet swap: in-leg of ${out.id} was not written`);
+      }
+      await this.turnover?.addCredit(txn, {
+        userId,
+        kind: 'swap_in',
+        sourceRef: inLeg.id,
         currency: balanceKey(toCurrency),
-        balanceAfter: credited?.amount,
-        status: 'completed',
-        direction: 'credit',
-        rail: railFor(toCurrency, this.platformConfig?.wallet?.cryptoCurrencies),
-        // Not providerRefId: that column is globally unique, and the vendor's id already
-        // belongs to the out-leg. The in-leg points back at its own pair instead.
-        metadata: JSON.stringify({ swapTransactionId: out.id, externalId }),
+        amount: toAmount,
       });
       // Written directly, in this transaction, even though `wallet.swap.completed` is also
       // an event topic: a money-path record has to commit with its ledger rows. The topic

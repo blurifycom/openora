@@ -38,11 +38,14 @@ export type { OutboxWriter } from './outbox.js';
 export { OUTBOX } from './outbox.js';
 
 export type {
+  MovableFunds,
+  MovableFundsArgs,
   WalletCommands,
   WalletDebitArgs,
   WalletDebitOutcome,
   WalletCreditArgs,
   WalletCreditOutcome,
+  WalletCloseRoundArgs,
   WalletProviderRef,
   WalletCorrectionDebitArgs,
   WalletCorrectionDebitOutcome,
@@ -54,6 +57,8 @@ export {
   WALLET_COMMANDS,
   WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
+  WALLET_FUNDS_LOCKS,
+  WALLET_LOCK_EXEMPT_DEBIT_TYPES,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
@@ -62,6 +67,36 @@ export {
   WalletHoldWithoutWalletError,
   WalletReplayMismatchError,
 } from './wallet-commands.js';
+
+export type {
+  AddTurnoverRequirementArgs,
+  AddTurnoverRequirementResult,
+  AdminTurnoverEntry,
+  TurnoverCreditType,
+  TurnoverEntry,
+  TurnoverEntrySource,
+  TurnoverEntryStatus,
+  TurnoverLockedData,
+  TurnoverOutflow,
+  TurnoverStakeState,
+  TurnoverSummary,
+} from './turnover.js';
+export {
+  AdminTurnoverEntrySchema,
+  TURNOVER_CREDIT_TYPES,
+  TURNOVER_ENTRY_SOURCES,
+  TURNOVER_ENTRY_STATUSES,
+  TURNOVER_OUTFLOWS,
+  TURNOVER_STAKE_STATES,
+  TurnoverCreditTypeSchema,
+  TurnoverDisabledError,
+  TurnoverEntrySchema,
+  TurnoverEntrySourceSchema,
+  TurnoverEntryStatusSchema,
+  TurnoverLockedError,
+  TurnoverSummarySchema,
+  withTurnoverLock,
+} from './turnover.js';
 
 export type { WagerContext, WagerProduct } from './wager-context.js';
 export {
@@ -80,8 +115,21 @@ export type {
   BonusGrantArgs,
   BonusGrantOutcome,
   BonusGrantTerms,
+  BonusFundSettings,
 } from './bonus-grants.js';
 export { BONUS_GRANTS } from './bonus-grants.js';
+export type { BonusDepositArgs, BonusDepositCommands } from './bonus-deposits.js';
+export { BONUS_DEPOSITS } from './bonus-deposits.js';
+export type {
+  BonusFundLockCommands,
+  BonusFundsLockedData,
+  BonusOutflowArgs,
+  FundOutflow,
+  LockedFunds,
+  LockedFundsArgs,
+  ReadLockedFundsArgs,
+} from './bonus-fund-locks.js';
+export { BONUS_FUND_LOCKS, BonusFundsLockedError } from './bonus-fund-locks.js';
 
 export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
 export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';
@@ -100,6 +148,8 @@ export type {
   BonusWagerOutcome,
   BonusSettleArgs,
   BonusSettleOutcome,
+  BonusCompletion,
+  BonusCloseRoundArgs,
 } from './bonus-wagering.js';
 export { BONUS_WAGERING, MaxBetExceededError } from './bonus-wagering.js';
 
