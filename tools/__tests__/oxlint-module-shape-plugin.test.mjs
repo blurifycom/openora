@@ -88,15 +88,36 @@ test('layer-file-naming allows the surveyed service/ exceptions', () => {
   assert.deepEqual(reports, []);
 });
 
-test('layer-file-naming enforces .test.ts in __tests__/', () => {
-  const good = lint('layer-file-naming', `${REPO}/wallet/__tests__/wallet.test.ts`, (v) =>
-    v.Program({}),
+test('layer-file-naming enforces a tier suffix in __tests__/', () => {
+  for (const name of ['wallet.unit.test.ts', 'wallet.int.test.ts', 'wallet.e2e.test.ts']) {
+    assert.deepEqual(
+      lint('layer-file-naming', `${REPO}/wallet/__tests__/${name}`, (v) => v.Program({})),
+      [],
+    );
+  }
+  for (const name of ['wallet.test.ts', 'wallet.spec.ts', 'wallet.unit.spec.ts']) {
+    assert.equal(
+      lint('layer-file-naming', `${REPO}/wallet/__tests__/${name}`, (v) => v.Program({})).length,
+      1,
+    );
+  }
+});
+
+test('int-test-file-naming refuses real infra in a unit test only', () => {
+  const infra = (v) =>
+    v.ImportDeclaration({ specifiers: [{ imported: { name: 'createTestDb' } }] });
+  assert.equal(
+    lint('int-test-file-naming', `${REPO}/wallet/__tests__/a.unit.test.ts`, infra).length,
+    1,
   );
-  assert.deepEqual(good, []);
-  const bad = lint('layer-file-naming', `${REPO}/wallet/__tests__/wallet.spec.ts`, (v) =>
-    v.Program({}),
+  assert.deepEqual(
+    lint('int-test-file-naming', `${REPO}/wallet/__tests__/a.int.test.ts`, infra),
+    [],
   );
-  assert.equal(bad.length, 1);
+  assert.deepEqual(
+    lint('int-test-file-naming', `${REPO}/wallet/__tests__/a.e2e.test.ts`, infra),
+    [],
+  );
 });
 
 function importNode(source) {

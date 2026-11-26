@@ -54,7 +54,7 @@ export default defineConfig({
         test: {
           ...coreTest,
           name: 'core',
-          include: ['src/**/*.{test,spec}.ts'],
+          include: ['src/**/*.{unit,int}.test.ts'],
           retry: RETRY,
           setupFiles: [SLOW_WAIT_SETUP, ...[coreTest.setupFiles ?? []].flat()],
         },
