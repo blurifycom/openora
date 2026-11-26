@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
+import * as z from 'zod';
 import { DRIZZLE } from '@openora/core/server';
 import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import { user } from '@openora/core/pam/schema/identity';
@@ -21,6 +22,7 @@ import {
   closeWalletE2e,
   deliverWebhook,
   newDepositScenario,
+  requestDepositAddress,
   type DepositScenario,
   type WalletE2e,
 } from './support/wallet.js';
@@ -354,7 +356,7 @@ describe('player on-ramp purchase', () => {
       expectedUpdatedAt: null,
     });
     expect(blocked.status).toBe(200);
-    const stored = (await blocked.json()) as { updatedAt: string | null };
+    const stored = z.object({ updatedAt: z.string().nullable() }).parse(await blocked.json());
     try {
       const fromBlocked = await client.request('/wallet/on-ramp/checkout', {
         method: 'POST',
@@ -388,9 +390,52 @@ describe('player on-ramp purchase', () => {
     expect(res.status).toBe(409);
   });
 
-  it.todo(
-    'an on-ramp completion webhook credits the balance once and a repeated webhook changes nothing',
-  );
+  it('an on-ramp completion webhook credits nothing and only the on-chain deposit credits, once', async () => {
+    const { client, userId } = await newPlayer();
+    const created = await client.post('/wallet/on-ramp/checkout', checkoutBody());
+    const { purchaseId } = OnRampCheckoutSchema.parse(await created.json());
+    const rawBody = JSON.stringify({
+      purchaseId,
+      externalId: purchaseId,
+      status: 'completed',
+      txHash: `hash-${randomUUID()}`,
+    });
+    const complete = () =>
+      e2e.app.app.request('/wallet/on-ramp/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [TEST_ON_RAMP_SIGNATURE_HEADER]: signTestOnRampWebhook(rawBody),
+        },
+        body: rawBody,
+      });
+
+    const first = await complete();
+    const repeat = await complete();
+
+    expect(first.status).toBe(200);
+    expect(repeat.status).toBe(200);
+    const order = await client.get(`/wallet/on-ramp/orders/${purchaseId}`);
+    expect(OnRampOrderSchema.parse(await order.json()).status).toBe('completed');
+    expect(await balanceOf(e2e, userId, ON_RAMP_CURRENCY)).toBe('0');
+
+    const address = await requestDepositAddress(client, ON_RAMP_CURRENCY, ON_RAMP_NETWORK);
+    const onChain = {
+      kind: 'deposit' as const,
+      address,
+      network: ON_RAMP_NETWORK,
+      amount: '50',
+      currency: ON_RAMP_CURRENCY,
+      txHash: `hash-${randomUUID()}`,
+      externalId: randomUUID(),
+    };
+    expect((await deliverWebhook(e2e, onChain)).status).toBe(200);
+    await expect.poll(() => balanceOf(e2e, userId, ON_RAMP_CURRENCY)).toBe(money('50'));
+    expect((await deliverWebhook(e2e, onChain)).status).toBe(200);
+    await complete();
+    expect(await balanceOf(e2e, userId, ON_RAMP_CURRENCY)).toBe(money('50'));
+    expect(await swapLegs(userId, ON_RAMP_CURRENCY)).toHaveLength(1);
+  });
 
   it('an on-ramp webhook with an invalid signature is rejected and credits nothing', async () => {
     const { client, userId } = await newPlayer();

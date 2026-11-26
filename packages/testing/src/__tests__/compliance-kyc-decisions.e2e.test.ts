@@ -93,7 +93,18 @@ describe('KYC submission and vendor decisions', () => {
     );
   });
 
-  it.todo('player submits KYC again while a verification is in progress and gets a conflict');
+  it('player submits KYC again while a verification is in progress and is collapsed onto the same session', async () => {
+    const player = await submittedPlayer();
+
+    const again = await submitKycOrThrow(player.client);
+
+    expect(again.referenceId).toBe(player.referenceId);
+    expect(again.status).toBe('pending');
+    const rows = await verificationRows(e2e, player.userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.referenceId).toBe(player.referenceId);
+    expect(await playerKycStatus(e2e, player.userId)).toBe('pending');
+  });
 
   it('vendor webhook with an approved decision approves the player and emits the status change', async () => {
     const player = await submittedPlayer();
@@ -348,7 +359,41 @@ describe('Admin KYC actions', () => {
     expect(view.basic.current?.status).toBe('resubmission_requested');
   });
 
-  it.todo('admin requests resubmission twice and gets a conflict');
+  it('admin requests resubmission twice and the repeat changes nothing', async () => {
+    const player = await newKycPlayer(e2e);
+    const officer = await staffClient(e2e, 'compliance-manager');
+    const request = () =>
+      officer.post(`/compliance/players/${player.userId}/kyc/resubmit`, {
+        userId: player.userId,
+        tier: 'basic',
+        reason: 'document is blurry',
+      });
+
+    const first = await request();
+    const second = await request();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await playerKycStatus(e2e, player.userId)).toBe('resubmission_requested');
+    expect(await verificationRows(e2e, player.userId)).toHaveLength(1);
+    const audit = await kycUpdatedAudit(player.playerId);
+    expect(audit.filter((row) => afterStatusOf(row) === 'resubmission_requested')).toHaveLength(1);
+  });
+
+  it('admin requests resubmission while a verification is pending and gets a conflict', async () => {
+    const player = await submittedPlayer();
+    const officer = await staffClient(e2e, 'compliance-manager');
+
+    const res = await officer.post(`/compliance/players/${player.userId}/kyc/resubmit`, {
+      userId: player.userId,
+      tier: 'basic',
+      reason: 'too early',
+    });
+
+    expect(res.status).toBe(409);
+    expect(await playerKycStatus(e2e, player.userId)).toBe('pending');
+    expect(await verificationRows(e2e, player.userId)).toHaveLength(1);
+  });
 
   it('admin overrides a player to approved and the status reads manually overridden', async () => {
     const player = await submittedPlayer();
@@ -368,7 +413,31 @@ describe('Admin KYC actions', () => {
     expect(audit.map(afterStatusOf)).toContain('manually_overridden');
   });
 
-  it.todo('admin overrides a player that has no verification and gets not found');
+  it('admin overrides a player that has no verification and a manual row records it', async () => {
+    const player = await newKycPlayer(e2e);
+    const officer = await staffClient(e2e, 'compliance-manager');
+
+    const res = await officer.post(`/compliance/players/${player.userId}/kyc/override`, {
+      userId: player.userId,
+      tier: 'basic',
+      status: 'approved',
+      reason: 'verified offline',
+    });
+
+    expect(res.status).toBe(200);
+    expect(await playerKycStatus(e2e, player.userId)).toBe('manually_overridden');
+    const rows = await verificationRows(e2e, player.userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        status: 'manually_overridden',
+        triggeredBy: 'manual',
+        decisionReason: 'verified offline',
+      }),
+    );
+    const audit = await kycUpdatedAudit(player.playerId);
+    expect(audit.map(afterStatusOf)).toContain('manually_overridden');
+  });
 
   it('admin overrides a player that does not exist and gets not found', async () => {
     const officer = await staffClient(e2e, 'compliance-manager');

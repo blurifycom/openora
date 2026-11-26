@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, asc, eq, sql } from 'drizzle-orm';
+import * as z from 'zod';
 import { RgLimitExceededError } from '@openora/core/contracts';
 import { DRIZZLE, eventOutbox } from '@openora/core/server';
 import {
@@ -524,9 +525,9 @@ describe('Admin limit changes and projection', () => {
         ),
       )
       .orderBy(asc(eventOutbox.seq));
-    expect(events.map((event) => (event.payload as { version: number }).version)).toEqual([
-      1, 2, 3, 4, 5, 6,
-    ]);
+    expect(
+      events.map((event) => z.object({ version: z.number() }).parse(event.payload).version),
+    ).toEqual([1, 2, 3, 4, 5, 6]);
     const [held] = await db()
       .select()
       .from(ledgerUserLimitVersion)

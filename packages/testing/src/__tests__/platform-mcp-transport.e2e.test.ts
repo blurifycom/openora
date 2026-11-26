@@ -165,8 +165,6 @@ describe('MCP transport gate', () => {
     expect((await mcpCall(e2e, { token: second.issued.token })).status).toBe(200);
   });
 
-  it.todo('every request is refused with a limiter-unavailable error when the limiter is down');
-
   it('a token without the permission for a tool gets access denied', async () => {
     const admin = await mcpOnlyAdmin();
     const issued = await issueToken(admin);

@@ -138,7 +138,9 @@ describe('player deposit address and crediting', () => {
     expect(await res.json()).toEqual(expect.objectContaining({ code: 'BAD_REQUEST' }));
   });
 
-  it.todo('a player with an ambiguous currency and no network named is refused as ambiguous');
+  it.todo(
+    'GAP: a deposit address request with no network on a multi-network currency is not refused as ambiguous, only withdrawals are (packages/core/src/wallet/service/wallet.service.ts:572 assertDepositAllowed accepts any enabled network; the ambiguity check is resolveWithdrawalNetwork at :473)',
+  );
 
   it('an unauthenticated caller requesting a deposit address is refused with 401', async () => {
     const player = await scenario({ requestAddress: false });

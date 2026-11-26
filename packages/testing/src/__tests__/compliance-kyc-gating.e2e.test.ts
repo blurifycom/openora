@@ -329,7 +329,7 @@ describe('Country KYC exemption', () => {
   });
 
   it.todo(
-    'admin exempting a country applies the exemption to existing players of that country and audits it',
+    'GAP: exempting a country does not touch existing players, the exemption is applied only to a newly registered player (packages/core/src/compliance/plugin.ts:379 identity.user.registered handler, applyExemption at kyc.service.ts:1175 has no other caller)',
   );
 
   it('admin without the compliance permission cannot change a country rule', async () => {
