@@ -20,7 +20,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** What the row keeps of the input: its field names and a hash, never a value that could be a credential. */
-export function inputSummary(input: unknown) {
+function inputSummary(input: unknown) {
   return {
     inputKeys: isRecord(input) ? Object.keys(input).sort() : [],
     inputHash: sha256Hex(input),

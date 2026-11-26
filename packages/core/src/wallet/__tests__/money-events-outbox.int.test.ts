@@ -6,6 +6,8 @@ import {
   IDENTITY_READER,
   LEDGER_API_V1,
   PLAY_ELIGIBILITY,
+  type AuditWritePort,
+  type IdentityReader,
   type LedgerApiV1,
   type PlayEligibilityPort,
 } from '@openora/core/contracts';
@@ -37,11 +39,34 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 import { backfillLedgerGames } from '@openora/core/casino/seed/gaming';
 import gamingPlugin from '@openora/core/casino/plugins/gaming';
-import { mock, makeAuditWriter, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance } from '../schema/index.js';
 import walletPlugin from '../plugin.js';
 import { ledgerPlayEligibilityProjection } from '../service/ledger-play-eligibility.service.js';
+
+const auditWriter: AuditWritePort = {
+  auditedTopics: new Set<string>(),
+  record: async () => undefined,
+  recordInTransaction: async () => undefined,
+  recordManyInTransaction: async () => undefined,
+};
+
+const identityReader: IdentityReader = {
+  getLastLoginAt: async () => null,
+  getPlayerIdsInactiveSince: async () => [],
+  getPlayerIdByUserId: async () => null,
+  getPlayerIdByUserIdSafe: async () => null,
+  getPlayerIdsByUserIdsSafe: async () => new Map(),
+  getPlayerKycStatusByUserId: async () => null,
+  getPlayerUserIdsSharingLoginIp: async () => [],
+  canReceiveLoginWithdrawalAlerts: async () => false,
+  getPlayerDateOfBirthByUserId: async () => null,
+};
+
+const playEligibility: Required<PlayEligibilityPort> = {
+  isRestricted: async () => false,
+  checkPlay: async () => null,
+};
 
 const SERVICE = `money-${randomUUID()}`;
 const TOPIC = 'wallet.balance.changed';
@@ -78,14 +103,9 @@ beforeAll(async () => {
   const container = new Container<CoreTokenCatalog>();
   container.register(DRIZZLE, () => db.drizzle);
   container.register(EVENT_BUS, () => bus);
-  container.register(AUDIT_WRITER, () => makeAuditWriter());
-  container.register(IDENTITY_READER, () => makeIdentityReader());
-  container.register(PLAY_ELIGIBILITY, () =>
-    mock<Required<PlayEligibilityPort>>({
-      isRestricted: vi.fn().mockResolvedValue(false),
-      checkPlay: vi.fn().mockResolvedValue(null),
-    }),
-  );
+  container.register(AUDIT_WRITER, () => auditWriter);
+  container.register(IDENTITY_READER, () => identityReader);
+  container.register(PLAY_ELIGIBILITY, () => playEligibility);
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
   walletPlugin.register(registry);
   gamingPlugin.register(registry);

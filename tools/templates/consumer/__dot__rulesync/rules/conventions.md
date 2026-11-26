@@ -97,8 +97,9 @@ above) if this repo has no UI apps.
 - **Pin exact dependency versions** (no `^`/`~`); add a dependency deliberately - std lib or a few
   lines often beat a tree.
 - **A feature or fix PR ships its own tests** - no separate test PR. It ships the change, the
-  manual verification pass that proves it (drive the running stack by hand, attach one walkthrough
-  video with a clip per acceptance criterion, or the request/response trace for an API-only change, to the PR
+  manual verification pass that proves it (drive the running stack by hand, attach a clip per acceptance
+  criterion in the Evidence table, before and after screenshots for a look-only change, or the
+  request/response sample for an API-only change, to the PR
   description), and the tests that pass exercised. The diff shows them; the description does not list them.
   Which tier each one belongs to, and how to run the manual pass: `docs/standards/testing.md`.
 - **Green before review:** `/check` (typecheck + lint + unit tests) while iterating, `pnpm verify`
@@ -106,8 +107,8 @@ above) if this repo has no UI apps.
   HEAD). Conventional commits, lowercase subject (PR
   title too - a squash merge turns it into the commit), one PR per ticket (a story or a sub-task),
   however big - never split by size. Never push without explicit confirmation. The description is
-  the review pack from the `create-pr` skill (the bare ticket key, "How it was checked", then the
-  triggered sections: diagrams, endpoints, data, traces, AC and evidence, the walkthrough video) - but no bare test-file list or CI checklist the diff and pipeline already show, no URLs,
+  the review pack from the `create-pr` skill (the bare ticket key, then the same 14 slots in every
+  PR, `N/A: <reason>` where one does not apply) - but no bare test-file list or CI checklist the diff and pipeline already show, no URLs,
   hostnames, secrets, or PII. Detail: `docs/standards/git-delivery.md`.
 - **Fix the import, never work around a lint or boundary violation.** Agent rules are generated
   from `.rulesync/` via `pnpm gen:agents` - never hand-edit a generated file. Detail:

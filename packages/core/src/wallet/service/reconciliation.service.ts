@@ -370,7 +370,7 @@ type LedgerMatch = Pick<WalletTransaction, 'id' | 'currency' | 'amount' | 'netwo
  * without a database. Never routes through moneyToNumber (see money.md): an exact
  * decimal compare, not a float one.
  */
-export function diffDeposit(
+function diffDeposit(
   event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   tx: LedgerMatch | undefined,
 ): 'missing_deposit' | 'currency_mismatch' | 'amount_mismatch' | null {
@@ -411,7 +411,7 @@ const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 
 // A requested withdrawal waits on a person, not a vendor, so it is stuck only once that wait
 // outruns a day. Approved and processing ones use `reconciliation.stuckAfterMinutes` (ADR-0059).
-export const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
+const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
 
 // A swap leg carries no payment provider name, but a finding needs one to be filed under.
 const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';

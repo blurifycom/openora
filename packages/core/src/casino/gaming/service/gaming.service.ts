@@ -165,7 +165,7 @@ export const InsufficientBalanceError = createDomainError<[available: string, re
 );
 // Thrown inside the settlement transaction, so the round stays `active` and the win can be
 // settled again rather than being lost silently.
-export const WinCreditFailedError = createDomainError<[roundId: string, reason: string]>(
+const WinCreditFailedError = createDomainError<[roundId: string, reason: string]>(
   'WinCreditFailedError',
   (roundId, reason) => `win credit failed for round ${roundId}: ${reason}`,
 );
@@ -174,7 +174,7 @@ export const WinCreditFailedError = createDomainError<[roundId: string, reason: 
 // exactly (`1e-19`, a 19th decimal, a negative) is never rounded or dropped in silence. Every
 // throw is logged at error level, which reaches the bound ERROR_TRACKING adapter, so operations
 // see the stuck round and the provider's raw value.
-export const WinAmountInvalidError = createDomainError<[roundId: string, winAmount: string]>(
+const WinAmountInvalidError = createDomainError<[roundId: string, winAmount: string]>(
   'WinAmountInvalidError',
   (roundId, winAmount) =>
     `round ${roundId} won ${JSON.stringify(winAmount)}, which is not a decimal with at most 18 places`,

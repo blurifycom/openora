@@ -53,7 +53,7 @@ export function validateEntries(entries: unknown): asserts entries is PluginEntr
 }
 
 /** Ensures a registry entry resolves the plugin it names. */
-export function assertEntryMatchesPlugin<C extends TokenCatalog>(
+function assertEntryMatchesPlugin<C extends TokenCatalog>(
   entry: PluginEntry,
   plugin: Plugin<C>,
 ): void {
@@ -158,7 +158,7 @@ export function portName(port: symbol) {
  * backs - a check, an audit record - so the boot logs each, typically when a SERVICE_MANIFEST
  * leaves out the module that binds it.
  */
-export function unboundOptionalPorts<C extends TokenCatalog>(
+function unboundOptionalPorts<C extends TokenCatalog>(
   plugins: Plugin<C>[],
   container: Container<C>,
 ): { plugin: string; port: string; without: string }[] {
@@ -179,7 +179,7 @@ export function unboundOptionalPorts<C extends TokenCatalog>(
  * registration and throw one actionable error naming the plugin, the port, and the
  * likely-missing package.
  */
-export function assertRequiredPorts<C extends TokenCatalog>(
+function assertRequiredPorts<C extends TokenCatalog>(
   plugins: Plugin<C>[],
   container: Container<C>,
 ): void {

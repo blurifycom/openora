@@ -141,14 +141,20 @@ const countryRuleDeniesAccess = and(
   ),
 );
 
-function hasCountryRuleChanges(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
+export function hasCountryRuleChanges(
+  before: typeof countryRule.$inferSelect,
+  next: CountryRuleSettings,
+) {
   return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== next[field]);
 }
 
 // A change needs `confirm` when it moves a country on or off the blacklist, lets a denied
 // country in, sends a blacklisted country to a different mirror, or drops KYC. Closing
 // access - turning a mirror off on a blacklisted country - never does.
-function needsConfirmation(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
+export function needsConfirmation(
+  before: typeof countryRule.$inferSelect,
+  next: CountryRuleSettings,
+) {
   const prior = { ...before, blacklisted: before.action === 'block' };
   const nextTarget = mirrorTargetOf(next);
   return (
@@ -159,7 +165,7 @@ function needsConfirmation(before: typeof countryRule.$inferSelect, next: Countr
   );
 }
 
-function effectiveAccessOf(rule: CountryRuleSettings, isDeploymentBlocked: boolean) {
+export function effectiveAccessOf(rule: CountryRuleSettings, isDeploymentBlocked: boolean) {
   if (isDeploymentBlocked || deniesAccess(rule)) {
     return 'blocked' as const;
   }
@@ -173,11 +179,11 @@ function countryRuleFieldValue(
   return field === 'blacklisted' ? row.action === 'block' : row[field];
 }
 
-function moneyEqualsOrBothNull(a: string | null, b: string | null) {
+export function moneyEqualsOrBothNull(a: string | null, b: string | null) {
   return a === null || b === null ? a === b : moneyEquals(a, b);
 }
 
-function hasExpectedVersion(actual: Date | null, expected: string | null) {
+export function hasExpectedVersion(actual: Date | null, expected: string | null) {
   return (actual ? actual.toISOString() : null) === expected;
 }
 

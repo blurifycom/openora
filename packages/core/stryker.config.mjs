@@ -50,12 +50,12 @@ const toRepoPath = (path) =>
 
 export default {
   testRunner: 'vitest',
+  thresholds: { high: 80, low: 65, break: 55 },
   vitest: {
     configFile: 'packages/core/vitest.mutation.config.ts',
     // Plugins load through `import(path)`, which vitest's related-files graph cannot see, so
     // with this on a mutant in plugin code runs zero tests and is reported as survived.
     related: false,
-    // A test calls `process.chdir()`, which threads do not support.
     pool: 'forks',
   },
   checkers: ['typescript'],

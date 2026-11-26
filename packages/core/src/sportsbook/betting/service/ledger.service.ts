@@ -211,7 +211,7 @@ const canonicalMoney = (amount: string | undefined) =>
   amount === undefined ? '' : moneyFloorToScale(amount, MONEY_SCALE);
 
 /** Parts added after the first release are appended only when present, so older requests keep their hash. */
-export function requestFingerprint(parts: FingerprintParts): string {
+function requestFingerprint(parts: FingerprintParts): string {
   const { promotion, promotionAmount, promotionPotential } = parts;
   const canonical = JSON.stringify([
     parts.kind,
@@ -250,10 +250,7 @@ export function requestFingerprint(parts: FingerprintParts): string {
 type ResolvedStake = Pick<SportsbookBetRow, 'cashStake' | 'voidPayout' | 'maxLossRefund'>;
 
 /** What the player paid, what a void returns and the most a loss may refund, fixed at reserve. */
-export function resolveStake(
-  stake: string,
-  promotion: SportsbookPromotion | undefined,
-): ResolvedStake {
+function resolveStake(stake: string, promotion: SportsbookPromotion | undefined): ResolvedStake {
   if (promotion?.stake === 'promotion') {
     return {
       cashStake: '0',
@@ -336,7 +333,7 @@ function compareExact(a: Exact, b: Exact): number {
 }
 
 /** True when a promotion-paid payout beats the stake times every leg's decimal odds. */
-export function isUnusualPromotionPayout(
+function isUnusualPromotionPayout(
   bet: Pick<SportsbookBetRow, 'cashStake' | 'stake' | 'legs'>,
   payout: string,
 ): boolean {

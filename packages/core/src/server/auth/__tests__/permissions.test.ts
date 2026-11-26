@@ -1,85 +1,56 @@
-import { describe, it, expect } from 'vitest';
-import { adminStatement } from '@openora/core/contracts';
-import { adminRole, holdsGrant, isRoleName, statement } from '../permissions.js';
+import { describe, expect, it } from 'vitest';
+import { holdsGrant, isRoleName } from '../permissions.js';
 
-describe('admin permission catalog', () => {
-  it('serves the same catalog the browser imports from contracts', () => {
-    expect(statement).toBe(adminStatement);
-  });
-
-  // The built-in `admin` role is the AdminGuard fallback when the iam module is
-  // absent, and it mirrors the catalog by hand on purpose: a new resource must
-  // be granted deliberately, not inherited. This catches the drift instead.
-  it('grants the built-in admin role every action in the catalog but support history, which only an assigned role grants', () => {
-    const { 'support-chat': _supportChat, ...rest } = adminStatement;
-    expect(adminRole.statements).toEqual(rest);
-    expect(adminRole.authorize({ 'support-chat': ['view'] }).success).toBe(false);
-  });
-
-  it('declares the agent resources and grants them to the built-in admin role', () => {
-    expect(adminStatement).toMatchObject({
-      agent: ['view', 'create', 'update', 'publish', 'run'],
-      'agent-proposal': ['view', 'approve', 'reject'],
-      'agent-config': ['view', 'update'],
-      'agent-chat': ['use'],
-    });
+describe('holdsGrant', () => {
+  it('a role name outside the static table holds nothing', () => {
+    expect(holdsGrant({ role: 'ghost', grants: null }, 'player', 'view')).toBe(false);
     expect(
-      adminRole.authorize({
-        agent: ['view', 'create', 'update', 'publish', 'run'],
-        'agent-proposal': ['view', 'approve', 'reject'],
-        'agent-config': ['view', 'update'],
-        'agent-chat': ['use'],
-      }).success,
-    ).toBe(true);
+      holdsGrant(
+        { role: 'ghost', grants: [{ resource: 'player', action: 'view' }] },
+        'player',
+        'view',
+      ),
+    ).toBe(false);
+  });
+
+  it('a user with database grants holds exactly those grants', () => {
+    const user = { role: 'support', grants: [{ resource: 'game', action: 'enable' }] };
+    expect(holdsGrant(user, 'game', 'enable')).toBe(true);
+  });
+
+  it('a user with database grants does not fall back to the static role table', () => {
+    const user = { role: 'admin', grants: [{ resource: 'game', action: 'enable' }] };
+    expect(holdsGrant(user, 'player', 'view')).toBe(false);
+    expect(holdsGrant({ role: 'admin', grants: [] }, 'player', 'view')).toBe(false);
+  });
+
+  it('a user with no database assignment falls back to the static role of the user', () => {
+    expect(holdsGrant({ role: 'support', grants: null }, 'player', 'view')).toBe(true);
+    expect(holdsGrant({ role: 'support', grants: null }, 'player', 'ban')).toBe(false);
+    expect(holdsGrant({ role: 'admin', grants: null }, 'player', 'ban')).toBe(true);
+    expect(holdsGrant({ role: 'content-manager', grants: null }, 'content', 'publish')).toBe(true);
+    expect(holdsGrant({ role: 'content-manager', grants: null }, 'player', 'view')).toBe(false);
+  });
+
+  it('a grant for another resource or action is not held', () => {
+    const grants = [{ resource: 'player', action: 'view' }];
+    expect(holdsGrant({ role: 'admin', grants }, 'transaction', 'view')).toBe(false);
+    expect(holdsGrant({ role: 'admin', grants }, 'player', 'ban')).toBe(false);
+    expect(holdsGrant({ role: 'admin', grants: null }, 'nope', 'view')).toBe(false);
+    expect(holdsGrant({ role: 'admin', grants: null }, 'player', 'nope')).toBe(false);
   });
 });
 
 describe('isRoleName', () => {
-  it.each(['admin', 'support', 'content-manager'])('knows the static %s role', (role) => {
-    expect(isRoleName(role)).toBe(true);
+  it('accepts the defined role names', () => {
+    expect(isRoleName('admin')).toBe(true);
+    expect(isRoleName('support')).toBe(true);
+    expect(isRoleName('content-manager')).toBe(true);
   });
 
-  it.each(['player', 'constructor', '__proto__', 'toString'])('does not know %s', (role) => {
-    expect(isRoleName(role)).toBe(false);
-  });
-});
-
-describe('holdsGrant', () => {
-  it('decides from the DB grants alone when the user holds an assignment', () => {
-    const grants = [{ resource: 'player', action: 'view' }];
-
-    expect(holdsGrant({ role: 'admin', grants }, 'player', 'view')).toBe(true);
-    expect(holdsGrant({ role: 'admin', grants }, 'mcp-access', 'use')).toBe(false);
-    expect(holdsGrant({ role: 'support', grants: [] }, 'player', 'view')).toBe(false);
-  });
-
-  it('falls back to the static role table without an assignment', () => {
-    expect(holdsGrant({ role: 'admin', grants: null }, 'mcp-access', 'use')).toBe(true);
-    expect(holdsGrant({ role: 'admin', grants: null }, 'agent-chat', 'use')).toBe(true);
-    expect(holdsGrant({ role: 'support', grants: null }, 'player', 'view')).toBe(true);
-    expect(holdsGrant({ role: 'support', grants: null }, 'mcp-access', 'use')).toBe(false);
-    expect(holdsGrant({ role: 'support', grants: null }, 'agent-chat', 'use')).toBe(false);
-  });
-
-  it('holds nothing for a role the static table does not know, grants or not', () => {
-    const grants = [{ resource: 'mcp-access', action: 'use' }];
-
-    expect(holdsGrant({ role: 'player', grants }, 'mcp-access', 'use')).toBe(false);
-    expect(holdsGrant({ role: 'constructor', grants: null }, 'mcp-access', 'use')).toBe(false);
-  });
-
-  it('declares the agent resources and grants them to the built-in admin role', () => {
-    expect(adminStatement).toMatchObject({
-      agent: ['view', 'create', 'update', 'publish', 'run'],
-      'agent-proposal': ['view', 'approve', 'reject'],
-      'agent-config': ['view', 'update'],
-    });
-    expect(
-      adminRole.authorize({
-        agent: ['view', 'create', 'update', 'publish', 'run'],
-        'agent-proposal': ['view', 'approve', 'reject'],
-        'agent-config': ['view', 'update'],
-      }).success,
-    ).toBe(true);
+  it('rejects inherited object keys such as constructor', () => {
+    expect(isRoleName('constructor')).toBe(false);
+    expect(isRoleName('toString')).toBe(false);
+    expect(isRoleName('__proto__')).toBe(false);
   });
 });

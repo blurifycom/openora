@@ -64,7 +64,7 @@ export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: str
 }
 
 /** `base × rate% × (1 + uplift%)`: the streak uplift multiplies the rank rate, it never adds to it. */
-export function rankedRakeback({
+function rankedRakeback({
   base,
   ratePercent,
   upliftPercent,
@@ -80,7 +80,7 @@ export function rankedRakeback({
 }
 
 /** A player with no rank earns `ratePercent` of the bet's theoretical GGR, its house edge; zero without a usable rtp. */
-export function unrankedRakeback({
+function unrankedRakeback({
   realAmount,
   rtp,
   ratePercent,

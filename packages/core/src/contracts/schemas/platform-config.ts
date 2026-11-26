@@ -9,6 +9,7 @@ import { CurrencyTickerInputSchema, MoneyAmountSchema } from './common.js';
 import { AgentsConfigSchema } from './agents.js';
 import { HostAllowlistEntrySchema, UrlPrefixAllowlistEntrySchema } from './host-allowlist.js';
 import { createToken } from '../adapters/token.js';
+import { BannerImageCountBoundsOverridesSchema } from './cms-banner.js';
 import { MIN_PLAYER_AGE_YEARS } from './player.js';
 import { GRANT_CONCURRENCY_MODES, RANK_PERIODIC_BASES, RANK_PROGRESS_BASES } from './promo.js';
 
@@ -447,6 +448,12 @@ export const CmsConfigSchema = z
   .object({
     /** Hostnames a banner image URL may be served from. Empty = no banner images allowed. */
     allowedBannerImageHosts: z.array(HostAllowlistEntrySchema).default([]),
+    /**
+     * Per-placement image-count bounds a banner configuration must meet to go live
+     * (placement -> layout -> `{ min, max }`), replacing the layout's default for that
+     * placement only. Absent = every placement uses the layout defaults.
+     */
+    bannerImageCountBounds: BannerImageCountBoundsOverridesSchema.default({}),
   })
   .strict();
 export type CmsConfig = z.infer<typeof CmsConfigSchema>;
@@ -542,7 +549,7 @@ export const PlatformConfigSchema = z
     /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
     /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
-    cms: CmsConfigSchema.default({ allowedBannerImageHosts: [] }),
+    cms: CmsConfigSchema.prefault({}),
     /** Game custom thumbnail host allow-list. Absent = built-in default (empty = disabled). */
     gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
     /** Player avatar host and URL-prefix allow-lists. Absent = built-in default (empty = disabled). */
