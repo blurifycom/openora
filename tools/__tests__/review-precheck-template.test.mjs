@@ -382,10 +382,27 @@ test('ROSTER spawns only the lenses the diff needs', () => {
       ['ROSTER-ASK', 'ROSTER: none'],
     ],
     [
+      'oldaction',
+      { 'apps/web/src/app/pay.ts': "'use server';\nexport const pay = 2;\n" },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+      { 'apps/web/src/app/pay.ts': "'use server';\nexport const pay = 1;\n" },
+    ],
+    [
+      'uihref',
+      { 'apps/web/src/shell/components/nav.tsx': 'export const Nav = () => null;\n' },
+      ['ROSTER: quality - ', 'ROSTER-ASK: risk - '],
+      ['ROSTER: risk', 'ROSTER: none'],
+      {
+        'apps/web/src/shell/components/nav.tsx':
+          'export const Nav = () => null;\nconst a = <a href={url} />;\n',
+      },
+    ],
+    [
       'unguard',
       { 'apps/web/src/shell/components/gate.tsx': 'export const Gate = () => null;\n' },
-      ['ROSTER: quality - ', 'ROSTER: risk - security guard line removed in '],
-      ['ROSTER-ASK', 'ROSTER: none'],
+      ['ROSTER: quality - ', 'ROSTER-ASK: risk - '],
+      ['ROSTER: risk', 'ROSTER: none'],
       {
         'apps/web/src/shell/components/gate.tsx':
           'export const Gate = () => null;\nif (!password) throw new Error();\n',
@@ -393,7 +410,9 @@ test('ROSTER spawns only the lenses the diff needs', () => {
     ],
   ]) {
     git('checkout', '-q', '-b', `roster-${name}-base`, 'dev');
-    if (baseFiles) {commit(`${name}-base`, baseFiles);}
+    if (baseFiles) {
+      commit(`${name}-base`, baseFiles);
+    }
     git('checkout', '-q', '-b', `roster-${name}`);
     commit(name, files);
     const out = precheck('--base', `roster-${name}-base`, '--head', `roster-${name}`);

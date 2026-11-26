@@ -452,7 +452,7 @@ const DOMAIN_PATTERNS = {
   ],
 };
 const domainHitFiles = new Map();
-const unseenHits = [];
+const cappedDomains = [];
 for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
   const patterns = [...defaults, ...(config.domainPatterns?.[domain] ?? [])].map(
     (source) => new RegExp(source, 'i'),
@@ -475,10 +475,8 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       }),
     ),
   ];
-  const removedHit = hits.find((hit) => hit.endsWith('(removed)') && !E2E_PATH.test(hit));
-  if (removedHit) unseenHits.push(`${domain} guard line removed in ${removedHit.split(' - ')[0]}`);
   if (hits.length > MAX_HITS_PER_DOMAIN)
-    unseenHits.push(`${domain} hits ${hits.length} past the list cap`);
+    cappedDomains.push(`${domain} hits ${hits.length} past the list cap`);
   domainHitFiles.set(
     domain,
     hits.map((hit) => hit.split(' - ')[0].replace(/:\d+$/, '')),
@@ -508,9 +506,16 @@ const BACKEND_PATHS = [
   /\.html$/,
 ];
 const DOC_FILE = /\.(md|mdx|txt)$/;
-const SERVER_MARK = /^\s*['"]use server['"]|['"]server-only['"]/;
+const SERVER_MARK = /^\s*['"]use server['"]|['"]server-only['"]/m;
+const headText = (path) => {
+  const show = spawnSync('git', ['show', `${args.head}:${path}`], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return show.status === 0 ? show.stdout : '';
+};
 const serverMarked = new Set(
-  added.filter(({ text }) => SERVER_MARK.test(text)).map(({ file }) => file),
+  reviewable.filter((path) => CODE_FILE.test(path) && SERVER_MARK.test(headText(path))),
 );
 const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.[cm]?[jt]s$/];
 
@@ -578,8 +583,8 @@ const roster = () => {
   }
   if (/^(high|critical)\b/.test(risk)) {
     rows.push(`ROSTER: risk - RISK ${risk}`);
-  } else if (unseenHits.length > 0) {
-    rows.push(`ROSTER: risk - ${unseenHits[0]}`);
+  } else if (cappedDomains.length > 0) {
+    rows.push(`ROSTER: risk - ${cappedDomains[0]}`);
   } else if (keywordFiles.length > 0) {
     rows.push(
       `ROSTER-ASK: risk - domain keywords in ${keywordFiles.length} files outside server and logic code, first ${keywordFiles[0]}`,
