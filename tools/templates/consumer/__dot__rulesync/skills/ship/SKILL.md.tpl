@@ -114,14 +114,14 @@ Rounds of 3 and 4 share one budget: three. After the third with anything still f
 
 ### 4b. Record evidence
 
-The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It joins them with the four shots per changed screen into one walkthrough video and returns its path and chapter list.
+The code is final now, so the videos are recorded once, here, never in an earlier round. Start `tester` for its evidence pass on HEAD: every browser spec that drives an AC, new or existing, runs once with video on, `playwright-cli` only for an AC no spec drives. It returns one clip path per AC, and one per Before cell on a fix.
 
 - A spec that fails here -> back to `builder` with it, then 3 for the cases it touches, 4 on the new commits, 4b again. That round counts against the same budget of three.
-- Every AC that needs a clip has one in the walkthrough -> 5.
+- Every AC that needs a clip has its row in the Evidence table, or a look-only change has its before and after screenshots -> 5.
 
 ### 5. Open the MR
 
-The pushed HEAD is the commit step 4 approved: anything committed after it, 4b specs included, goes back to 4 first (`guard-review` blocks the push otherwise). That round counts against the budget of three, and 4b is not repeated unless app code changed. `--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table and the 4b walkthrough and its chapter list. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
+The pushed HEAD is the commit step 4 approved: anything committed after it, 4b specs included, goes back to 4 first (`guard-review` blocks the push otherwise). That round counts against the budget of three, and 4b is not repeated unless app code changed. `--ask`: report the SHA and stop for "yes push". Then run **create-pr** (it opens the MR as a draft) with the tester's AC table and the 4b clip paths. Comment the MR link on the ticket and move it to Code Review in the same turn. Then 7.
 
 ### 6. Red CI and review comments
 
@@ -129,7 +129,7 @@ Run the repo's `fix-pipeline` skill on a red pipeline or conflicts, `fix-review-
 
 - Each thread is checked against the code on this branch first: correct | already handled | wrong on this branch | out of scope. Only a correct one changes code; the rest get an answer.
 - A red job is reproduced locally first; `builder` fixes its cause. Never skip or loosen a test.
-- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched and the shots of the screens it changed, joins the walkthrough again, and it replaces the old one in the MR description. Nothing is pushed untested.
+- Every fix goes to `builder`. Then `tester` re-runs the cases the fix touches and leaves a test that fails without it, and 4 runs on the new commits. Then 4b records again only the ACs the fix touched, and those clips replace their cells in the MR description. Nothing is pushed untested.
 - Push the ticket branch without asking (a force-push only as above). Then draft one reply per thread in the user's voice, with what changed and the test that proves it, or why nothing changed, and print them for the user to post; never post them. React per thread too: `thumbsup` and resolve when the fix addressed it, `question` when it needs an answer or you disagree (that thread stays open and its question goes in the ticket's questions comment, the single place for open questions). Record every thread you handled (a drafted reply, or a bot note that needs none) as the babysit skill does, in `.claude/reviews/<branch with / as +>.replies.md` and `.drafted.json`, so the watcher and a resumed run skip it.
 
 Then 7.
@@ -143,7 +143,7 @@ Run the **babysit** skill's loop on the MR, with step 6 above as its fix rules: 
 - `green` -> check the MR is ready (below). Ready: mark the draft ready for review (`docs/agents/forge.md`), report "Ready for review:" and the MR URL, then watch again without `--until-green`. Not ready: it stays a draft. Fix what is yours (the description, an unanswered thread) and watch again with `--until-green`; what only a person can supply (an UNCHECKED row) -> report "Draft, missing:" and the list, stop.
 - `merged` or `closed` -> report it, drop the worktree's database and Redis db, stop. `watched` (another session has it) or `error ...` -> report it, stop.
 
-Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer or a drafted reply listed in the report as waiting for the user to post, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table with its UNCHECKED rows and, for a visible change, the walkthrough video.
+Ready means: the pipeline on the last commit is green, no conflicts with `{{mrTarget}}`, every thread has an answer or a drafted reply listed in the report as waiting for the user to post, no money, KYC, responsible-gambling or authz case or mutation row is UNCHECKED or SURVIVED, and the description holds the AC table with its UNCHECKED rows and, for a visible change, the Evidence table with a clip per AC, or the before and after screenshots when the change only alters how a screen looks.
 
 Keep watching until the MR merges or closes, for as long as the session lives. You never merge it: who approves and who merges is in `docs/agents/forge.md`. A caller that says it watches the MR itself (a headless run) gets the report at `green`, and you stop there; it brings the ticket back through `/ship {{trackerKey}}-XXX`, which lands on 6.
 
