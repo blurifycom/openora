@@ -231,7 +231,8 @@ describe('player races', () => {
       interval: 100,
     });
     await e2e.app.container.get(JOB_QUEUE).enqueue(queue('promo-race-payout'), {});
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    const sentinel = await newRace({ currency: winner.currency });
+    await closeNow(sentinel.id);
 
     const payouts = await payoutRows(race.id);
     expect(payouts).toHaveLength(1);

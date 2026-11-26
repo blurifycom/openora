@@ -45,7 +45,7 @@ export const RoundViewSchema = z.object({
 
 export async function bodyOf(res: Response): Promise<unknown> {
   const text = await res.text();
-  return text === '' ? null : (JSON.parse(text) as unknown);
+  return text === '' ? null : JSON.parse(text);
 }
 
 export const scaled = (amount: string) => `${amount}.000000000000000000`;

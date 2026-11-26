@@ -72,7 +72,7 @@ describe('player launches a game and plays a round', () => {
   });
 
   it.todo(
-    'starting a round whose provider launch fails returns an error and writes no ledger transaction and no round row',
+    'BUG: a provider launch that fails after the stake is debited leaves the stake taken and an active round, with no refund (casino/gaming/service/gaming.service.ts:727-742)',
   );
 
   it('starting a round on an inactive or unknown game is refused and leaves the balance unchanged', async () => {
@@ -243,8 +243,6 @@ describe('player launches a game and plays a round', () => {
     expect(round?.endedAt).toBeInstanceOf(Date);
   });
 
-  it.todo('every caller racing to end the same round is told the settled win amount');
-
   it('ending the same round twice credits the win only once', async () => {
     const bettor = await fundedBettor(e2e);
     const { gameId } = await newGame(e2e);
@@ -274,6 +272,10 @@ describe('player launches a game and plays a round', () => {
     expect(endCallsFor(roundId)).toHaveLength(providerCallsAfterRace);
   });
 
+  it.todo(
+    'BUG: a caller that loses the race to end a round is told a win of 0 instead of the settled amount, because it returns the win read before the payout (casino/gaming/service/gaming.service.ts:830)',
+  );
+
   it('ending a round with a negative or non-numeric win amount is refused and credits nothing', async () => {
     const bettor = await fundedBettor(e2e);
     const { gameId } = await newGame(e2e);
@@ -282,7 +284,8 @@ describe('player launches a game and plays a round', () => {
     for (const invalid of ['-5', 'abc', '1.0000000000000000001']) {
       reportPayoutFor(roundId, invalid);
       const res = await endRoundAs(bettor.client, roundId);
-      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBe(500);
+      expect(ErrorSchema.parse(await bodyOf(res)).code).toBe('INTERNAL_SERVER_ERROR');
     }
 
     expect(await ledgerRowsOf(e2e, bettor.userId, 'win')).toEqual([]);
@@ -313,7 +316,7 @@ describe('player launches a game and plays a round', () => {
     expect(endCallsFor(roundId)).toEqual([]);
   });
 
-  it('rolling back or voiding a round restores the stake exactly once and a repeated rollback changes nothing', async () => {
+  it('rolling back a round restores the stake exactly once and a repeated rollback changes nothing', async () => {
     const bettor = await fundedBettor(e2e);
     const { gameId } = await newGame(e2e);
     const ledger = e2e.app.container.get(LEDGER_API_V1);

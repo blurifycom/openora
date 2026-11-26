@@ -195,27 +195,29 @@ describe('player daily streak', () => {
 
   it('a qualifying bet on the next UTC day advances the streak by one', async () => {
     const bettor = await fundedBettor(e2e);
-    await wager(e2e, bettor, '2');
-    await db()
-      .update(promoPlayerStreak)
-      .set({ lastQualifyingDay: dayOffset(-1) })
-      .where(eq(promoPlayerStreak.userId, bettor.userId));
-    await db()
-      .update(promoStreakDailyWager)
-      .set({ day: dayOffset(-1) })
-      .where(eq(promoStreakDailyWager.userId, bettor.userId));
+    const { gameId } = await newGame(e2e);
+    const midnight = Math.floor(Date.now() / DAY_MS) * DAY_MS;
+    const nextDay = new Date(midnight).toISOString().slice(0, 10);
 
-    await wager(e2e, bettor, '2');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(midnight - 30_000));
+      await startedRound(bettor, gameId, '2');
+      vi.setSystemTime(new Date(midnight + 30_000));
+      await startedRound(bettor, gameId, '2');
 
-    expect(await viewOf(bettor.client)).toMatchObject({
-      current: 2,
-      best: 2,
-      todayWagered: '3.000000000000000000',
-    });
+      expect(await viewOf(bettor.client)).toMatchObject({
+        current: 2,
+        best: 2,
+        todayWagered: '3.000000000000000000',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
     expect(await streakRow(bettor.userId)).toMatchObject({
       current: 2,
       best: 2,
-      lastQualifyingDay: dayOffset(0),
+      lastQualifyingDay: nextDay,
     });
   });
 

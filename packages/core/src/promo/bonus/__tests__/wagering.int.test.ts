@@ -299,7 +299,20 @@ describe('bonus wagering on bets', () => {
     expect(await entryTypes(grantId)).toEqual(['grant', 'stake']);
   });
 
-  it.todo('the stake is taken from bonus funds first and real funds after according to the grant');
+  it('the part of a stake the real balance could not cover is drawn from the grant bonus balance', async () => {
+    const { userId, grantId } = await newGrant({ amount: '100' });
+
+    const outcome = await wager(userId, { stake: '50', fromBonus: '30' });
+
+    expect(outcome).toMatchObject({ ok: true, bonusSpent: '30', bonusBalanceAfter: money('70') });
+    expect((await grantRow(grantId)).bonusBalance).toBe(money('70'));
+    const stake = (await entriesOf(grantId)).find((e) => e.type === 'stake');
+    expect(stake).toMatchObject({
+      bonusAmount: money('-30'),
+      realAmount: money('20'),
+      wageringDelta: money('50'),
+    });
+  });
 
   it('completing the requirement converts the remaining bonus balance to cash once', async () => {
     const { userId, grantId } = await newGrant({ amount: '100', multiplier: '2' });
@@ -374,8 +387,6 @@ describe('bonus wagering on bets', () => {
     expect(unchanged.bonusBalance).toBe(money('100'));
     expect((await entryTypes(grantId)).filter((t) => t === 'reversal')).toHaveLength(1);
   });
-
-  it.todo('a repeated bet with the same round id advances the requirement once');
 
   it('two grants in rollover order each receive the progress they have room for', async () => {
     const userId = randomUUID();
@@ -455,7 +466,7 @@ describe('grant lifecycle jobs', () => {
     expect(eventsFor('promo.bonus.expired', grantId)).toHaveLength(1);
   });
 
-  it('self-exclusion of a player forfeits all of their active grants', async () => {
+  it('forfeiting all grants of a player for self-exclusion closes every active one with that reason', async () => {
     const userId = randomUUID();
     const one = await newGrant({ userId, amount: '100' });
     const two = await newGrant({ userId, amount: '60' });

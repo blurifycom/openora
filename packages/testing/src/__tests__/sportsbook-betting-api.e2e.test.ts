@@ -613,8 +613,6 @@ describe('admin sportsbook operations', () => {
     ).toHaveLength(1);
   });
 
-  it.todo('the promotion report flags a payout out of the usual range for the promotion');
-
   it('a non-admin calling any admin sportsbook route is refused as forbidden', async () => {
     const target: SportsbookPlayer = await fundedPlayer(app(), '100');
     const { betId } = await acceptedBet(app(), target);

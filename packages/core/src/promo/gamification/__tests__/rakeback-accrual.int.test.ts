@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import type { SettledWagerArgs, WagerContext, WagerTrackingArgs } from '@openora/core/contracts';
+import type {
+  ExchangeRateReader,
+  SettledWagerArgs,
+  WagerContext,
+  WagerTrackingArgs,
+} from '@openora/core/contracts';
 import type { DrizzleTx } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../migrate.js';
@@ -14,6 +19,7 @@ import {
   promoStreakConfig,
 } from '../schema/index.js';
 import { RakebackService } from '../service/rakeback.service.js';
+import { unclaimedRakeback } from '../shared/rakeback-totals.js';
 import { isoDate } from '../shared/streak-day.js';
 
 const CURRENCY = 'USD';
@@ -168,10 +174,6 @@ describe('rakeback accrual and payout', () => {
     expect(await accrualsOf(id)).toEqual([]);
   });
 
-  it.todo(
-    'an instant accrual credits the wallet in the same transaction and leaves no claimable row',
-  );
-
   it('a claimable accrual stays open until claimed and a settled round counts once', async () => {
     const id = await rankedPlayer(bronzeId);
     const service = claimMode();
@@ -213,13 +215,26 @@ describe('rakeback accrual and payout', () => {
     expect(await accrualsOf(id)).toEqual([expect.objectContaining({ status: 'reversed' })]);
   });
 
-  it.todo('an accrual with an unavailable payout rate is held and not lost');
-  it.todo('a player closed or suspended is skipped by the automatic payout');
-});
+  it('an accrual in a currency with no rate stays accrued and counts nothing toward the reference total', async () => {
+    const id = await rankedPlayer(bronzeId);
+    const service = claimMode();
+    const noRates: ExchangeRateReader = {
+      getRate: async () => null,
+      convert: async () => null,
+    };
 
-describe('race payout', () => {
-  it.todo('closing a race pays each prize position once to the matching player');
-  it.todo('a race without a bonus records positions and creates no grant');
-  it.todo('a race closed twice pays nothing the second time');
-  it.todo('a position with no player is skipped without failing the close');
+    await inTx((tx) =>
+      service.recordSettledWager(tx, { ...settledArgs(id, '10'), currency: 'EUR' }),
+    );
+    const totals = await unclaimedRakeback(db.drizzle.db, noRates, CURRENCY, id);
+
+    expect(totals).toEqual({
+      unclaimed: [{ currency: 'EUR', amount: '0.500000000000000000', referenceAmount: null }],
+      referenceCurrency: CURRENCY,
+      referenceTotal: '0',
+    });
+    expect(await accrualsOf(id)).toEqual([
+      expect.objectContaining({ currency: 'EUR', status: 'accrued', claimId: null }),
+    ]);
+  });
 });

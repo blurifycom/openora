@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import * as z from 'zod';
-import { LEDGER_API_V1, LedgerV1MoveOutcomeSchema } from '@openora/core/contracts';
+import {
+  JOB_QUEUE,
+  LEDGER_API_V1,
+  LedgerV1MoveOutcomeSchema,
+  queue,
+} from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { user } from '@openora/core/pam/schema/identity';
@@ -99,7 +104,13 @@ async function configureLadder(e2e: WalletE2e) {
   }
 }
 
-async function wager(e2e: WalletE2e, bettor: Bettor, amount: string, gameId?: string) {
+async function wager(
+  e2e: WalletE2e,
+  bettor: Bettor,
+  amount: string,
+  gameId?: string,
+  rtp?: string,
+) {
   const game = gameId ?? (await newGame(e2e)).gameId;
   const vendor = `vendor-${randomUUID().slice(0, 8)}`;
   const betRef = `bet-${randomUUID()}`;
@@ -112,7 +123,7 @@ async function wager(e2e: WalletE2e, bettor: Bettor, amount: string, gameId?: st
       providerRefId: betRef,
       externalRoundId: `round-${randomUUID()}`,
       amount,
-      wager: { product: 'casino' },
+      wager: { product: 'casino', ...(rtp === undefined ? {} : { rtp }) },
     }),
   );
   expect(outcome.status).toBe('applied');
@@ -183,8 +194,6 @@ describe('player rakeback', () => {
     expect(await balanceOf(e2e, bronze.userId, bronze.currency)).toBe(scaled('40'));
     expect(await cashbackRows(e2e, bronze.userId)).toEqual([]);
   });
-
-  it.todo("an unranked player's bets accrue rakeback at the base rate");
 
   it('claiming accrued rakeback credits the wallet once and marks the accruals claimed', async () => {
     const bettor = await bettorWithAccrual(e2e, '10');
@@ -281,10 +290,16 @@ describe('player rakeback', () => {
       .select()
       .from(promoRakebackClaim)
       .where(eq(promoRakebackClaim.userId, distinct.userId));
-    expect(claimRows.length).toBeGreaterThanOrEqual(1);
+    expect(claimRows).toHaveLength(1);
+    expect(
+      await dbOf(e2e)
+        .select()
+        .from(promoRakebackClaim)
+        .where(eq(promoRakebackClaim.userId, shared.userId)),
+    ).toHaveLength(1);
   });
 
-  it('claiming with nothing accrued is refused or returns an empty paid list', async () => {
+  it('claiming with nothing accrued is refused as a conflict and moves no money', async () => {
     const bettor = await fundedBettor(e2e);
 
     const res = await claimWith(bettor.client);
@@ -333,7 +348,42 @@ describe('player rakeback', () => {
     expect((await accrualsOf(e2e, blocked.userId))[0]?.status).toBe('accrued');
   });
 
-  it('a refunded or voided round reverses its accrual', async () => {
+  it('the sweep pays a closed account its unclaimed rakeback without a claim and leaves a suspended one unpaid', async () => {
+    const closed = await bettorWithAccrual(e2e, '10');
+    const suspended = await bettorWithAccrual(e2e, '10');
+    await dbOf(e2e)
+      .update(player)
+      .set({ status: 'closed' })
+      .where(eq(player.userId, closed.userId));
+    await dbOf(e2e)
+      .update(player)
+      .set({ status: 'suspended' })
+      .where(eq(player.userId, suspended.userId));
+
+    await e2e.app.container.get(JOB_QUEUE).enqueue(queue('promo-rakeback-sweep'), {});
+    await vi.waitFor(async () => expect(await cashbackRows(e2e, closed.userId)).toHaveLength(1), {
+      timeout: 20_000,
+      interval: 100,
+    });
+
+    expect(await cashbackRows(e2e, closed.userId)).toEqual([
+      expect.objectContaining({ direction: 'credit', amount: '0.500000000000000000' }),
+    ]);
+    expect(await balanceOf(e2e, closed.userId, closed.currency)).toBe('40.500000000000000000');
+    expect(await accrualsOf(e2e, closed.userId)).toEqual([
+      expect.objectContaining({ status: 'claimed' }),
+    ]);
+    expect(
+      await dbOf(e2e)
+        .select()
+        .from(promoRakebackClaim)
+        .where(eq(promoRakebackClaim.userId, closed.userId)),
+    ).toEqual([expect.objectContaining({ outcome: 'auto_paid' })]);
+    expect(await cashbackRows(e2e, suspended.userId)).toEqual([]);
+    expect((await accrualsOf(e2e, suspended.userId))[0]?.status).toBe('accrued');
+  });
+
+  it('a refunded round reverses its accrual', async () => {
     const bettor = await fundedBettor(e2e);
     const placed = await wager(e2e, bettor, '10');
     expect((await accrualsOf(e2e, bettor.userId))[0]?.status).toBe('accrued');
@@ -383,6 +433,42 @@ describe('player rakeback', () => {
 
     expect(res.status).toBe(401);
     expect((await accrualsOf(e2e, bettor.userId))[0]?.status).toBe('accrued');
+    expect(await cashbackRows(e2e, bettor.userId)).toEqual([]);
+  });
+});
+
+describe('unranked rakeback', () => {
+  let e2e: WalletE2e;
+
+  beforeAll(async () => {
+    e2e = await bootWalletE2e([claimModePlugin]);
+    const res = await e2e.admin.put('/backoffice/promo/streaks/config', {
+      enabled: true,
+      dailyMinWager: '1',
+      eligibleProducts: ['casino'],
+      rakebackMilestones: [{ day: 1, unrankedRatePercent: '2', rankedUpliftPercent: '0' }],
+      fixedRewards: [],
+    });
+    expect(res.status).toBe(200);
+  }, 120_000);
+
+  afterAll(() => closeWalletE2e(e2e));
+
+  it("an unranked player's bet on a live streak accrues the milestone rate on the game's house edge", async () => {
+    const bettor = await fundedBettor(e2e, '50');
+
+    await wager(e2e, bettor, '10', undefined, '0.96');
+    expect(await accrualsOf(e2e, bettor.userId)).toEqual([]);
+    await wager(e2e, bettor, '10', undefined, '0.96');
+
+    expect(await accrualsOf(e2e, bettor.userId)).toEqual([
+      expect.objectContaining({
+        status: 'accrued',
+        basis: 'margin',
+        amount: '0.008000000000000000',
+        stake: scaled('10'),
+      }),
+    ]);
     expect(await cashbackRows(e2e, bettor.userId)).toEqual([]);
   });
 });

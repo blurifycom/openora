@@ -43,7 +43,7 @@ import {
   parseAdminGrant,
   placeBet,
   setWeights,
-  TR_IP,
+  LI_IP,
   uniqueKey,
   waitForBankedDeposit,
   waitForGrant,
@@ -272,29 +272,29 @@ describe('player opts in and receives a deposit bonus', () => {
     expect(visible.find((o) => o.key === active.key)).not.toHaveProperty('terms');
 
     const blocked = await e2e.admin.post('/compliance/geo-rules', {
-      countryCode: 'TR',
+      countryCode: 'LI',
       action: 'block',
     });
     expect(blocked.status).toBe(200);
     try {
-      expect(await listPublicOffers(e2e, TR_IP)).toEqual([]);
+      expect(await listPublicOffers(e2e, LI_IP)).toEqual([]);
       expect((await listPublicOffers(e2e, DE_IP)).map((o) => o.key)).toContain(active.key);
     } finally {
       const rules = z
         .array(CountryRuleSchema)
         .parse(await bodyOf(await e2e.admin.get('/compliance/country-rules')));
       const reopened = await e2e.admin.put('/compliance/country-rules', {
-        countryCode: 'TR',
+        countryCode: 'LI',
         blacklisted: false,
         redirectIp: false,
         mirrorUrl: null,
         kycRequired: true,
         confirm: true,
-        expectedUpdatedAt: rules.find((rule) => rule.countryCode === 'TR')?.updatedAt ?? null,
+        expectedUpdatedAt: rules.find((rule) => rule.countryCode === 'LI')?.updatedAt ?? null,
       });
       expect(reopened.status).toBe(200);
     }
-    expect((await listPublicOffers(e2e, TR_IP)).map((o) => o.key)).toContain(active.key);
+    expect((await listPublicOffers(e2e, LI_IP)).map((o) => o.key)).toContain(active.key);
   });
 });
 
@@ -480,7 +480,9 @@ describe('admin manages offers, weights and forfeits', () => {
     expect(await auditFor(e2e, 'promo.offer.created', original.id)).toHaveLength(1);
   });
 
-  it.todo('updating the terms of an offer that already has grants is refused as claimed');
+  it.todo(
+    'GAP: updating the terms of an offer that already has grants is not refused, only a currency change is (promo/bonus/service/offer.service.ts:136-152)',
+  );
 
   it('changing the currency of an offer players have opted in to is refused as claimed', async () => {
     const player = await newBonusPlayer(e2e);

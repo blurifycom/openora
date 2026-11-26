@@ -32,7 +32,7 @@ import {
   type WalletE2e,
 } from './wallet.js';
 
-export const TR_IP = '203.0.113.30';
+export const LI_IP = '203.0.113.40';
 export const DE_IP = '203.0.113.10';
 export const BET_PROVIDER = 'bonus-e2e-provider';
 
@@ -54,7 +54,7 @@ export const money = (amount: string) => `${amount}.${'0'.repeat(18)}`;
 
 export async function bodyOf(res: Response): Promise<unknown> {
   const text = await res.text();
-  return text === '' ? null : (JSON.parse(text) as unknown);
+  return text === '' ? null : JSON.parse(text);
 }
 
 export const uniqueKey = (prefix = 'e2e-offer') => `${prefix}-${randomUUID()}`;
