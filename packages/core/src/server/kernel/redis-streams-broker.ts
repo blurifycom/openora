@@ -77,22 +77,22 @@ type ConsumerLoop = {
   done: Promise<void>;
 };
 
-function streamKey(topic: string): string {
+export function streamKey(topic: string): string {
   return STREAM_PREFIX + topic;
 }
 
-function dlqKey(streamKeyName: string): string {
+export function dlqKey(streamKeyName: string): string {
   return DLQ_PREFIX + streamKeyName.slice(STREAM_PREFIX.length);
 }
 
 // A stream id is `<ms since epoch>-<seq>`, stamped by Redis on XADD.
-function streamIdTime(id: string): number {
+export function streamIdTime(id: string): number {
   return Number(id.split('-')[0]);
 }
 
-function streamIdAfter(a: string, b: string): boolean {
-  const [aTime = 0, aSeq = 0] = a.split('-').map(Number);
-  const [bTime = 0, bSeq = 0] = b.split('-').map(Number);
+export function streamIdAfter(a: string, b: string): boolean {
+  const [aTime = 0n, aSeq = 0n] = a.split('-').map(BigInt);
+  const [bTime = 0n, bSeq = 0n] = b.split('-').map(BigInt);
   return aTime > bTime || (aTime === bTime && aSeq > bSeq);
 }
 
@@ -100,7 +100,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function isBusyGroupError(err: unknown): boolean {
+export function isBusyGroupError(err: unknown): boolean {
   return err instanceof Error && err.message.includes('BUSYGROUP');
 }
 

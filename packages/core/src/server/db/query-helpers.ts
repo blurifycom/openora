@@ -23,10 +23,16 @@ export function pageToOffset(page: number, limit: number) {
 // services pre-check for slug clashes to return a typed 409, and translate a 23505
 // from the unique index into the same error to close the concurrent-insert race.
 export function isUniqueConstraintViolation(e: unknown): boolean {
-  if (typeof e !== 'object' || e === null || !('code' in e)) {
-    return false;
+  let current = e;
+  const seen = new Set<unknown>();
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if ('code' in current && current.code === '23505') {
+      return true;
+    }
+    current = 'cause' in current ? current.cause : null;
   }
-  return e.code === '23505';
+  return false;
 }
 
 // The violated unique index for a 23505 (pg exposes it as `constraint`), so a

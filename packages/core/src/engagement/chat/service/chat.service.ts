@@ -12,6 +12,7 @@ import {
   mapConcurrent,
   moderateContent,
   pageToOffset,
+  isUniqueConstraintViolation,
   withAdvisoryXactLock,
   withAdvisoryXactLocks,
   type DrizzleDb,
@@ -134,7 +135,7 @@ const MENTION_USERNAME_PATTERN = /(?<![\w.])@([a-zA-Z0-9_]{2,32})/g;
 const MAX_MENTIONS_PER_MESSAGE = 20;
 const MENTION_RESOLVE_CONCURRENCY = 5;
 
-function parseMentionedUsernames(content: string): string[] {
+export function parseMentionedUsernames(content: string): string[] {
   const usernames = new Set<string>();
   for (const match of content.matchAll(MENTION_USERNAME_PATTERN)) {
     const username = match[1];
@@ -150,7 +151,7 @@ function parseMentionedUsernames(content: string): string[] {
 
 // A staff member stays out of a room's roster unless they own or created it, or the viewer is
 // staff too. An account the identity service does not know is listed, as "Unknown player".
-function visibleInRoster(
+export function visibleInRoster(
   member: { userId: User['id']; role: string },
   accounts: Map<string, Account>,
   { canSeeAdminUsers, creatorId }: { canSeeAdminUsers: boolean; creatorId: User['id'] | null },
@@ -326,7 +327,7 @@ function messagesInRoom(roomId: Uuid | null) {
   return roomId === null ? isNull(chatMessage.roomId) : eq(chatMessage.roomId, roomId);
 }
 
-function gateContent(content: string): string {
+export function gateContent(content: string): string {
   const result = moderateContent(content);
   if (!result.ok) {
     throw new ChatMessageBlockedError();
@@ -375,7 +376,7 @@ function configurationSettings(record: typeof chatRoomConfiguration.$inferSelect
 }
 
 // The restriction that lasts longest decides when a player is let back in; null is permanent.
-function latestExpiry(expiries: (Date | null)[]) {
+export function latestExpiry(expiries: (Date | null)[]) {
   const times = expiries.flatMap((expiry) => (expiry ? [expiry.getTime()] : []));
   return times.length === 0 || times.length < expiries.length ? null : new Date(Math.max(...times));
 }
@@ -452,13 +453,6 @@ function generatePrivateRoomSlug(joinCode: string): string {
     slug = `${PRIVATE_ROOM_SLUG_PREFIX}${randomUUID()}`;
   }
   return slug;
-}
-
-function isUniqueConstraintViolation(e: unknown): boolean {
-  if (typeof e !== 'object' || e === null || !('code' in e)) {
-    return false;
-  }
-  return e.code === '23505';
 }
 
 export class ChatService {
