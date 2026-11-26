@@ -17,7 +17,12 @@ const LEDGER_RECORD_SQL = appendOnlyTableSql('wallet_transaction', {
     // A deferred stake flips to counted when its round settles.
     'turnover_state',
   ],
-  setOnceColumns: ['balance_after', 'real_share', 'reversed_transaction_id', 'turnover_contribution'],
+  setOnceColumns: [
+    'balance_after',
+    'real_share',
+    'reversed_transaction_id',
+    'turnover_contribution',
+  ],
   // A finished row cannot be reopened: a rejected withdrawal put back to `pending` would be
   // rejected and refunded a second time.
   terminal: {
