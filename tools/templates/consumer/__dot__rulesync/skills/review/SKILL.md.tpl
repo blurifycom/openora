@@ -58,7 +58,7 @@ A pull request is reviewed round after round; re-reading the whole change each r
 
 1. Read `.claude/reviews/<pr>.json` in the main checkout (`{ "sha", "base", "verdict", "findings": [...], "dimensions": [...] }`; no PR number: key it by branch name). Absent and a PR number given: find the latest note carrying `<!-- review:sha=<sha> -->` per `docs/agents/forge.md` and take its SHA; its findings are the inline threads still unresolved.
 2. Found: run the precheck with `--since <sha>`. `mode incremental` narrows `REVIEWABLE:`, its line counts, `PRECHECK:`, and `DOMAIN-HIT:` to what changed since that review (base-branch merges excluded). A `NOTE: --since ... not an ancestor` (force push, rebase) means a full review - say so.
-3. Split the prior findings: those on a file in the new `REVIEWABLE:` set go to the owning reviewer to re-verify; the rest carry over unchanged.
+3. Split the prior findings: those on a file in the new `REVIEWABLE:` set go to the owning reviewer to re-verify; the rest carry over unchanged. An open finding whose owning lens the new roster leaves out adds that lens for this round, so a fix is never left unchecked.
 
 ## 2b. Collect task context (mandatory - this is the spec axis)
 
@@ -149,7 +149,7 @@ Applies to every change that crosses a layer: an oRPC route, a service, a Drizzl
 
 ## 4. Dimensions - all seven, every review
 
-Every review covers every dimension below, whatever the diff touches. Relevance is decided by looking, not by guessing from file names: a dimension that does not apply still runs its search and reports `n/a` with what it checked. Owners - never `general-purpose`:
+Every review covers every dimension below, whatever the diff touches. Which lens runs is the precheck roster's call; within a lens, relevance is decided by looking: a dimension that does not apply still runs its search and reports `n/a` with what it checked. Owners - never `general-purpose`:
 
 | Dimension     | Owner                                     | Covers                                                                                  |
 | ------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -165,7 +165,7 @@ Every review covers every dimension below, whatever the diff touches. Relevance 
 
 Reviewers split by what they read, never by checklist. An agent's cost is its tool calls times its context: a checklist adds a few thousand tokens, while two reviewers reading the same files pay for those files twice.
 
-**Roster from the precheck, never by judgment.** Spawn exactly the lenses the `ROSTER:` lines name; the same diff always spawns the same reviewers. A lens the roster leaves out still has its dimensions reported: you write each one as `DIMENSION: <name> - n/a - ROSTER: <its reason>`. `ROSTER: none` (docs, config or copy only) spawns no reviewer: you cover every dimension yourself from the precheck and the diff. `ROSTER-ASK: risk` gets one classifier call before any reviewer: an `Explore` agent on Haiku, at most 5 tool calls, given the `ROSTER-ASK:` and `DOMAIN-HIT:` lines and nothing else. It opens each hit in context and answers `risk: yes - <file:line> <why>` or `risk: no - <why>`; `yes` adds the risk lens, `no` becomes the `n/a` reason of `security` and `compliance`. Under `--ci` there is no classifier: `ROSTER-ASK` adds the risk lens. You may add a lens after reading the diff (a component that renders untrusted HTML, a hook that moves money), never drop one the roster names; say why in the report.
+**Roster from the precheck, never by judgment.** Spawn exactly the lenses the `ROSTER:` lines name; the same diff always spawns the same reviewers. A lens the roster leaves out still has its dimensions reported: you write each one as `DIMENSION: <name> - n/a - ROSTER: <its reason>`. `ROSTER: none` (docs or copy only) spawns no reviewer: you cover every dimension yourself from the precheck and the diff and report each as `ran` with what you checked. `ROSTER-ASK: risk` gets one classifier call before any reviewer: an `Explore` agent on Haiku, at most 5 tool calls, given the `ROSTER-ASK:` and `DOMAIN-HIT:` lines, the base ref and `git diff <base>...HEAD` of each hit file. It opens each hit in context and answers `risk: yes - <file:line> <why>` or `risk: no - <why>`; `yes` adds the risk lens, `no` becomes the `n/a` reason of `security` and `compliance`. Under `--ci` there is no classifier: `ROSTER-ASK` adds the risk lens. You may add a lens after reading the diff (a component that renders untrusted HTML, a hook that moves money), never drop one the roster names; say why in the report.
 
 ## 5. Allocate to `--agents N`
 
@@ -183,7 +183,7 @@ Reviewers split by what they read, never by checklist. An agent's cost is its to
 
 Spawn all reviewers in a SINGLE message (parallel). Pass each, and nothing more:
 
-- its focus, mode, budget, and the `DIMENSION:` names it owns (§4);
+- its focus, budget, and the `DIMENSION:` names it owns (§4);
 - its `REVIEWABLE:` lines, copied verbatim from the precheck (pre-grouped - reviewers never re-scope; never hand-typed paths or globs);
 - `quality-reviewer`: every `PRECHECK:` line; `risk`: the `DOMAIN-HIT:` lines of both domains;
 - the prior findings on its files to re-verify (§2a);
@@ -204,7 +204,7 @@ Every reviewer applies this before returning; re-apply it yourself when synthesi
 
 Dedup by `file:line`, order BLOCK -> WARN -> INFO.
 
-**Coverage gate first.** Collect one `DIMENSION:` line per dimension in §4 - from each reviewer's output, plus `rollout` and `spec` from you. A reviewer that returned no `DIMENSION:` line, or an `n/a` with no stated check, did not cover it: resume that reviewer once asking for the missing line; if it still has none, write the line as `DIMENSION: <name> - missing - <reviewer> returned no coverage` and the verdict is CHANGES REQUESTED. A `partial` line names the files the reviewer did not reach: list them in the report; `partial` on `security` or `compliance` forbids APPROVED - resume that reviewer with only the unreached files.
+**Coverage gate first.** Collect one `DIMENSION:` line per dimension in §4 - from each reviewer's output, plus `rollout` and `spec` from you, plus the `n/a - ROSTER: <reason>` lines you write for a lens the roster left out (the precheck reason is their stated check). A reviewer that returned no `DIMENSION:` line, or an `n/a` with no stated check, did not cover it: resume that reviewer once asking for the missing line; if it still has none, write the line as `DIMENSION: <name> - missing - <reviewer> returned no coverage` and the verdict is CHANGES REQUESTED. A `partial` line names the files the reviewer did not reach: list them in the report; `partial` on `security` or `compliance` forbids APPROVED - resume that reviewer with only the unreached files.
 
 **Prior findings.** One `PRIOR:` line each: `fixed`, `still open`, or `obsolete` from the reviewer that re-verified it, `carried` for the rest. `still open` and `carried` findings count toward the verdict like new ones.
 

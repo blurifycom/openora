@@ -23,7 +23,7 @@ First time on the platform? Let it onboard you - it interviews you for requireme
 It runs on its own and stops only for a question or a blocker:
 
 1. `planner` reads the input and the code it touches and returns a plan with test cases, or the questions only you can answer. Answer them and run `/ship` again.
-2. `builder` (or `module-author` / `plugin-author`) builds it in its own worktree, `tester` drives and attacks it, then `security-reviewer` and `quality-reviewer` review it. Failures go back to the builder, up to three rounds.
+2. `builder` (or `module-author` / `plugin-author`) builds it in its own worktree, `tester` drives and attacks it, then the reviewers the precheck's roster names review it. Failures go back to the builder, up to three rounds.
 3. It pushes the branch and opens the PR. Run `/ship OSS-123` again later and it fixes red CI or answers new review comments.
 
 Want to approve the plan and the push yourself? `/ship OSS-123 --ask`.

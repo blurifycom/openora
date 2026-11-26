@@ -287,7 +287,7 @@ test('NEW-ENV lists only env vars absent at the base ref, once each', () => {
 });
 
 test('ROSTER spawns only the lenses the diff needs', () => {
-  for (const [name, files, want, unwanted] of [
+  for (const [name, files, want, unwanted, baseFiles] of [
     [
       'docs',
       { 'docs/guide.md': 'notes\n' },
@@ -327,8 +327,73 @@ test('ROSTER spawns only the lenses the diff needs', () => {
       ['ROSTER-ASK: risk - '],
       ['ROSTER: quality', 'ROSTER: risk', 'ROSTER: none'],
     ],
+    [
+      'apidoc',
+      { 'docs/api/games.md': 'notes\n' },
+      ['ROSTER: none - '],
+      ['ROSTER: quality', 'ROSTER: risk'],
+    ],
+    [
+      'deps',
+      { 'package.json': '{"dependencies":{"left-pad":"1.0.0"}}\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'gitlab',
+      { '.gitlab-ci.yml': 'stages: [build]\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'ghwf',
+      { '.github/workflows/ci.yml': 'on: push\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'envex',
+      { '.env.example': 'FOO=\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'nginx',
+      { 'apps/infra/docker/nginx.conf.template': 'server {}\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'nextcfg',
+      { 'apps/web/next.config.ts': 'export default {};\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'action',
+      { 'apps/web/src/app/send.ts': "'use server';\nexport const send = 1;\n" },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'hookkw',
+      { 'apps/web/src/hooks/use-login.ts': 'export const token = 1;\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'unguard',
+      { 'apps/web/src/shell/components/gate.tsx': 'export const Gate = () => null;\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - security guard line removed in '],
+      ['ROSTER-ASK', 'ROSTER: none'],
+      {
+        'apps/web/src/shell/components/gate.tsx':
+          'export const Gate = () => null;\nif (!password) throw new Error();\n',
+      },
+    ],
   ]) {
     git('checkout', '-q', '-b', `roster-${name}-base`, 'dev');
+    if (baseFiles) {commit(`${name}-base`, baseFiles);}
     git('checkout', '-q', '-b', `roster-${name}`);
     commit(name, files);
     const out = precheck('--base', `roster-${name}-base`, '--head', `roster-${name}`);

@@ -14,6 +14,7 @@ import { posix } from 'node:path';
 
 const MAX_LINES_PER_CHECK = 25;
 const MAX_HITS_PER_DOMAIN = 20;
+const E2E_PATH = /(^|\/)e2e\//;
 const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 
 const die = (message) => {
@@ -451,6 +452,7 @@ const DOMAIN_PATTERNS = {
   ],
 };
 const domainHitFiles = new Map();
+const unseenHits = [];
 for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
   const patterns = [...defaults, ...(config.domainPatterns?.[domain] ?? [])].map(
     (source) => new RegExp(source, 'i'),
@@ -473,6 +475,10 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       }),
     ),
   ];
+  const removedHit = hits.find((hit) => hit.endsWith('(removed)') && !E2E_PATH.test(hit));
+  if (removedHit) unseenHits.push(`${domain} guard line removed in ${removedHit.split(' - ')[0]}`);
+  if (hits.length > MAX_HITS_PER_DOMAIN)
+    unseenHits.push(`${domain} hits ${hits.length} past the list cap`);
   domainHitFiles.set(
     domain,
     hits.map((hit) => hit.split(' - ')[0].replace(/:\d+$/, '')),
@@ -497,11 +503,19 @@ const BACKEND_PATHS = [
   /\.sql$/,
   /(^|\/)(\.env|env\.ts|Dockerfile|package\.json$)/,
   /(^|\/)\.github\/workflows\//,
+  /(^|\/)(\.gitlab-ci\.ya?ml|\.gitlab\/ci\/.*|(docker-)?compose[^/]*\.ya?ml|[^/]*nginx[^/]*|\.npmrc|pnpm-workspace\.yaml|\.rulesync\/sync\.json)$/,
+  /(^|\/)(next\.config|middleware|instrumentation)\.[cm]?[jt]s$/,
+  /\.html$/,
 ];
+const DOC_FILE = /\.(md|mdx|txt)$/;
+const SERVER_MARK = /^\s*['"]use server['"]|['"]server-only['"]/;
+const serverMarked = new Set(
+  added.filter(({ text }) => SERVER_MARK.test(text)).map(({ file }) => file),
+);
 const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.[cm]?[jt]s$/];
 
-const E2E_PATH = /(^|\/)e2e\//;
-const isBackend = (path) => BACKEND_PATHS.some((re) => re.test(path));
+const isBackend = (path) =>
+  serverMarked.has(path) || (!DOC_FILE.test(path) && BACKEND_PATHS.some((re) => re.test(path)));
 const isLogic = (path) => !E2E_PATH.test(path) && FRONTEND_LOGIC_PATHS.some((re) => re.test(path));
 
 // A security keyword in a component or a layout ("session" in a skeleton, an `href`) says little;
@@ -564,6 +578,8 @@ const roster = () => {
   }
   if (/^(high|critical)\b/.test(risk)) {
     rows.push(`ROSTER: risk - RISK ${risk}`);
+  } else if (unseenHits.length > 0) {
+    rows.push(`ROSTER: risk - ${unseenHits[0]}`);
   } else if (keywordFiles.length > 0) {
     rows.push(
       `ROSTER-ASK: risk - domain keywords in ${keywordFiles.length} files outside server and logic code, first ${keywordFiles[0]}`,
