@@ -46,6 +46,7 @@ export type DirectAuditAction =
   | 'wallet.deposit.failed'
   | 'wallet.deposit.below_minimum'
   | 'wallet.withdrawal.auto_approved'
+  | 'wallet.withdrawal.kyc_required'
   | 'wallet.withdrawal.outcome_unknown'
   | 'wallet.auto_withdrawal_rule.set'
   | 'wallet.auto_withdrawal_rule.deleted'
