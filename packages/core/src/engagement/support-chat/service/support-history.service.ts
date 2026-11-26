@@ -92,7 +92,7 @@ function withoutRedeliveries(changes: readonly EmailChange[]) {
  * earlier window by that much, and a clock running behind whose stamps still follow every earlier
  * one, which shifts the bounds by the lag.
  */
-function buildEmailWindows({
+export function buildEmailWindows({
   currentEmail,
   registeredEmail,
   registeredAt,
@@ -202,7 +202,7 @@ const changedAtOf = (after: Record<string, unknown> | null) => {
 const emailOf = (side: Record<string, unknown> | null) =>
   typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
 
-const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
+export const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
   const changedAt = changedAtOf(after);
   return {
     before: emailOf(before),

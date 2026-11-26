@@ -16,7 +16,7 @@ export type SystemCardOutcome = 'inserted' | 'updated' | 'stale' | 'conflict' | 
  * record id, so a row that is not this actor's system card in this room is someone else's
  * message: it is refused, never overwritten. Same card: only a higher version applies.
  */
-function resolveSystemCardWrite(
+export function resolveSystemCardWrite(
   stored: StoredCard,
   incoming: Pick<SystemCardUpsert, 'roomId' | 'actorId' | 'version'>,
 ): 'updated' | 'stale' | 'conflict' {
