@@ -37,7 +37,7 @@
     ]
   },
   "endpoints": {
-    "runtimeTs": "^(apps/api/src|packages/core/src|packages/[a-z0-9-]+-contract)/.*\\.ts$",
+    "runtimeTs": "^(apps/api/src|packages/core/src)/.*\\.ts$",
     "contracts": [
       {
         "contract": "^(packages/core/src/.*)/contract/[^/]+\\.ts$",
@@ -228,7 +228,7 @@
     "trigger": "^\\.github/workflows/"
   },
   "evidence": {
-    "uiPaths": ["^packages/react/", "^packages/core/src/admin-console/"]
+    "uiPaths": ["^packages/core/src/react/", "^packages/core/src/admin-console/"]
   },
   "reasons": {
     "Consumer impact": "no public surface changed",

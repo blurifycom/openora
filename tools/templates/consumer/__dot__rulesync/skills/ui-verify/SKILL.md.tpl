@@ -4,7 +4,7 @@ targets: ['*']
 description: >
   Verify a UI change in a real browser with the global `playwright-cli`: cheap checks first,
   then four screenshots per changed screen read for spacing, overlap, cut text and contrast,
-  then one walkthrough video for the PR. Use after any change to a page, component, style or
+  then one clip per acceptance criterion for the PR. Use after any change to a page, component, style or
   player/operator flow, on "check it looks right", "verify the UI", "does it render", "take a
   screenshot", "record a video", and to reproduce a UI bug before fixing it.
 claudecode:
@@ -73,58 +73,48 @@ playwright-cli -s=m screenshot --hires --filename=/tmp/ui-verify/<screen>-mobile
 # no --config, resize 1440 900, no --hires
 ```
 
-Keep the four: they become the matrix at the end of the walkthrough video (below), never
-separate uploads.
+Keep the four as your own layout check: they are not uploaded, unless the change is look-only,
+where the before and after shots go side by side in the description.
 
 ## Video evidence
 
-One walkthrough video per PR: forges rate-limit uploads, and one video with chapters is easier to
-watch than a row of players. Last, once, on the final commit after the tests are green and review
-is clean (`ship` step 4b): a clip taken earlier is thrown away by the next fix round. One clip per
-acceptance criterion (`docs/standards/testing.md`), recorded on the local stack in the AC's main
-viewport (mobile for a player screen, desktop for an operator one), no theme switch: themes and
-sizes come from the four shots above. The one early clip is a fix's "before", taken when the bug
-is reproduced; its "after" twin comes here. Never read a video back.
+One clip per acceptance criterion, each the whole flow of that AC in one take, from the screen the
+user starts on to the outcome the AC names, never a few seconds of the end state. Last, once, on the
+final commit after the tests are green and review is clean (`ship` step 4b): a clip taken earlier is
+thrown away by the next fix round. Record on the local stack in the AC's main viewport (mobile for a
+player screen, desktop for an operator one), no theme switch: themes and sizes come from the four
+shots above. A fix also gets a Before clip of the same flow, recorded on the base branch. Never read
+a video back.
 
 ACs a spec drives come first: every spec that drives one, new or existing, in one run with video
 on (the repo's record switch, or `test.use({ video: 'on' })`); each lands in
 `test-results/<test>/video.webm`; copy it to `/tmp/ui-verify/<ac>-<slug>.webm`, since the next run
-wipes `test-results/`. Only an AC no spec drives gets `playwright-cli`. Each clip is the AC's whole
-flow in one take, from the screen the user starts on to the outcome. `video-show-actions` prints every
-typed value on screen, so log in first (`state-load` a saved login) or type a password before
-`video-show-actions`, never after:
+wipes `test-results/`. Only an AC no spec drives gets `playwright-cli`. Use test accounts only,
+never real user data. A login is never on camera: `state-load` a saved login, or type any secret,
+before `video-start`. `video-show-actions` prints every typed value on screen, so nothing secret is
+typed after it:
 
 ```bash
 playwright-cli -s=v resize 390 844        # 1440 900 for an operator screen
+playwright-cli -s=v state-load <saved-login>.json
 playwright-cli -s=v video-start /tmp/ui-verify/ac1-<slug>.webm
 playwright-cli -s=v video-show-actions
 # drive the AC ... until its outcome is on screen
 playwright-cli -s=v video-stop
 ```
 
-Join them with `join-video.mjs` (needs `ffmpeg`): a manifest lists the clips, then the four shots
-of every changed screen, in order; each entry gets a 1 s title card, all is fitted to 1440x900,
-and the script prints the chapter list. Paths are absolute or relative to the manifest.
-
-```json
-[
-  { "title": "AC1: <criterion in a few words>", "clip": "/abs/path/video.webm" },
-  { "title": "Matrix: <screen>, mobile, dark", "image": "/tmp/ui-verify/<screen>-mobile-dark.png" }
-]
-```
-
-`node .claude/skills/ui-verify/join-video.mjs manifest.json <ticket>-walkthrough.mp4`. Record
-test accounts only, never real user data; blur any such part of a shot before joining, a clip
-cannot be blurred. Upload the one file as `docs/agents/forge.md` says and embed it in a "Video"
-section with the chapter list under it. After a fix to an open PR, record again only the ACs it
-touched, take again the shots of every screen it changed, and join again.
+Upload each clip as `docs/agents/forge.md` says and embed it in its cell of the Evidence table
+(`Flow | Before | Now | AC`, one row per AC). An AC with no visible flow still gets its row, with
+sample request/response output in the Now cell. A still with real user data is blurred before
+upload; a clip cannot be blurred. After a fix to an open PR, record again only the ACs it touched
+and replace those cells.
 
 ## Report
 
 One line per check: `PASS|FAIL - <check> - rung <n> - expected <x>, got <y> - <artifact path>`,
 plus the failure detail for each FAIL. A pixel claim neither a measurement nor the shot can
-settle is `UNSURE - <check> - <what is ambiguous> - <png path>`, never a guess. Return every shot path, the
-walkthrough path and its chapter list.
+settle is `UNSURE - <check> - <what is ambiguous> - <png path>`, never a guess. Return every shot path, and one clip
+path per AC and per Before cell.
 
 ## Bugs
 

@@ -54,7 +54,7 @@ Promotion follows `feature -> dev -> stage -> tag`.
 6. Run `pnpm verify`.
 7. Report the commit SHA and stop for explicit per-action push confirmation. Under `/ship` without `--ask`, the invocation is that confirmation for its branch.
 8. Push only after that confirmation.
-9. Reuse an existing matching PR if present; otherwise read the template from freshly fetched `origin/dev`, not the checkout (`git fetch origin dev && git show FETCH_HEAD:.github/pull_request_template.md`; a stacked or stale branch still carries an older one), fill it as a review pack: the 14 slots in order, `N/A: <reason>` where one does not apply, the skeleton printed by the `pr-description` skill from the diff, the schema diff and real spans, never from memory, then create the PR with `gh pr create --draft`.
+9. Reuse an existing matching PR if present; otherwise read the template from freshly fetched `origin/dev`, not the checkout (`git fetch origin dev && git show FETCH_HEAD:.github/pull_request_template.md`; a stacked or stale branch still carries an older one), fill it as a review pack: the 14 slots in order, `N/A: <reason>` where one does not apply, the skeleton printed by the `pr-description` skill from the diff when installed (else by hand in the same shapes), the schema diff and real spans, never from memory, then create the PR with `gh pr create --draft`.
 10. Report the PR URL.
 
 ### Public-record rules

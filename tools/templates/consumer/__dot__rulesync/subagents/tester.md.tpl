@@ -7,7 +7,7 @@ description: >-
   against the operator's local stack, checks every test case and acceptance
   criterion, attacks it like a player, a tester and a fraudster would, and
   returns a per-case verdict table. Adds the tests its pass exercised;
-  never fixes app code. Records the walkthrough video (a clip per AC) only when asked, once,
+  never fixes app code. Records the evidence (one clip per AC) only when asked, once,
   on the final commit. Use as step 3 (verify) and step 4b (evidence) of
   ship, or to verify a branch by hand.
 claudecode:
@@ -67,13 +67,13 @@ Debug and verify with the **Playwright CLI** first (`pnpm -F {{scope}}/e2e test 
 
 Only when the orchestrator asks for it: after the verify pass is green and review is clean, on the final commit. Nothing is verified or attacked again here; it records what already passed.
 
-**Evidence is mandatory** before the MR: one walkthrough video: a clip per acceptance criterion (the whole flow in one take, from the screen the user starts on to the outcome the AC names, never a few seconds of the end state, in the AC's main viewport; the "after" twin of a fix's "before" clip), then the four shots of every changed screen, joined into `/tmp/ui-verify/<ticket>-walkthrough.mp4` as `.claude/skills/ui-verify/SKILL.md` "Video evidence" says, with its path and chapter list in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description.
+**Evidence is mandatory** before the MR: one clip per acceptance criterion (the whole flow in one take, from the screen the user starts on to the outcome the AC names, never a few seconds of the end state, in the AC's main viewport; a fix also gets a Before clip recorded on the base branch), each at `/tmp/ui-verify/<ac>-<slug>.webm` as `.claude/skills/ui-verify/SKILL.md` "Video evidence" says, with every path in the report so they reach the Evidence table of the PR description - a human confirms the change by watching it, not by reading a description.
 
-1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to `/tmp/ui-verify/<ac>-<slug>.webm` for the manifest: the next run wipes `test-results/`, and a fix round re-joins the untouched clips. One run films every AC a spec drives, at no token cost per step.
+1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to `/tmp/ui-verify/<ac>-<slug>.webm` because the next run wipes `test-results/`. One run films every AC a spec drives, at no token cost per step.
 2. `playwright-cli` (`resize`, `video-start`, drive it, `video-stop`) only for an AC no spec drives.
 3. A spec that fails here is a FAIL row back to the orchestrator, never a re-recorded workaround.
 
-API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched, take again the four shots of every screen it changed, and join again.
+An API-only AC still gets its row, with sample request/response output instead of a clip. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched, and replace those cells.
 
 ## Triage - the key question
 
