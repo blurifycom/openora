@@ -138,6 +138,14 @@ describe('makeLoginSecurityState', () => {
     ).toBe(8);
   });
 
+  it('reports one attempt one under the maximum and none at the maximum', () => {
+    const remaining = (failedLoginAttempts: number) =>
+      makeLoginSecurityState({ failedLoginAttempts, lockoutUntil: null, nowMs: NOW })
+        .attemptsRemaining;
+    expect(remaining(4)).toBe(1);
+    expect(remaining(5)).toBe(0);
+  });
+
   it('never reports negative attempts remaining', () => {
     expect(
       makeLoginSecurityState({ failedLoginAttempts: 9, lockoutUntil: null, nowMs: NOW })

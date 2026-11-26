@@ -159,7 +159,7 @@ describe('withdrawal fee', () => {
     expect(withdrawalFeeFor(usdtAssets, '100', 'USDT', 'BEP20')).toBe('0.3');
   });
 
-  it('returns zero when the asset has no fee', () => {
+  it('returns no fee (null) when the asset has no fee or a zero fee', () => {
     const trc20 = { network: 'TRC20', minWithdrawal: '1', withdrawalEnabled: true };
     const noFee = [trc20];
     const zeroFee = [{ ...trc20, withdrawalFee: '0.000' }];
@@ -229,7 +229,7 @@ const depositRows = [
 ];
 
 describe('deposit minimum', () => {
-  it.todo('refuses a zero amount whatever the floor');
+  it.todo('BUG: refuses a zero amount whatever the floor');
 
   it('refuses an amount below the minimum of the event network row', () => {
     expect(depositFloor(depositRows, 'erc20')?.minDeposit).toBe('10');
@@ -323,7 +323,7 @@ describe('reference value conversion', () => {
     expect(moneyScaleBy('7', '1')).toBe('7.000000000000000000');
   });
 
-  it.todo('keeps the rate and timestamp on the reference snapshot of the ledger row');
+  it.todo('GAP: keeps the rate and timestamp on the reference snapshot of the ledger row');
 
   it('falls back to the configured default reference currency, upper-cased, when none is set', () => {
     expect(resolveWalletReferenceCurrency(undefined)).toBe('USD');
@@ -331,6 +331,6 @@ describe('reference value conversion', () => {
   });
 
   it.todo(
-    'chooses the deposit-limit currency, else the wager-limit currency, else the default as the reference currency',
+    'GAP: chooses the deposit-limit currency, else the wager-limit currency, else the default as the reference currency',
   );
 });

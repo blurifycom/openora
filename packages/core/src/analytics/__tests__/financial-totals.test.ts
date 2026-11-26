@@ -73,6 +73,8 @@ describe('totals per currency', () => {
     expect(totals.find((row) => row.currency === 'EUR')?.netDeposits).toBe('0');
   });
 
+  it.todo('GAP: net is deposits minus withdrawals per currency');
+
   it('an empty summary produces no totals', () => {
     expect(totalsPerCurrency(emptySummary)).toEqual([]);
   });

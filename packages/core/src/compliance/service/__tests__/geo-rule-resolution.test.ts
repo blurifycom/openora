@@ -8,6 +8,7 @@ import {
 } from '../compliance.service.js';
 
 const MIRROR = 'https://mirror.example.com';
+const SECOND_MIRROR = 'https://second-mirror.example.com';
 
 const settings = (
   overrides: Partial<{
@@ -124,6 +125,47 @@ describe('country rule change detection', () => {
     );
   });
 
+  it.each(['redirectIp', 'mirrorUrl', 'kycRequired'] as const)(
+    'a change to %s alone is a change',
+    (field) => {
+      const before = row({
+        action: 'block',
+        redirectIp: true,
+        mirrorUrl: MIRROR,
+        kycRequired: true,
+      });
+      const unchanged = {
+        blacklisted: true,
+        redirectIp: true,
+        mirrorUrl: MIRROR,
+        kycRequired: true,
+      };
+      const changed = {
+        redirectIp: { redirectIp: false },
+        mirrorUrl: { mirrorUrl: SECOND_MIRROR },
+        kycRequired: { kycRequired: false },
+      }[field];
+      expect(hasCountryRuleChanges(before, settings(unchanged))).toBe(false);
+      expect(hasCountryRuleChanges(before, settings({ ...unchanged, ...changed }))).toBe(true);
+    },
+  );
+
+  it('sending a blacklisted country to a different mirror needs confirmation', () => {
+    const before = row({ action: 'block', redirectIp: true, mirrorUrl: MIRROR });
+    expect(
+      needsConfirmation(
+        before,
+        settings({ blacklisted: true, redirectIp: true, mirrorUrl: SECOND_MIRROR }),
+      ),
+    ).toBe(true);
+    expect(
+      needsConfirmation(
+        before,
+        settings({ blacklisted: true, redirectIp: true, mirrorUrl: MIRROR }),
+      ),
+    ).toBe(false);
+  });
+
   it('dropping KYC needs confirmation and turning it on does not', () => {
     expect(needsConfirmation(row({ kycRequired: true }), settings({ kycRequired: false }))).toBe(
       true,
@@ -168,5 +210,5 @@ describe('country rule change detection', () => {
     expect(hasExpectedVersion(null, updatedAt.toISOString())).toBe(false);
   });
 
-  it.todo('an absent expected version never conflicts');
+  it.todo('GAP: an absent expected version never conflicts');
 });

@@ -176,7 +176,7 @@ describe('findSymbol and outline', () => {
     ]);
   });
 
-  it.todo('outline lines stay within the line width');
+  it.todo('GAP: outline lines stay within the line width');
 });
 
 describe('readSourceTree', () => {

@@ -10,7 +10,15 @@ const stored = (version: number) => ({
 const incoming = (version: number) => ({ roomId: 'room-1', actorId: 'actor-1', version });
 
 describe('system card write resolution', () => {
-  it.todo('a new card key resolves to an insert');
+  it.todo('GAP: a new card key resolves to an insert');
+
+  it.todo('GAP: a repeated card with the same key and unchanged content resolves to a no-op');
+
+  it.todo(
+    'GAP: a card with changed content resolves to an update and keeps its original post time',
+  );
+
+  it.todo('GAP: a card with an older post time never overwrites a newer one');
 
   it('a repeated card with the same key and the same version resolves to a no-op', () => {
     expect(resolveSystemCardWrite(stored(3), incoming(3))).toBe('stale');
@@ -20,7 +28,7 @@ describe('system card write resolution', () => {
     expect(resolveSystemCardWrite(stored(3), incoming(4))).toBe('updated');
   });
 
-  it.todo('an update keeps the original post time');
+  it.todo('GAP: an update keeps the original post time');
 
   it('a card with an older version never overwrites a newer one', () => {
     expect(resolveSystemCardWrite(stored(5), incoming(4))).toBe('stale');

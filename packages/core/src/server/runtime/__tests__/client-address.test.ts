@@ -205,7 +205,7 @@ describe('applyClientAddress', () => {
     ];
     for (const headers of cases) {
       const result = apply({ ...headers }, '10.0.0.1');
-      expect(result['x-real-ip']).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+      expect(result['x-real-ip']).toBe('10.0.0.1');
     }
   });
 

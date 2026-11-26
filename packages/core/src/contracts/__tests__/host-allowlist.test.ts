@@ -13,7 +13,7 @@ describe('isAllowedHost', () => {
     expect(isAllowedHttpsUrl('https://CDN.Example.COM/x.png', hosts)).toBe(true);
   });
 
-  it.todo('accepts a listed host regardless of case');
+  it.todo('GAP: accepts a listed host regardless of case');
 
   it('refuses an unlisted host and a lookalike suffix', () => {
     expect(isAllowedHost('example.com', hosts)).toBe(false);
@@ -68,7 +68,7 @@ describe('isAllowedHttpsUrl', () => {
     expect(isAllowedHttpsUrl('https://cdn.example.com:pw@evil.com/a.png', hosts)).toBe(false);
   });
 
-  it.todo('refuses a url with credentials');
+  it.todo('BUG: refuses a url with credentials');
 });
 
 describe('isAllowedUrlPrefix', () => {
