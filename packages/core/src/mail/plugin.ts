@@ -58,8 +58,8 @@ export default {
       };
     });
 
-    ctx.routers.add('mail', (c) => {
-      if (c.get(EMAIL_SENDER) instanceof StdoutEmailSender) {
+    ctx.routers.add('mail', (c, options) => {
+      if (options?.mounted !== false && c.get(EMAIL_SENDER) instanceof StdoutEmailSender) {
         const msg =
           'mail: no EMAIL_SENDER overlay bound. StdoutEmailSender only logs metadata and never ' +
           'delivers - bind a real EMAIL_SENDER (SMTP/SES/Postmark) in an overlay loaded after the mail plugin.';

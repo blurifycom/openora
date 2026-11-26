@@ -1,15 +1,23 @@
 # The whole app on one server: `docker compose -f compose.prod.yml up -d --build`.
-# Migrations run first, then the API starts on API_PORT (default 3001). Secrets come from
-# .env: set AUTH_SECRET, WITHDRAWAL_PIN_HMAC_SECRET and POSTGRES_PASSWORD (letters and
-# digits only, it goes into a URL). No demo data is seeded here.
+# Migrations run first, then the API and the chat service start (one image, one shared
+# database), behind a small gateway on API_PORT (default 3001) that sends the chat paths to
+# the chat service. Secrets come from .env: set AUTH_SECRET, WITHDRAWAL_PIN_HMAC_SECRET,
+# INTERNAL_API_SECRETS and POSTGRES_PASSWORD (letters and digits only, it goes into a URL).
+# No demo data is seeded here. To run chat inside the API instead, see
+# docs/guides/split-deployment.md: drop the `chat` and `gateway` services, publish `api`,
+# and remove CHAT_SERVICE_URL from it.
 x-runtime: &runtime
   build: .
   env_file: .env
-  environment:
+  environment: &runtime-env
     NODE_ENV: production
     PORT: 3001
     DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/oss_igaming
     REDIS_URL: redis://redis:6379
+    # The gateway reaches api and chat from the compose network; trust its X-Forwarded-For so
+    # geo checks, throttles and audit rows see the player's address. api and chat publish no port.
+    TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+    INTERNAL_API_SECRETS: ${INTERNAL_API_SECRETS:?set INTERNAL_API_SECRETS in .env}
 
 services:
   postgres:
@@ -46,16 +54,54 @@ services:
       postgres:
         condition: service_healthy
 
+  # Everything but chat, from the same registry: with CHAT_SERVICE_URL set, createApp drops the
+  # chat modules and `chat-remote` binds the chat ports to the chat service's internal API.
+  # Pinned to the names a monolith already uses.
   api:
     <<: *runtime
-    ports:
-      # Local only: put a TLS reverse proxy (Caddy, nginx) in front for the public domain.
-      - '127.0.0.1:${API_PORT:-3001}:3001'
+    environment:
+      <<: *runtime-env
+      SERVICE_NAME: monolith
+      REALTIME_NAMESPACE: monolith
+      CHAT_SERVICE_URL: http://chat:3001
+      CHAT_SERVICE_ALLOW_HTTP: 'true' # the compose network is private; use https across hosts
     depends_on:
       migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Chat on its own, on the shared database. Identity, iam and the rest load for their ports only.
+  chat:
+    <<: *runtime
+    environment:
+      <<: *runtime-env
+      SERVICE_NAME: chat
+      EVENT_BUS_START_ID: '0'
+      REALTIME_NAMESPACE: monolith
+      SERVICE_MANIFEST: chat,chat-commands,social,identity:no-routes,iam:no-routes,audit:no-routes,mail:no-routes,compliance:no-routes,player-management:no-routes,wallet:no-routes,gaming:no-routes,exchange-rate:no-routes,tag:no-routes
+      JOB_WORKERS: chat-*
+      CHAT_BLOCK_READER_CALLERS: monolith
+      CHAT_TRANSFER_CHECK_CALLERS: monolith
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The one public entry: chat paths to the chat service, the rest to the API. Put a TLS reverse
+  # proxy (Caddy, nginx) in front of it for the public domain.
+  gateway:
+    image: caddy:2-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - '127.0.0.1:${API_PORT:-3001}:80'
+    depends_on:
+      - api
+      - chat
     restart: unless-stopped
 
 volumes:

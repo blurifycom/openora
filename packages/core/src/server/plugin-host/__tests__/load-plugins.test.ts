@@ -25,6 +25,9 @@ type Spec = {
   requires?: string[];
   optional?: string[];
   provides?: string[];
+  events?: string[];
+  jobs?: string[];
+  router?: boolean;
 };
 
 let fixtureCount = 0;
@@ -52,6 +55,9 @@ export default {
   register(ctx) {
     order.push(${JSON.stringify(spec.id)});
     for (const n of ${JSON.stringify(spec.provides ?? [])}) ctx.provide(sym(n), () => n);
+    for (const n of ${JSON.stringify(spec.events ?? [])}) ctx.events.on(n, () => {});
+    for (const n of ${JSON.stringify(spec.jobs ?? [])}) ctx.jobs.worker({ queue: n, schema: {}, handler: async () => {} });
+    if (${JSON.stringify(spec.router ?? false)}) ctx.routers.add(${JSON.stringify(spec.id)}, () => ({ route: 'real' }));
   },
 };
 `,
@@ -225,5 +231,47 @@ describe('ports and dependencies', () => {
     const base = entry({ id: 'base' });
     await loadPlugins([top, mid, base], container());
     expect(order()).toEqual(['base', 'mid', 'top']);
+  });
+});
+
+describe('a module marked noRoutes', () => {
+  const spec: Spec = {
+    id: 'ported',
+    provides: ['ported'],
+    events: ['ported.happened'],
+    jobs: ['ported-job'],
+    router: true,
+  };
+  const marked = (): PluginEntry => ({ ...entry(spec), noRoutes: true });
+
+  it('binds its ports and serves an empty router', async () => {
+    const c = container();
+
+    const registry = await loadPlugins([marked()], c);
+
+    expect(c.get(Symbol.for('load-plugins.test.port.ported') as never)).toBe('ported');
+    expect(registry.routers.getAll().get('ported')?.(c as never)).toEqual({});
+  });
+
+  it('wires none of its event handlers or job workers', async () => {
+    const registry = await loadPlugins([marked()], container());
+
+    expect(registry.events.getAll().size).toBe(0);
+    expect(registry.jobs.getAll()).toEqual([]);
+    expect(registry.withheld()).toEqual([
+      { owner: 'ported', kind: 'event', name: 'ported.happened' },
+      { owner: 'ported', kind: 'job', name: 'ported-job' },
+    ]);
+  });
+
+  it('mounts its router and wires its handlers and workers when not marked', async () => {
+    const c = container();
+
+    const registry = await loadPlugins([entry(spec)], c);
+
+    expect(registry.routers.getAll().get('ported')?.(c as never)).toEqual({ route: 'real' });
+    expect(registry.events.getAll().get('ported.happened')).toHaveLength(1);
+    expect(registry.jobs.getAll().map((w) => w.queue)).toEqual(['ported-job']);
+    expect(registry.withheld()).toEqual([]);
   });
 });

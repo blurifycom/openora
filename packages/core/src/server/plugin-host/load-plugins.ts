@@ -18,8 +18,9 @@ export type PluginEntry = {
   // single-module service, because a standalone process still needs its
   // durable transport. See applyServiceManifest.
   kind?: 'module' | 'infra';
-  // Set by a service manifest (`id:no-routes`): the module binds its ports, handles its events and
-  // runs its jobs, but mounts no router. See applyServiceManifest.
+  // Set by a service manifest (`id:no-routes`): the module is required, not selected. It binds its
+  // ports, but mounts no router and consumes nothing: no event handler, trigger listener, job
+  // worker or schedule. See applyServiceManifest and ADR-0050.
   noRoutes?: boolean;
 };
 
@@ -128,7 +129,7 @@ export async function loadPlugins<C extends TokenCatalog>(
   const registry = new ModuleRegistryImpl<C>(container);
   for (const entry of entries) {
     if (entry.noRoutes) {
-      registry.withholdRouters(entry.id);
+      registry.requireOnly(entry.id);
     }
   }
 

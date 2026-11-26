@@ -327,7 +327,7 @@ export default {
       forfeitEverything('identity.user.deactivated', 'account_deactivated'),
     );
 
-    ctx.routers.add('promo-bonus', (c) => {
+    ctx.routers.add('promo-bonus', (c, options) => {
       offers = new OfferService(
         c.get(DRIZZLE),
         c.get(AUDIT_WRITER),
@@ -339,9 +339,11 @@ export default {
       );
       jobs = c.get(JOB_QUEUE);
       realtime = c.get(REALTIME_TRANSPORT);
-      void jobs
-        .schedule(EXPIRY_QUEUE, 'promo-bonus-expiry.cron', {}, { cron: EXPIRY_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
+      if (options?.mounted !== false) {
+        void jobs
+          .schedule(EXPIRY_QUEUE, 'promo-bonus-expiry.cron', {}, { cron: EXPIRY_CRON })
+          .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
+      }
       return createBonusRouter({
         grants: new GrantReaderService(c.get(DRIZZLE)),
         funds: new PlayerFundsService(

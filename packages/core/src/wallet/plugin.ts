@@ -611,7 +611,7 @@ export default {
     // Operator-editable currency/network config, readable by a payment adapter without
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
-    ctx.routers.add('wallet', (c) => {
+    ctx.routers.add('wallet', (c, options) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       sharedPlayEligibility(c);
       const rgLimits = sharedRgLimits(c);
@@ -659,36 +659,38 @@ export default {
       const jobQueue = c.get(JOB_QUEUE);
 
       custodySweepService(c); // ensure sweepSvc is constructed for the job worker above
-      const sweepCron = platformConfig?.wallet?.sweep?.cron ?? DEFAULT_SWEEP_CRON;
-      // Idempotent schedule (keyed by scheduleId). If platformConfig.wallet.sweep is
-      // absent, this still registers the tick - the handler just no-ops every time.
-      void jobQueue
-        .schedule(CUSTODY_SWEEP_QUEUE, 'wallet-custody-sweep.cron', {}, { cron: sweepCron })
-        .catch((err) => logger.error({ err }, 'wallet-custody-sweep schedule failed'));
+      if (options?.mounted !== false) {
+        const sweepCron = platformConfig?.wallet?.sweep?.cron ?? DEFAULT_SWEEP_CRON;
+        // Idempotent schedule (keyed by scheduleId). If platformConfig.wallet.sweep is
+        // absent, this still registers the tick - the handler just no-ops every time.
+        void jobQueue
+          .schedule(CUSTODY_SWEEP_QUEUE, 'wallet-custody-sweep.cron', {}, { cron: sweepCron })
+          .catch((err) => logger.error({ err }, 'wallet-custody-sweep schedule failed'));
 
-      // Absent config means the cycle no-ops - see ReconciliationService.runCycle - but
-      // there is also nothing to schedule at all.
-      if (platformConfig?.wallet?.reconciliation) {
+        // Absent config means the cycle no-ops - see ReconciliationService.runCycle - but
+        // there is also nothing to schedule at all.
+        if (platformConfig?.wallet?.reconciliation) {
+          void jobQueue
+            .schedule(
+              WALLET_RECONCILIATION_QUEUE,
+              'wallet-reconciliation.cron',
+              {},
+              { cron: platformConfig.wallet.reconciliation.cron },
+            )
+            .catch((err) => logger.error({ err }, 'wallet-reconciliation schedule failed'));
+        }
+        const ledgerInvariantCron =
+          platformConfig?.wallet?.reconciliation?.ledgerInvariantCron ??
+          DEFAULT_LEDGER_INVARIANT_CRON;
         void jobQueue
           .schedule(
-            WALLET_RECONCILIATION_QUEUE,
-            'wallet-reconciliation.cron',
+            LEDGER_INVARIANT_QUEUE,
+            'wallet-ledger-invariant.cron',
             {},
-            { cron: platformConfig.wallet.reconciliation.cron },
+            { cron: ledgerInvariantCron },
           )
-          .catch((err) => logger.error({ err }, 'wallet-reconciliation schedule failed'));
+          .catch((err) => logger.error({ err }, 'wallet-ledger-invariant schedule failed'));
       }
-      const ledgerInvariantCron =
-        platformConfig?.wallet?.reconciliation?.ledgerInvariantCron ??
-        DEFAULT_LEDGER_INVARIANT_CRON;
-      void jobQueue
-        .schedule(
-          LEDGER_INVARIANT_QUEUE,
-          'wallet-ledger-invariant.cron',
-          {},
-          { cron: ledgerInvariantCron },
-        )
-        .catch((err) => logger.error({ err }, 'wallet-ledger-invariant schedule failed'));
 
       if (turnoverService(c).enabled) {
         void jobQueue

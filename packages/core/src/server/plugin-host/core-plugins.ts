@@ -14,6 +14,10 @@ const CORE_PLUGIN_MODULES = [
   { id: 'gaming', path: '@openora/core/casino/plugins/gaming' },
   { id: 'lobby', path: '@openora/core/casino/plugins/lobby' },
   { id: 'chat', path: '@openora/core/engagement/plugins/chat' },
+  { id: 'chat-commands', path: '@openora/core/engagement/plugins/chat-commands' },
+  { id: 'social', path: '@openora/core/engagement/plugins/social' },
+  // Binds the chat ports to the chat service when CHAT_SERVICE_URL is set; nothing otherwise.
+  { id: 'chat-remote', path: '@openora/core/engagement/plugins/chat-remote' },
   { id: 'profile', path: '@openora/core/pam/plugins/profile' },
   { id: 'tag', path: '@openora/core/pam/plugins/tag' },
   { id: 'player-management', path: '@openora/core/pam/plugins/player-management' },
@@ -35,7 +39,12 @@ const CORE_PLUGIN_MODULES = [
  * checkout.
  *
  * Compose your registry as `[...corePlugins(), ...overlays]`. To opt a module
- * out, filter by id: `corePlugins().filter((p) => p.id !== 'chat')`.
+ * out, filter by id, together with the modules that depend on it, e.g. chat:
+ * `corePlugins().filter((p) => !['chat', 'chat-commands', 'social'].includes(p.id))`.
+ * `player-management` requires `CHAT_BLOCK_READER`, so without chat an overlay must bind it:
+ * `ctx.provide(CHAT_BLOCK_READER, ...)` with a reader whose `getExcludedUserIds`,
+ * `getBlockedUserIds` and `getBlockerIds` resolve to `[]`, or keep `chat-remote` with
+ * `CHAT_SERVICE_URL` to read them from a chat service.
  */
 export function corePlugins(): PluginEntry[] {
   return CORE_PLUGIN_MODULES.map((module) => ({

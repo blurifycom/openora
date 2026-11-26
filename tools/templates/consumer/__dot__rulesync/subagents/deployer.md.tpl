@@ -14,11 +14,12 @@ The operator picks the platform (ECS/Fargate, Kubernetes, Fly.io, Railway, Rende
 
 ## Services
 
-- `api` - Hono + oRPC, :3001
+- `api` - Hono + oRPC, :3001; every module but chat (`SERVICE_NAME=monolith`)
+- `chat` - the same image booted as its own service (`SERVICE_NAME=chat`, `SERVICE_MANIFEST` as in `compose.prod.yml`), reached on the chat path prefixes; see the split deployment guide
 - `web` - Next.js standalone, :3000 (if present)
 - `backoffice` - Vite SPA static, :80 via nginx/static server (if present)
 
-An api-only consumer ships just the api. Start from the shipped `Dockerfile` (one image for the api and its migrations, `@openora/*` from npm) and `compose.prod.yml` (single-server reference), and adapt them to the chosen platform; pin Node to `.nvmrc`.
+An api-only consumer ships the api and chat. Start from the shipped `Dockerfile` (one image for the api and its migrations, `@openora/*` from npm) and `compose.prod.yml` (single-server reference), and adapt them to the chosen platform; pin Node to `.nvmrc`.
 
 ## Ground first
 

@@ -183,7 +183,9 @@ for the full direction; the shape:
   balance/bonus toasts), never the transport between modules.
 - **Modular monolith now, microservices later.** The no-cross-module-imports rule,
   the broker seam, and the outbox make any module extractable into its own deployable.
-  The same codebase boots a subset via `SERVICE_MANIFEST` (`pnpm create:service`
+  Chat is the first one out: a new consumer deploys it as its own service by default,
+  and the monolith stays supported for local dev and small installs. The same codebase
+  boots a subset via `SERVICE_MANIFEST` (`pnpm create:service`
   scaffolds a thin host); point its broker at the shared stream and its events keep
   flowing. The `no-cross-module-schema-read` lint warning flags the remaining
   shared-table couplings to retire first. Scale the stateless Hono API horizontally;

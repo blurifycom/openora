@@ -499,7 +499,7 @@ export default {
       },
     });
 
-    ctx.routers.add('promo-gamification', (c) => {
+    ctx.routers.add('promo-gamification', (c, options) => {
       // A cash prize/cashback credit lands here when its own source (a race, a rank challenge
       // tier) is priced in something else - see `priceForPayout`.
       const payoutCurrency = resolveWalletDefaultCurrency(
@@ -574,79 +574,91 @@ export default {
       });
       const jobQueue = c.get(JOB_QUEUE);
       jobs = jobQueue;
-      // The periodic kinds share one tick: each run pays only a period that has closed since
-      // the last, so when a player is actually paid is the anchor in the ladder's settings.
-      for (const [kind, cron] of [
-        ['levelUp', schedule.ranks.payoutCron],
-        ['daily', schedule.ranks.periodicCron],
-        ['weekly', schedule.ranks.periodicCron],
-        ['monthly', schedule.ranks.periodicCron],
-      ] as const) {
+      if (options?.mounted !== false) {
+        // The periodic kinds share one tick: each run pays only a period that has closed since
+        // the last, so when a player is actually paid is the anchor in the ladder's settings.
+        for (const [kind, cron] of [
+          ['levelUp', schedule.ranks.payoutCron],
+          ['daily', schedule.ranks.periodicCron],
+          ['weekly', schedule.ranks.periodicCron],
+          ['monthly', schedule.ranks.periodicCron],
+        ] as const) {
+          void jobQueue
+            .schedule(RANK_PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
+            .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));
+        }
+        // Milestone rewards are claimed by the player now; drop the schedule that used to pay them.
         void jobQueue
-          .schedule(RANK_PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
-          .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));
+          .unschedule(STREAK_PAYOUT_QUEUE, 'promo-streak-payout.cron')
+          .catch((err: unknown) => logger.error({ err }, 'streak payout unschedule failed'));
+        void jobQueue
+          .schedule(
+            STREAK_ANNOUNCE_QUEUE,
+            'promo-streak-announce.cron',
+            {},
+            { cron: STREAK_ANNOUNCE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'streak announcement schedule failed'));
+        void jobQueue
+          .schedule(
+            STREAK_CLOSE_QUEUE,
+            'promo-streak-close.cron',
+            {},
+            { cron: schedule.streaks.closeCron },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'streak close schedule failed'));
+        void jobQueue
+          .schedule(
+            STREAK_EXPIRE_QUEUE,
+            'promo-streak-expire.cron',
+            {},
+            { cron: STREAK_EXPIRE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'streak expiry schedule failed'));
+        void jobQueue
+          .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
+          .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
+        void jobQueue
+          .schedule(
+            RANK_CHALLENGE_PAYOUT_QUEUE,
+            'promo-rank-challenge-payout.cron',
+            {},
+            { cron: RANK_CHALLENGE_PAYOUT_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rank challenge payout schedule failed'));
+        void jobQueue
+          .schedule(
+            RANK_ANNOUNCE_QUEUE,
+            'promo-rank-announce.cron',
+            {},
+            { cron: RANK_ANNOUNCE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rank announcement schedule failed'));
+        void jobQueue
+          .schedule(
+            RANK_PERIOD_PRUNE_QUEUE,
+            'promo-rank-period-prune.cron',
+            {},
+            { cron: RANK_PERIOD_PRUNE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rank period prune schedule failed'));
+        void jobQueue
+          .schedule(
+            RAKEBACK_SWEEP_QUEUE,
+            'promo-rakeback-sweep.cron',
+            {},
+            { cron: RAKEBACK_SWEEP_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rakeback sweep schedule failed'));
+        void jobQueue
+          .schedule(
+            RAKEBACK_NOTIFY_QUEUE,
+            'promo-rakeback-notify.cron',
+            {},
+            { cron: RAKEBACK_NOTIFY_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rakeback reminder schedule failed'));
       }
-      // Milestone rewards are claimed by the player now; drop the schedule that used to pay them.
-      void jobQueue
-        .unschedule(STREAK_PAYOUT_QUEUE, 'promo-streak-payout.cron')
-        .catch((err: unknown) => logger.error({ err }, 'streak payout unschedule failed'));
-      void jobQueue
-        .schedule(
-          STREAK_ANNOUNCE_QUEUE,
-          'promo-streak-announce.cron',
-          {},
-          { cron: STREAK_ANNOUNCE_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'streak announcement schedule failed'));
-      void jobQueue
-        .schedule(
-          STREAK_CLOSE_QUEUE,
-          'promo-streak-close.cron',
-          {},
-          { cron: schedule.streaks.closeCron },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'streak close schedule failed'));
-      void jobQueue
-        .schedule(STREAK_EXPIRE_QUEUE, 'promo-streak-expire.cron', {}, { cron: STREAK_EXPIRE_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'streak expiry schedule failed'));
-      void jobQueue
-        .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
-      void jobQueue
-        .schedule(
-          RANK_CHALLENGE_PAYOUT_QUEUE,
-          'promo-rank-challenge-payout.cron',
-          {},
-          { cron: RANK_CHALLENGE_PAYOUT_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rank challenge payout schedule failed'));
-      void jobQueue
-        .schedule(RANK_ANNOUNCE_QUEUE, 'promo-rank-announce.cron', {}, { cron: RANK_ANNOUNCE_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'rank announcement schedule failed'));
-      void jobQueue
-        .schedule(
-          RANK_PERIOD_PRUNE_QUEUE,
-          'promo-rank-period-prune.cron',
-          {},
-          { cron: RANK_PERIOD_PRUNE_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rank period prune schedule failed'));
-      void jobQueue
-        .schedule(
-          RAKEBACK_SWEEP_QUEUE,
-          'promo-rakeback-sweep.cron',
-          {},
-          { cron: RAKEBACK_SWEEP_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rakeback sweep schedule failed'));
-      void jobQueue
-        .schedule(
-          RAKEBACK_NOTIFY_QUEUE,
-          'promo-rakeback-notify.cron',
-          {},
-          { cron: RAKEBACK_NOTIFY_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rakeback reminder schedule failed'));
 
       return createGamificationRouter({
         ranks: rankService(c),

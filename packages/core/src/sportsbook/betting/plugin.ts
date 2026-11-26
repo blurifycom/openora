@@ -230,18 +230,20 @@ export default {
       },
     });
 
-    ctx.routers.add('sportsbook', (c) => {
+    ctx.routers.add('sportsbook', (c, options) => {
       jobs = c.get(JOB_QUEUE);
-      void jobs
-        .schedule(
-          SPORTSBOOK_RECONCILE_QUEUE,
-          'sportsbook-reconcile.cron',
-          {},
-          {
-            cron: SPORTSBOOK_RECONCILE_CRON,
-          },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'sportsbook reconcile schedule failed'));
+      if (options?.mounted !== false) {
+        void jobs
+          .schedule(
+            SPORTSBOOK_RECONCILE_QUEUE,
+            'sportsbook-reconcile.cron',
+            {},
+            {
+              cron: SPORTSBOOK_RECONCILE_CRON,
+            },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'sportsbook reconcile schedule failed'));
+      }
       return createSportsbookRouter({ ...services(c), adminGuard: c.get(ADMIN_GUARD) });
     });
   },

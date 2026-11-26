@@ -48,7 +48,8 @@ const manifest = rawManifest
 
 const configSrc = readFileSync(join(repoRoot, 'extensions.config.ts'), 'utf8');
 const knownIds = [...configSrc.matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1]);
-const unknown = manifest.filter((m) => !knownIds.includes(m));
+// A flag (`wallet:no-routes`) is not part of the id; createApp validates the flag itself.
+const unknown = manifest.filter((m) => !knownIds.includes(m.split(':')[0] ?? m));
 if (unknown.length > 0) {
   console.error(`Unknown module id(s): ${unknown.join(', ')}.\nKnown: ${knownIds.join(', ')}`);
   process.exit(1);
@@ -146,10 +147,10 @@ console.log(
 );
 console.warn('Before you deploy it:');
 console.warn(
-  '  - A module this service and another process both load handles each event in both, under each',
+  '  - Flag every module this service only depends on `:no-routes`: it binds its ports here and',
 );
 console.warn(
-  '    SERVICE_NAME - audit writes every row twice. Until ADR-0050 lands, split modules no other process loads.',
+  '    leaves its events, jobs and schedules to the one process that selects it (ADR-0050).',
 );
 console.warn(
   '  - A manifest that leaves out a module behind a control (RG limits, country checks, audit',

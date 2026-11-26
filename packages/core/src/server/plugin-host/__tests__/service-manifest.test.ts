@@ -183,7 +183,21 @@ describe('service completeness', () => {
   it('a service missing a port its kept modules require fails the boot with a clear error', async () => {
     const failing = check(specs, [{ id: 'bonus', noRoutes: false }]);
     await expect(assertServiceComplete(failing)).rejects.toThrow(
-      /SERVICE_MANIFEST=bonus leaves out what this service needs:[\s\S]*bonus requires WALLET_COMMANDS \(bound by wallet\)[\s\S]*Add them: SERVICE_MANIFEST=bonus,wallet/,
+      /SERVICE_MANIFEST=bonus leaves out what this service needs:[\s\S]*bonus requires WALLET_COMMANDS \(bound by wallet\)[\s\S]*Add them: SERVICE_MANIFEST=bonus,wallet:no-routes$/m,
+    );
+  });
+
+  it('suggests every module it adds as required-only, transitively', async () => {
+    const chain = check(
+      {
+        wallet: { provides: [WALLET_PORT], dependsOn: ['kyc'] },
+        bonus: { requires: [WALLET_PORT] },
+        kyc: {},
+      },
+      [{ id: 'bonus', noRoutes: false }],
+    );
+    await expect(assertServiceComplete(chain)).rejects.toThrow(
+      /Add them: SERVICE_MANIFEST=bonus,wallet:no-routes,kyc:no-routes\n/,
     );
   });
 

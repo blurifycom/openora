@@ -76,6 +76,11 @@ their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/mai
 
 ### Running more than one process
 
+Chat runs as its own service by default: the `compose.prod.yml` a new consumer gets starts the API and
+a `chat` service from one image on one shared database, with a gateway sending the chat paths to it
+(see the [split deployment guide](./split-deployment.md)). A single process that loads every module
+stays supported for local dev, tests and small installs; it is what you get with no `SERVICE_MANIFEST`.
+
 Replicas of one API share a `SERVICE_NAME` (unset means `monolith`) and split the work: each event
 and each job reaches one of them.
 
@@ -87,16 +92,19 @@ and each job reaches one of them.
   checks behind admin routes - is different: while your plugin list has the module that enforces
   it, a manifest that leaves it out refuses to boot. Whatever is missing, the boot fails once,
   naming all of it, with one manifest line that adds every module needed and what those need in
-  turn. A process with a manifest needs a `SERVICE_NAME` of its own.
+  turn. A process with a manifest needs a `SERVICE_NAME` of its own. Its consumer groups are new
+  and start at the stream tail; set `EVENT_BUS_START_ID=0` for its first boot to replay retained
+  events instead (every handler in it must be safe to run twice), then drop it.
 
   With the shipped modules a split ends up close to the monolith. Every manifest boot checks
   AdminGuard's ports, so every split loads iam and identity, and with them audit and mail.
   Identity's controls pull in compliance, and compliance depends on wallet, gaming,
   player-management and exchange-rate; player-management requires the `CHAT_BLOCK_READER` port, which
-  the `chat` module binds, or `chat-remote` when chat runs in another service. A split is those nine
-  modules, `chat` or `chat-remote`, and the ones you meant to move, and until
-  [ADR-0050](../adr/0050-dependency-only-modules-provide-but-do-not-consume.md) lands each of the
-  nine handles every event once in the split and once in the rest of the install.
+  the `chat` module binds, or `chat-remote` when chat runs in another service (`CHAT_SERVICE_URL`). A split is those nine
+  modules, `chat` or `chat-remote`, and the ones you meant to move. Name the nine `:no-routes`:
+  the split then only binds their ports, and leaves their events, jobs and schedules to the
+  process that selects them ([ADR-0050](../adr/0050-dependency-only-modules-provide-but-do-not-consume.md)),
+  so nothing is handled twice.
 
 - **Chat writes from a process that does not run chat.** A module that writes chat state inside
   its own transaction binds the outbox writers from `@openora/core/engagement/server` over the
@@ -177,9 +185,10 @@ and each job reaches one of them.
   the first failure, then one summary line per 30 seconds with the count. A 4xx from identity
   answers 401, so a caller missing from `SESSION_RESOLVER_CALLERS` shows as 401 on every
   protected chat route: check that list first.
-- **Chat's block reads and transfer check from a process that does not run chat.** Load the
-  `chat-remote` plugin there, in place of `chat`, and set `CHAT_SERVICE_URL` to the chat service's
-  private origin (and `CHAT_SERVICE_NAME` if its `SERVICE_NAME` is not `chat`). It binds
+- **Chat's block reads and transfer check from a process that does not run chat.** Set
+  `CHAT_SERVICE_URL` to the chat service's private origin there: `createApp` drops `chat` and the
+  plugins that depend on it, and `chat-remote` (in `corePlugins()`) takes their place; a registry not built from `corePlugins()` must list `chat-remote` itself. Set `CHAT_SERVICE_NAME` too if the chat
+  service's `SERVICE_NAME` is not `chat`. It binds
   `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API, so the process
   needs no chat tables. On the chat service set `CHAT_BLOCK_READER_CALLERS` and
   `CHAT_TRANSFER_CHECK_CALLERS` to the caller's `SERVICE_NAME`; unset, every caller is refused. The

@@ -508,7 +508,7 @@ export default {
       },
     });
 
-    ctx.routers.add('chat', (c) => {
+    ctx.routers.add('chat', (c, options) => {
       const chatService = createChatService(c);
       expiryRef = new ChatModerationExpiryService(c.get(DRIZZLE), c.get(AUDIT_WRITER));
       const expiryCron =
@@ -517,15 +517,19 @@ export default {
       // Idempotent registration (keyed by scheduleId). JOB_QUEUE binds to BullMQ whenever
       // REDIS_URL is set, which every real deployment has, so the schedule is durable
       // there; the in-process default still ticks for `pnpm dev`.
-      void c
-        .get(JOB_QUEUE)
-        .schedule(
-          CHAT_MODERATION_EXPIRY_QUEUE,
-          'chat-moderation-expiry.cron',
-          {},
-          { cron: expiryCron },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'chat-moderation-expiry schedule failed'));
+      // A required-only process leaves the schedules to the service that selects chat (ADR-0050).
+      const schedules = options?.mounted !== false;
+      if (schedules) {
+        void c
+          .get(JOB_QUEUE)
+          .schedule(
+            CHAT_MODERATION_EXPIRY_QUEUE,
+            'chat-moderation-expiry.cron',
+            {},
+            { cron: expiryCron },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'chat-moderation-expiry schedule failed'));
+      }
       const membershipService = createMembershipService(c);
       membershipRef = membershipService;
       purgeRef = new ChatRoomPurgeService(
@@ -538,14 +542,16 @@ export default {
       systemCardRef = new ChatSystemCardService(c.get(DRIZZLE), c.get(CHAT_REALTIME_TRANSPORT));
       contextRoomsRef = c.get(CHAT_CONTEXT_ROOMS);
       drizzleRef = c.get(DRIZZLE);
-      void jobQueueRef
-        .schedule(
-          CHAT_ROOM_PURGE_SCAN_QUEUE,
-          'chat-room-purge.cron',
-          {},
-          { cron: CHAT_ROOM_PURGE_CRON, timezone: CHAT_ROOM_PURGE_TIMEZONE },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'chat-room-purge schedule failed'));
+      if (schedules) {
+        void jobQueueRef
+          .schedule(
+            CHAT_ROOM_PURGE_SCAN_QUEUE,
+            'chat-room-purge.cron',
+            {},
+            { cron: CHAT_ROOM_PURGE_CRON, timezone: CHAT_ROOM_PURGE_TIMEZONE },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'chat-room-purge schedule failed'));
+      }
       inviteRef = new ChatRoomInviteService(
         c.get(DRIZZLE),
         c.get(EVENT_BUS),
@@ -556,14 +562,18 @@ export default {
         // failed read refuses before an invite is written.
         identity || !c.has(PLAY_ELIGIBILITY) ? undefined : c.get(PLAY_ELIGIBILITY),
       );
-      void jobQueueRef
-        .schedule(
-          CHAT_ROOM_INVITE_EXPIRY_QUEUE,
-          'chat-room-invite-expiry.cron',
-          {},
-          { cron: CHAT_ROOM_INVITE_EXPIRY_CRON, timezone: CHAT_ROOM_PURGE_TIMEZONE },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'chat-room-invite-expiry schedule failed'));
+      if (schedules) {
+        void jobQueueRef
+          .schedule(
+            CHAT_ROOM_INVITE_EXPIRY_QUEUE,
+            'chat-room-invite-expiry.cron',
+            {},
+            { cron: CHAT_ROOM_INVITE_EXPIRY_CRON, timezone: CHAT_ROOM_PURGE_TIMEZONE },
+          )
+          .catch((err: unknown) =>
+            logger.error({ err }, 'chat-room-invite-expiry schedule failed'),
+          );
+      }
       return createChatRouter({
         chatService,
         membershipService,

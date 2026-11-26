@@ -98,7 +98,7 @@ export default {
       },
     });
 
-    ctx.routers.add('exchangeRate', (c) => {
+    ctx.routers.add('exchangeRate', (c, options) => {
       const platformConfig = c.get(PLATFORM_CONFIG);
       // The pivot joins the list even when the operator does not offer it for display:
       // every cross rate is computed through it, so a quote against it is always legitimate.
@@ -110,9 +110,11 @@ export default {
       const jobQueue = c.get(JOB_QUEUE);
       // Idempotent schedule (keyed by scheduleId) - see wallet's custody-sweep cron for
       // the same pattern.
-      void jobQueue
-        .schedule(RATE_WARM_QUEUE, 'exchange-rate-warm.cron', {}, { everyMs: WARM_INTERVAL_MS })
-        .catch((err) => logger.error({ err }, 'exchange-rate-warm schedule failed'));
+      if (options?.mounted !== false) {
+        void jobQueue
+          .schedule(RATE_WARM_QUEUE, 'exchange-rate-warm.cron', {}, { everyMs: WARM_INTERVAL_MS })
+          .catch((err) => logger.error({ err }, 'exchange-rate-warm schedule failed'));
+      }
 
       return createExchangeRateRouter(
         new ExchangeRateService(c.get(EXCHANGE_RATE_READER), supported),
