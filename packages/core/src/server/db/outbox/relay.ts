@@ -28,7 +28,7 @@ type EventOutboxBacklog = { pending: number; oldestPendingAgeMs: number };
  * Unpublished `event_outbox` rows (claimed or not) and the age of the oldest, both read on the
  * database clock so a skewed replica clock cannot hide or invent lag.
  */
-async function eventOutboxBacklog(db: DrizzleDb): Promise<EventOutboxBacklog> {
+export async function eventOutboxBacklog(db: DrizzleDb): Promise<EventOutboxBacklog> {
   const result = await db.execute<{ pending: number; oldest_pending_age_ms: number | null }>(sql`
     SELECT count(*)::int AS pending,
            (extract(epoch FROM now() - min(occurred_at)) * 1000)::float8 AS oldest_pending_age_ms
