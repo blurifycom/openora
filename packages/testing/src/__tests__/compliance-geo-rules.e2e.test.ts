@@ -667,7 +667,9 @@ describe('Geo rule pairs for the game catalog', () => {
       gameIds: [first.gameId, second.gameId],
     });
 
-    expect(narrowed?.games).toEqual([{ gameId: first.gameId, countryCode: 'IS', source: 'vendor' }]);
+    expect(narrowed?.games).toEqual([
+      { gameId: first.gameId, countryCode: 'IS', source: 'vendor' },
+    ]);
     expect(narrowed?.providers).toContainEqual({
       providerId: other.providerId,
       countryCode: 'IS',
@@ -711,7 +713,7 @@ describe('Geo rule pairs for the game catalog', () => {
   });
 
   it('a staff member without the compliance grant is refused the geo filters but still lists games', async () => {
-    const { client } = await newStaff(e2e.app, 'geo-filter-agent', 'customer-support-agent');
+    const { client } = await newStaff(e2e.app, 'geo-filter-agent', 'casino-manager');
 
     const filtered = await client.get('/backoffice/gaming/games?geoBlocked=true');
     const plain = await client.get('/backoffice/gaming/games');

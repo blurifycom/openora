@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import type { PlayEligibilityProjectionPort, PlayEligibilitySnapshot } from '@openora/core/contracts';
+import type {
+  PlayEligibilityProjectionPort,
+  PlayEligibilitySnapshot,
+} from '@openora/core/contracts';
 import type { EventBus } from '@openora/core/server';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { createTestDb, seedPlayerWithUser, type TestDb } from '../../../testing/index.js';

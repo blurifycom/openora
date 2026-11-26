@@ -69,7 +69,11 @@ beforeAll(async () => {
     return reply;
   });
   db = await setupTestDb();
-  const shared = { INTERNAL_API_SECRETS: SECRETS, MONEY_PORTS_CALLERS: 'platform' };
+  const shared = {
+    INTERNAL_API_SECRETS: SECRETS,
+    MONEY_PORTS_CALLERS: 'platform',
+    LEDGER_PROJECTION_HEARTBEAT_MS: '3600000',
+  };
   money = await withEnv(
     { ...shared, SERVICE_NAME: 'money', REALTIME_NAMESPACE: 'money-e2e' },
     async () => bootTestApp({ plugins: await loadExtensions(), databaseUrl: db.url }),

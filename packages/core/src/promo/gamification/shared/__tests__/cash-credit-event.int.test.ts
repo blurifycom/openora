@@ -59,7 +59,10 @@ describe('announceCashCredits', () => {
       expect(lookups).toEqual([{ userId, tx }]);
     });
 
-    expect(emitted.map(({ topic }) => topic)).toEqual(['wallet.balance.changed', 'wallet.balance.changed']);
+    expect(emitted.map(({ topic }) => topic)).toEqual([
+      'wallet.balance.changed',
+      'wallet.balance.changed',
+    ]);
     expect(emitted.map(({ payload }) => payload)).toEqual([
       expect.objectContaining({ playerId, currency: 'USDT', transactionId: 'tx-1' }),
       expect.objectContaining({ playerId, currency: 'EUR', transactionId: 'tx-2' }),

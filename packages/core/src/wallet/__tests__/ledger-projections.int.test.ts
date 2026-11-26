@@ -16,7 +16,11 @@ import {
   type TestDb,
 } from '../../testing/index.js';
 import { migrate } from '../migrate.js';
-import { ledgerPlayEligibility, ledgerProjectionHeartbeat, ledgerUserLimit } from '../schema/index.js';
+import {
+  ledgerPlayEligibility,
+  ledgerProjectionHeartbeat,
+  ledgerUserLimit,
+} from '../schema/index.js';
 import { LedgerPlayEligibilityService } from '../service/ledger-play-eligibility.service.js';
 import { LedgerRgLimitsService } from '../service/ledger-rg-limits.service.js';
 
@@ -90,9 +94,9 @@ describe('the limits projection write path (real PG)', () => {
       }),
     );
 
-    expect(await db().select().from(ledgerUserLimit).where(eq(ledgerUserLimit.userId, userId))).toEqual(
-      [],
-    );
+    expect(
+      await db().select().from(ledgerUserLimit).where(eq(ledgerUserLimit.userId, userId)),
+    ).toEqual([]);
   });
 
   it('holds a reconcile limit write behind a stake that holds the limit slot until the stake ends', async () => {
@@ -111,9 +115,9 @@ describe('the limits projection write path (real PG)', () => {
     await stake;
 
     await expect(reconciled).resolves.toBe(1);
-    expect(await db().select().from(ledgerUserLimit).where(eq(ledgerUserLimit.userId, userId))).toHaveLength(
-      1,
-    );
+    expect(
+      await db().select().from(ledgerUserLimit).where(eq(ledgerUserLimit.userId, userId)),
+    ).toHaveLength(1);
   });
 
   it('opens a limit window by the database clock, not the replica clock', async () => {

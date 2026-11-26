@@ -2,11 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { PLAY_ELIGIBILITY_PROJECTION } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
+import { user } from '@openora/core/pam/schema/identity';
 import {
-  ledgerPlayEligibility,
   walletDepositAddress,
   walletDepositStatusEvent,
   walletRefundedDeposit,
@@ -470,22 +469,7 @@ describe('player deposit through the payment provider', () => {
       .then(readBody);
 
   async function blockPlayEligibility(userId: string) {
-    const [row] = await db()
-      .select()
-      .from(ledgerPlayEligibility)
-      .where(eq(ledgerPlayEligibility.userId, userId));
-    await e2e.app.container.get(PLAY_ELIGIBILITY_PROJECTION).reconcile([
-      {
-        userId,
-        rgBlocked: true,
-        rgBlockedUntil: null,
-        isActive: true,
-        banned: false,
-        banExpires: null,
-        status: 'active',
-        version: (row?.version ?? 0) + 1,
-      },
-    ]);
+    await db().update(user).set({ rgBlocked: true }).where(eq(user.id, userId));
   }
 
   it('a completed deposit replayed after the player is blocked answers the first result and credits once', async () => {
