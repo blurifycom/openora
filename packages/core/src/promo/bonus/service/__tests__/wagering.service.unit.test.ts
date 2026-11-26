@@ -1,19 +1,21 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { moneyAdd, moneyCompare, moneyEquals, moneyScaleBy } from '@openora/core/server';
-import { allocateBonusStake, capConversion, strictestMaxBet } from '../wagering.service.js';
+import { capConversion } from '../../shared/complete-grant.js';
+import { splitAcrossGrants, strictestMaxBet } from '../wagering.service.js';
 
 type Grant = Parameters<typeof strictestMaxBet>[0][number];
 
-const grant = (
-  over: Partial<Omit<Grant, 'terms'>> & { terms?: Partial<Grant['terms']> },
-): Grant => ({
+const grant = (over: { terms?: Partial<Grant['terms']> }): Grant => ({
   id: '00000000-0000-4000-8000-000000000001',
   grantedAmount: '100',
   bonusBalance: '100',
+  unlinkedCash: '0',
+  linkedCash: '0',
   wageringRequired: '1000',
   wageringProgress: '0',
-  ...over,
+  expiresAt: new Date('2026-12-01T00:00:00.000Z'),
+  createdAt: new Date('2026-11-01T00:00:00.000Z'),
   terms: { wageringMultiplier: '10', expiryDays: 7, weights: [], ...over.terms },
 });
 
@@ -95,79 +97,126 @@ describe('strictestMaxBet', () => {
   });
 });
 
-describe('allocateBonusStake', () => {
-  const grants = [
-    grant({ bonusBalance: '30' }),
-    grant({ bonusBalance: '50' }),
-    grant({ bonusBalance: '20' }),
-  ];
+describe('splitAcrossGrants', () => {
+  type Split = Parameters<typeof splitAcrossGrants>[0];
+  type Bucket = 'unlinked' | 'linked' | 'bonus';
+  const ALL = new Set<Bucket>(['unlinked', 'linked', 'bonus']);
+  const held = (unlinked: string, linked: string, bonus: string, allowed: Set<Bucket> = ALL) => ({
+    available: { unlinked, linked, bonus },
+    allowed,
+  });
+  const flat = (out: ReturnType<typeof splitAcrossGrants>) =>
+    out && [out.free, ...out.grants.flatMap((g) => [g.unlinked, g.linked, g.bonus])];
+  const same18 = (actual: (string | undefined)[] | null, expected: string[]) =>
+    actual !== null && actual.every((v, i) => moneyEquals(v ?? '', expected[i] ?? ''));
 
-  it.each([
-    ['zero draws nothing', '0', ['0', '0', '0']],
-    ['within the first grant', '10', ['10', '0', '0']],
-    ['exactly the first grant', '30', ['30', '0', '0']],
-    ['spills into the second', '45', ['30', '15', '0']],
-    ['spills into the third', '95', ['30', '50', '15']],
-    ['exactly everything', '100', ['30', '50', '20']],
-  ])('%s', (_name, fromBonus, expected) => {
-    const out = allocateBonusStake(grants, fromBonus, 'casino');
-    expect(out).not.toBeNull();
-    expect(out?.every((v, i) => moneyEquals(v, expected[i] ?? ''))).toBe(true);
-    expect(out).toHaveLength(3);
+  const twoGrants: Split['grants'] = [held('10', '20', '30'), held('5', '0', '40')];
+
+  it.each<[string, string, Split['order'], string[]]>([
+    ['zero takes nothing', '0', 'first', ['0', '0', '0', '0', '0', '0', '0']],
+    ['free money first', '50', 'first', ['50', '0', '0', '0', '0', '0', '0']],
+    [
+      'free money first spills into the first grant',
+      '115',
+      'first',
+      ['100', '10', '5', '0', '0', '0', '0'],
+    ],
+    [
+      'free money last starts on the first grant',
+      '15',
+      'last',
+      ['0', '10', '5', '0', '0', '0', '0'],
+    ],
+    [
+      'inside one grant cash goes before bonus',
+      '35',
+      'last',
+      ['0', '10', '20', '5', '0', '0', '0'],
+    ],
+    [
+      'free money last is reached after every grant',
+      '120',
+      'last',
+      ['15', '10', '20', '30', '5', '0', '40'],
+    ],
+    ['exactly everything', '205', 'first', ['100', '10', '20', '30', '5', '0', '40']],
+  ])('%s', (_name, stake, order, expected) => {
+    expect(
+      same18(flat(splitAcrossGrants({ stake, free: '100', grants: twoGrants, order })), expected),
+    ).toBe(true);
   });
 
-  it('returns null when the grants cannot cover it', () => {
-    expect(allocateBonusStake(grants, '100.000000000000000001', 'casino')).toBeNull();
+  it('is null when everything the bet may use falls short', () => {
+    expect(
+      splitAcrossGrants({
+        stake: '205.000000000000000001',
+        free: '100',
+        grants: twoGrants,
+        order: 'first',
+      }),
+    ).toBeNull();
   });
 
-  it('skips a grant that excludes the product and does not count its balance', () => {
-    const mixed = [
-      grant({ bonusBalance: '30', terms: { excludedProducts: ['casino'] } }),
-      grant({ bonusBalance: '50' }),
-    ];
-    const out = allocateBonusStake(mixed, '40', 'casino');
-    expect(out?.every((v, i) => moneyEquals(v, ['0', '40'][i] ?? ''))).toBe(true);
-    expect(allocateBonusStake(mixed, '60', 'casino')).toBeNull();
-    expect(allocateBonusStake(mixed, '60', 'live-casino')?.length).toBe(2);
+  it('never takes from a bucket the bet may not use', () => {
+    const grants = [held('10', '20', '30', new Set<Bucket>(['bonus']))];
+    expect(
+      same18(flat(splitAcrossGrants({ stake: '25', free: '0', grants, order: 'first' })), [
+        '0',
+        '0',
+        '0',
+        '25',
+      ]),
+    ).toBe(true);
+    expect(splitAcrossGrants({ stake: '31', free: '0', grants, order: 'first' })).toBeNull();
   });
 
-  it('returns null for any positive draw when every grant excludes the product', () => {
-    const all = [grant({ terms: { excludedProducts: ['pvp'] } })];
-    expect(allocateBonusStake(all, '1', 'pvp')).toBeNull();
-    expect(allocateBonusStake(all, '0', 'pvp')).toEqual(['0']);
-  });
-
-  it('returns null for an empty grant list and a positive draw', () => {
-    expect(allocateBonusStake([], '1', 'casino')).toBeNull();
-    expect(allocateBonusStake([], '0', 'casino')).toEqual([]);
+  it('is null for a positive stake with nothing to draw on', () => {
+    expect(splitAcrossGrants({ stake: '1', free: '0', grants: [], order: 'last' })).toBeNull();
   });
 
   const money = (max: bigint) =>
     fc
       .bigInt({ min: 0n, max })
       .map((u) => `${u / 10n ** 18n}.${(u % 10n ** 18n).toString().padStart(18, '0')}`);
+  const bucket = fc.constantFrom<Bucket>('unlinked', 'linked', 'bonus');
 
-  it('draws exactly the stake and never more than a grant holds', () => {
+  it('takes exactly the stake and never more than a bucket holds', () => {
     fc.assert(
       fc.property(
-        fc.array(money(10n ** 21n), { minLength: 1, maxLength: 5 }),
+        money(10n ** 21n),
+        fc.array(
+          fc.record({
+            unlinked: money(10n ** 21n),
+            linked: money(10n ** 21n),
+            bonus: money(10n ** 21n),
+            allowed: fc.uniqueArray(bucket, { maxLength: 3 }),
+          }),
+          { maxLength: 4 },
+        ),
         money(10n ** 22n),
-        (balances, stake) => {
-          const gs = balances.map((bonusBalance) => grant({ bonusBalance }));
-          const out = allocateBonusStake(gs, stake, 'casino');
-          const held = balances.reduce((s, b) => moneyAdd(s, b), '0');
+        fc.constantFrom<Split['order']>('first', 'last'),
+        (free, raw, stake, order) => {
+          const grants = raw.map((g) => held(g.unlinked, g.linked, g.bonus, new Set(g.allowed)));
+          const out = splitAcrossGrants({ stake, free, grants, order });
+          const usable = raw.reduce(
+            (sum, g) => g.allowed.reduce((s, b) => moneyAdd(s, g[b]), sum),
+            free,
+          );
           if (out === null) {
-            expect(moneyCompare(stake, held)).toBeGreaterThan(0);
+            expect(moneyCompare(stake, usable)).toBeGreaterThan(0);
             return;
           }
-          expect(
-            moneyEquals(
-              out.reduce((s, v) => moneyAdd(s, v), '0'),
-              stake,
-            ),
-          ).toBe(true);
-          out.forEach((v, i) => {
-            expect(moneyCompare(v, balances[i] ?? '0')).toBeLessThanOrEqual(0);
+          const taken = out.grants.reduce(
+            (sum, g) => moneyAdd(moneyAdd(moneyAdd(sum, g.unlinked), g.linked), g.bonus),
+            out.free,
+          );
+          expect(moneyEquals(taken, stake)).toBe(true);
+          expect(moneyCompare(out.free, free)).toBeLessThanOrEqual(0);
+          out.grants.forEach((g, i) => {
+            for (const b of ['unlinked', 'linked', 'bonus'] as const) {
+              const limit = raw[i]?.allowed.includes(b) ? (raw[i]?.[b] ?? '0') : '0';
+              expect(moneyCompare(g[b], limit)).toBeLessThanOrEqual(0);
+            }
           });
         },
       ),

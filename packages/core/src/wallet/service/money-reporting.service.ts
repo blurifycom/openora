@@ -95,7 +95,7 @@ const FLOW_BUCKETS: Record<PaymentFlowGranularity, SQL<string>> = {
   day: sql<string>`to_char(${utcCreatedAt}, 'YYYY-MM-DD')`,
   week: sql<string>`to_char(date_trunc('week', ${utcCreatedAt}), 'YYYY-MM-DD')`,
 };
-const dayAfter = (isoDay: string) => new Date(Date.parse(isoDay) + DAY_MS);
+export const dayAfter = (isoDay: string) => new Date(Date.parse(isoDay) + DAY_MS);
 
 export class MoneyReportingService implements MoneyReportingPort {
   private sportsbookLedgerFound = false;

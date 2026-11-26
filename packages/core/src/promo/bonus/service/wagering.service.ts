@@ -1044,7 +1044,7 @@ function sumOf(a: string, b: string): string {
 }
 
 /** The lowest `maxBet` among the grants that do not exempt `product`, or null when none sets one. */
-function strictestMaxBet(
+export function strictestMaxBet(
   grants: readonly LiveGrant[],
   product: BonusWagerArgs['context']['product'],
 ): string | null {
@@ -1062,7 +1062,7 @@ function strictestMaxBet(
  * order and each grant's buckets A, B, C. Free money goes first or last as the primary grant's
  * `freeFundsOrder` says. Null when everything the bet may use falls short.
  */
-function splitAcrossGrants(args: {
+export function splitAcrossGrants(args: {
   stake: string;
   free: string;
   grants: readonly { available: GrantSpend; allowed: ReadonlySet<FundBucket> }[];

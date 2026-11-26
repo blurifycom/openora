@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { dayAfter, toBucketKey } from '../financial-analytics.service.js';
+import { dayAfter, toBucketKey } from '../money-reporting.service.js';
 
 describe('toBucketKey', () => {
   it.each([
