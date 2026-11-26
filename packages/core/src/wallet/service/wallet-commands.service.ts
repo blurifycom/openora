@@ -4,6 +4,7 @@ import {
   WALLET_BET_ALREADY_REVERSED,
   WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
+  WALLET_LOCK_EXEMPT_DEBIT_TYPES,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
@@ -11,6 +12,9 @@ import {
   WalletCorrectionTypeError,
   WalletHoldWithoutWalletError,
   type AuditWritePort,
+  type BonusFundLockCommands,
+  type MovableFunds,
+  type MovableFundsArgs,
   type PlayEligibilityPort,
   type RgLimitsPort,
   type PlatformConfig,
@@ -176,8 +180,12 @@ export type WalletCommandsPorts = {
   rgLimits?: RgLimitsPort;
   bonusWagering?: BonusWageringCommands;
   bonusGrants?: BonusGrantCommands;
+  bonusFundLocks?: BonusFundLockCommands;
   identityReader?: IdentityReader;
 };
+
+const isLockExemptDebit = (type: WalletTransactionType): boolean =>
+  (WALLET_LOCK_EXEMPT_DEBIT_TYPES as readonly WalletTransactionType[]).includes(type);
 
 export class WalletCommandsService implements WalletCommands {
   private readonly significantAmountThresholds: ReadonlyMap<string, string>;
@@ -464,6 +472,20 @@ export class WalletCommandsService implements WalletCommands {
         if (debitedBalance === undefined) {
           throw new DebitRefused(available);
         }
+        if (!isLockExemptDebit(type)) {
+          const outflow = { userId, currency: debitCurrency, amount, balanceAfter: debitedBalance };
+          await this.ports.bonusFundLocks?.onOutflow(
+            sp,
+            type === 'withdrawal'
+              ? {
+                  ...outflow,
+                  outflow: 'withdrawal',
+                  actor: { id: userId, isAdmin: false },
+                  note: `withdrawal ${providerRef?.providerRefId ?? ''}`.trim(),
+                }
+              : { ...outflow, outflow: type === 'swap_out' ? 'swap' : 'transfer' },
+          );
+        }
 
         // The ledger row carries the whole stake: a bet is a bet whichever balance paid for it.
         const { row: ledgerRow, replayed } = await this.writeLedgerRow(
@@ -526,6 +548,25 @@ export class WalletCommandsService implements WalletCommands {
       bonusBalance: wagered.bonusBalanceAfter,
       wagerTrackingCredits: wagered.walletCredits,
     };
+  }
+
+  async movableFunds(tx: unknown, { userId, currency }: MovableFundsArgs): Promise<MovableFunds> {
+    const txn = tx as DrizzleDb;
+    const key = balanceKey(currency);
+    const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update');
+    if (!row) {
+      return { real: '0', locked: '0', free: '0' };
+    }
+    const real = await readWalletBalanceForUpdate(txn, row.id, key);
+    if (!this.ports.bonusFundLocks) {
+      return { real, locked: '0', free: real };
+    }
+    const { locked, free } = await this.ports.bonusFundLocks.lockedFunds(txn, {
+      userId,
+      currency: key,
+      realBalance: real,
+    });
+    return { real, locked, free };
   }
 
   /**

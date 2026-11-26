@@ -38,6 +38,8 @@ export type { OutboxWriter } from './outbox.js';
 export { OUTBOX } from './outbox.js';
 
 export type {
+  MovableFunds,
+  MovableFundsArgs,
   WalletCommands,
   WalletDebitArgs,
   WalletDebitOutcome,
@@ -55,6 +57,7 @@ export {
   WALLET_COMMANDS,
   WALLET_REVERSAL_UNMATCHED,
   WALLET_CORRECTION_DEBIT_TYPES,
+  WALLET_LOCK_EXEMPT_DEBIT_TYPES,
   WalletCommandAmountError,
   WalletCorrectionExceedsRoundError,
   WalletCorrectionRefConflictError,
@@ -86,6 +89,16 @@ export type {
 export { BONUS_GRANTS } from './bonus-grants.js';
 export type { BonusDepositArgs, BonusDepositCommands } from './bonus-deposits.js';
 export { BONUS_DEPOSITS } from './bonus-deposits.js';
+export type {
+  BonusFundLockCommands,
+  BonusFundsLockedData,
+  BonusOutflowArgs,
+  FundOutflow,
+  LockedFunds,
+  LockedFundsArgs,
+  ReadLockedFundsArgs,
+} from './bonus-fund-locks.js';
+export { BONUS_FUND_LOCKS, BonusFundsLockedError } from './bonus-fund-locks.js';
 
 export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
 export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';

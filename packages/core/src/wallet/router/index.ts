@@ -10,6 +10,7 @@ import {
   type OssContext,
 } from '@openora/core/server';
 import {
+  BonusFundsLockedError,
   DEFAULT_PAYMENT_PROVIDER,
   RATE_LIMIT_KEYS,
   RgLimitExceededError,
@@ -327,6 +328,7 @@ export function createWalletRouter({
             WithdrawalPinIncorrectError,
             WithdrawalPinLockedError,
             WithdrawalDisabledError,
+            BonusFundsLockedError,
           ],
           SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
         },
@@ -625,6 +627,7 @@ export function createWalletRouter({
               SwapPairUnsupportedError,
               IdempotencyKeyReuseError,
               SwapRefusedError,
+              BonusFundsLockedError,
             ],
             BAD_REQUEST: [InsufficientBalanceError, SwapLimitExceededError],
             // SwapFillAmountMissingError is deliberately unmapped: the vendor filled but

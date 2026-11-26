@@ -279,6 +279,25 @@ is `SPORTSBOOK_LEDGER` unchanged.
   (ADR-0046). A hold or lock that lands after an approval sends the withdrawal back to the queue
   before the provider call, and that step writes its own audit row and
   `wallet.withdrawal.requeued` event.
+- **Real money a live bonus ties up stays in its currency.** With the bonus module bound, the
+  wallet asks the sealed `BONUS_FUND_LOCKS` port after every debit but a bet, a loss, an admin
+  debit or a correction, on that debit's transaction. A grant's real-cash buckets lock when
+  its terms say so, and a deposit grant's do by default. Locked money is
+  `min(real balance, Σ A + B)` over the player's active, unexpired locking grants in that
+  currency. An outflow that would dip into it is refused with `BonusFundsLockedError` (CONFLICT,
+  the operator's `promo.bonus.lockedFundsMessage`) and rolls back. A withdrawal does this only
+  when `promo.bonus.withdrawalWhileActive` is `block`; under the default `forfeit` it forfeits
+  every live grant instead, through `BONUS_LIFECYCLE.forfeitHeld` when no module binds the lock.
+  The optional `WALLET_COMMANDS.movableFunds` reports the same figure under the same locks, for a
+  transfer's own transaction (ADR-0064). For display, `GET /wallet/balance`, `GET /wallet/balances`
+  and the `wallet.activity` agent tool add optional `locked` and `free` to each balance when a
+  bonus module is loaded, from the same computation in one snapshot without row locks. Staff
+  read the same figures for one player on `GET /backoffice/promo/players/{userId}/funds`
+  (`transaction:view` and `bonus:view`), where `locked` and `free` are always present. `locked`
+  holds back a swap or transfer always, and a withdrawal only in `block` mode; in `forfeit` mode a
+  withdrawal of any size forfeits every live grant. An operator clawback goes through an admin or correction debit,
+  which the lock never checks. A process that loads the wallet without the bonus module, a split
+  manifest included, fails its boot in `block` mode and locks nothing in `forfeit` mode.
 - **A correction debit is never refused for a short balance.** It collects what the balance holds
   and reports the rest as a shortfall the calling module records as debt. Its ledger row carries
   what was collected and what was asked, a zero collection included, so a retry with the same

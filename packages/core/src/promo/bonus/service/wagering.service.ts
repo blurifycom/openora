@@ -31,6 +31,7 @@ import {
 } from '../schema/index.js';
 import { isRealMoneyOnlyProduct, type StakeWagerInputs } from '../contract/index.js';
 import { attributeStake } from '../shared/stake-attribution.js';
+import { isLiveGrantIn } from '../shared/live-grant.js';
 import { effectiveContribution, weightedStake } from '../shared/wagering-weight.js';
 import {
   DEFAULT_FUND_SETTINGS,
@@ -524,14 +525,7 @@ export class WageringService implements BonusWageringCommands {
         createdAt: promoGrant.createdAt,
       })
       .from(promoGrant)
-      .where(
-        and(
-          eq(promoGrant.userId, userId),
-          eq(promoGrant.currency, currency),
-          eq(promoGrant.status, 'active'),
-          sql`${promoGrant.expiresAt} > now()`,
-        ),
-      )
+      .where(isLiveGrantIn(userId, currency))
       .orderBy(asc(promoGrant.id))
       .for('update');
     return rows.sort(
