@@ -285,3 +285,64 @@ test('NEW-ENV lists only env vars absent at the base ref, once each', () => {
     ['NEW-ENV: NEW_ONE - apps/api/src/cfg.ts:1'],
   );
 });
+
+test('ROSTER spawns only the lenses the diff needs', () => {
+  for (const [name, files, want, unwanted] of [
+    [
+      'docs',
+      { 'docs/guide.md': 'notes\n' },
+      ['ROSTER: none - '],
+      ['ROSTER: quality', 'ROSTER: risk', 'ROSTER-ASK'],
+    ],
+    [
+      'ui',
+      { 'apps/web/src/shell/components/card.tsx': 'export const Card = () => null;\n' },
+      ['ROSTER: quality - 1 runtime files'],
+      ['ROSTER: risk', 'ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'srv',
+      { 'apps/api/src/routes/games.ts': 'export const byId = 1;\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'money',
+      { 'apps/web/src/hooks/use-wallet.ts': 'export const withdraw = 1;\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK critical'],
+      ['ROSTER-ASK'],
+    ],
+    [
+      'kw',
+      {
+        'apps/web/src/shell/components/session-skeleton.tsx':
+          'export const S = () => null; // session\n',
+      },
+      ['ROSTER: quality - ', 'ROSTER-ASK: risk - domain keywords in 1 files'],
+      ['ROSTER: risk', 'ROSTER: none'],
+    ],
+    [
+      'kwdoc',
+      { 'docs/wallet-notes.md': 'notes\n' },
+      ['ROSTER-ASK: risk - '],
+      ['ROSTER: quality', 'ROSTER: risk', 'ROSTER: none'],
+    ],
+  ]) {
+    git('checkout', '-q', '-b', `roster-${name}-base`, 'dev');
+    git('checkout', '-q', '-b', `roster-${name}`);
+    commit(name, files);
+    const out = precheck('--base', `roster-${name}-base`, '--head', `roster-${name}`);
+    for (const prefix of want) {
+      assert.ok(
+        out.some((row) => row.startsWith(prefix)),
+        `${name} wants ${prefix}:\n${out.join('\n')}`,
+      );
+    }
+    for (const prefix of unwanted) {
+      assert.ok(
+        !out.some((row) => row.startsWith(prefix)),
+        `${name} must not print ${prefix}:\n${out.join('\n')}`,
+      );
+    }
+  }
+});

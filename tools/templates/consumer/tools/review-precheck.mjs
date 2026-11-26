@@ -551,7 +551,33 @@ const reviewableChanged = reviewable.reduce(
 console.log(
   `SCOPE: files ${scoped.length} lines +${totals.added}/-${totals.deleted} reviewable ${reviewable.length} (${reviewableChanged} changed lines) skipped ${skipped.length} mode ${mode}`,
 );
-console.log(`RISK: ${riskTier()}`);
+const risk = riskTier();
+const RUNTIME_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|css|scss|sql)$/;
+const roster = () => {
+  const runtime = reviewable.filter((path) => RUNTIME_FILE.test(path) || isBackend(path));
+  const keywordFiles = [
+    ...new Set([...domainHitFiles.values()].flat().filter((path) => !E2E_PATH.test(path))),
+  ];
+  const rows = [];
+  if (runtime.length > 0) {
+    rows.push(`ROSTER: quality - ${runtime.length} runtime files, first ${runtime[0]}`);
+  }
+  if (/^(high|critical)\b/.test(risk)) {
+    rows.push(`ROSTER: risk - RISK ${risk}`);
+  } else if (keywordFiles.length > 0) {
+    rows.push(
+      `ROSTER-ASK: risk - domain keywords in ${keywordFiles.length} files outside server and logic code, first ${keywordFiles[0]}`,
+    );
+  }
+  return rows.length > 0
+    ? rows
+    : [
+        'ROSTER: none - no runtime file and no domain keyword; the orchestrator covers every dimension',
+      ];
+};
+
+console.log(`RISK: ${risk}`);
+roster().forEach((row) => console.log(row));
 notes.forEach((note) => console.log(note));
 reviewable.forEach((path) =>
   console.log(`REVIEWABLE: ${path} +${lines(path).added}/-${lines(path).deleted}`),
