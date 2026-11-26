@@ -10,6 +10,7 @@ import {
   PLAYER_ACTIVITY_TRACKER,
   PLAYER_ACCOUNT_MANAGER_READER,
   McpToolError,
+  normalizeKycStatus,
   EXCHANGE_RATE_READER,
   JOB_QUEUE,
   domainEventSchemas,
@@ -126,7 +127,7 @@ export default {
       return async ({ playerId }) => {
         try {
           const { id, ...detail } = await players.get(playerId);
-          return { playerId: id, ...detail };
+          return { playerId: id, ...detail, kycStatus: normalizeKycStatus(detail.kycStatus) };
         } catch (err) {
           throw err instanceof PlayerNotFoundError ? new McpToolError('player_not_found') : err;
         }

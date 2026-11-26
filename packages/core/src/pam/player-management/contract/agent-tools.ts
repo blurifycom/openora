@@ -29,10 +29,8 @@ export const playerSummaryTool = defineMcpTool({
   id: 'player.summary',
   title: 'Player summary',
   description:
-    "Returns one player's account record: username, email, name, date of birth, phone, country, " +
-    'currency, status, KYC status, level, lifetime wagered and deposited totals, last-seen time, ' +
-    'timezone and active tags. Use it to look a player up by player id before judging or ' +
-    'proposing anything about them.',
+    "Returns one player's account summary by player ID, including account and KYC status, " +
+    'country, currency, level, lifetime wagered and deposited totals, last-seen time and active tags.',
   class: 'read',
   schemaVersion: 1,
   iam: { resource: 'player', action: 'view' },
