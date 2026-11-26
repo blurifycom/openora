@@ -22,7 +22,7 @@ const LAG_THRESHOLD_MS = 60_000;
 
 const logger = createLogger('outbox-relay');
 
-export type EventOutboxBacklog = { pending: number; oldestPendingAgeMs: number };
+type EventOutboxBacklog = { pending: number; oldestPendingAgeMs: number };
 
 /**
  * Unpublished `event_outbox` rows (claimed or not) and the age of the oldest, both read on the

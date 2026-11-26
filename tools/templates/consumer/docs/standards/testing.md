@@ -12,18 +12,19 @@ Before the PR opens:
 1. Drive the change against the running stack. Reach for the **Playwright CLI** first
    (`playwright-cli`, or a throwaway spec that clicks through the flow) - it costs a fraction of
    the tokens a browser MCP does. Use a browser MCP only for a live console or network read the CLI
-   cannot give you. No videos in this pass, except a fix's "before" clip, taken when you reproduce
-   the bug: the code can still change before review is clean. Every changed screen gets the
+   cannot give you. No videos in this pass, except a fix's "before" clip, recorded on the base
+   branch when you reproduce the bug: the code can still change before review is clean. Every changed screen gets the
    `ui-verify` skill's screenshot review: four shots (mobile and desktop, light and dark), each
    read for layout defects and given a PASS or FAIL line. Screenshots are for the agent, videos
    for the reviewer.
 2. Capture the evidence once, on the final commit, after the tests are green and review is clean:
-   one short clip per acceptance criterion, ending on the outcome it names, and the "after" twin
-   of a fix's "before" clip, joined with the four shots per changed screen into one walkthrough
-   video (`ui-verify` "Video evidence"). Run every browser spec that drives an AC in one command with video on
+   one clip per acceptance criterion with its whole flow in one take, from the screen the user starts
+   on to the outcome it names (never a few seconds of the end state), plus a "before" clip
+   recorded on the base branch on a fix (`ui-verify` "Video evidence"); a change that only alters how a
+   screen looks gets before and after screenshots instead. Run every browser spec that drives an AC in one command with video on
    (`test.use({ video: 'on' })` or the repo's record switch); `playwright-cli` with `video-start` /
-   `video-stop` only for an AC no spec drives. An API-only change attaches the request/response
-   trace instead.
+   `video-stop` only for an AC no spec drives. An API-only AC still gets its row, with sample
+   request/response output instead of a clip.
 3. Attach that evidence **to the PR description**, not only to your report - a reviewer confirms a
    change by looking at it.
 4. Write the tests that pass exercised, in this branch, at the tier the table below names. Include

@@ -14,6 +14,7 @@ import { posix } from 'node:path';
 
 const MAX_LINES_PER_CHECK = 25;
 const MAX_HITS_PER_DOMAIN = 20;
+const E2E_PATH = /(^|\/)e2e\//;
 const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 
 const die = (message) => {
@@ -451,6 +452,7 @@ const DOMAIN_PATTERNS = {
   ],
 };
 const domainHitFiles = new Map();
+const cappedDomains = [];
 for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
   const patterns = [...defaults, ...(config.domainPatterns?.[domain] ?? [])].map(
     (source) => new RegExp(source, 'i'),
@@ -473,6 +475,8 @@ for (const [domain, defaults] of Object.entries(DOMAIN_PATTERNS)) {
       }),
     ),
   ];
+  if (hits.length > MAX_HITS_PER_DOMAIN)
+    cappedDomains.push(`${domain} hits ${hits.length} past the list cap`);
   domainHitFiles.set(
     domain,
     hits.map((hit) => hit.split(' - ')[0].replace(/:\d+$/, '')),
@@ -497,11 +501,26 @@ const BACKEND_PATHS = [
   /\.sql$/,
   /(^|\/)(\.env|env\.ts|Dockerfile|package\.json$)/,
   /(^|\/)\.github\/workflows\//,
+  /(^|\/)(\.gitlab-ci\.ya?ml|\.gitlab\/ci\/.*|(docker-)?compose[^/]*\.ya?ml|[^/]*nginx[^/]*|\.npmrc|pnpm-workspace\.yaml|\.rulesync\/sync\.json)$/,
+  /(^|\/)(next\.config|middleware|instrumentation)\.[cm]?[jt]s$/,
+  /\.html$/,
 ];
+const DOC_FILE = /\.(md|mdx|txt)$/;
+const SERVER_MARK = /^\s*['"]use server['"]|['"]server-only['"]/m;
+const headText = (path) => {
+  const show = spawnSync('git', ['show', `${args.head}:${path}`], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return show.status === 0 ? show.stdout : '';
+};
+const serverMarked = new Set(
+  reviewable.filter((path) => CODE_FILE.test(path) && SERVER_MARK.test(headText(path))),
+);
 const FRONTEND_LOGIC_PATHS = [/(^|\/)(hooks?|utils?|lib|stores?)\//, /\.[cm]?[jt]s$/];
 
-const E2E_PATH = /(^|\/)e2e\//;
-const isBackend = (path) => BACKEND_PATHS.some((re) => re.test(path));
+const isBackend = (path) =>
+  serverMarked.has(path) || (!DOC_FILE.test(path) && BACKEND_PATHS.some((re) => re.test(path)));
 const isLogic = (path) => !E2E_PATH.test(path) && FRONTEND_LOGIC_PATHS.some((re) => re.test(path));
 
 // A security keyword in a component or a layout ("session" in a skeleton, an `href`) says little;
@@ -551,7 +570,35 @@ const reviewableChanged = reviewable.reduce(
 console.log(
   `SCOPE: files ${scoped.length} lines +${totals.added}/-${totals.deleted} reviewable ${reviewable.length} (${reviewableChanged} changed lines) skipped ${skipped.length} mode ${mode}`,
 );
-console.log(`RISK: ${riskTier()}`);
+const risk = riskTier();
+const RUNTIME_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|css|scss|sql)$/;
+const roster = () => {
+  const runtime = reviewable.filter((path) => RUNTIME_FILE.test(path) || isBackend(path));
+  const keywordFiles = [
+    ...new Set([...domainHitFiles.values()].flat().filter((path) => !E2E_PATH.test(path))),
+  ];
+  const rows = [];
+  if (runtime.length > 0) {
+    rows.push(`ROSTER: quality - ${runtime.length} runtime files, first ${runtime[0]}`);
+  }
+  if (/^(high|critical)\b/.test(risk)) {
+    rows.push(`ROSTER: risk - RISK ${risk}`);
+  } else if (cappedDomains.length > 0) {
+    rows.push(`ROSTER: risk - ${cappedDomains[0]}`);
+  } else if (keywordFiles.length > 0) {
+    rows.push(
+      `ROSTER-ASK: risk - domain keywords in ${keywordFiles.length} files outside server and logic code, first ${keywordFiles[0]}`,
+    );
+  }
+  return rows.length > 0
+    ? rows
+    : [
+        'ROSTER: none - no runtime file and no domain keyword; the orchestrator covers every dimension',
+      ];
+};
+
+console.log(`RISK: ${risk}`);
+roster().forEach((row) => console.log(row));
 notes.forEach((note) => console.log(note));
 reviewable.forEach((path) =>
   console.log(`REVIEWABLE: ${path} +${lines(path).added}/-${lines(path).deleted}`),

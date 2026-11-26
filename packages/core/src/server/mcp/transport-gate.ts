@@ -57,7 +57,7 @@ export function originVerdict(
   return allowedOrigins.includes(origin) ? 'allowed' : 'refused';
 }
 
-export function retryAfterSeconds(retryAfterMs: number) {
+function retryAfterSeconds(retryAfterMs: number) {
   return Math.max(1, Math.ceil(retryAfterMs / 1000));
 }
 
@@ -170,7 +170,7 @@ export function invalidToken() {
   );
 }
 
-export function rateLimited(retryAfter: number) {
+function rateLimited(retryAfter: number) {
   return jsonRpcError(
     429,
     { code: JSON_RPC_SERVER_ERROR, message: 'Too many requests' },
@@ -178,7 +178,7 @@ export function rateLimited(retryAfter: number) {
   );
 }
 
-export function limiterUnavailable() {
+function limiterUnavailable() {
   return jsonRpcError(
     503,
     { code: JSON_RPC_SERVER_ERROR, message: 'Service unavailable' },

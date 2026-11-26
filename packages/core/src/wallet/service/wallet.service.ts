@@ -400,7 +400,7 @@ const MalformedDepositEventError = createDomainError<[externalId: string]>(
   (externalId) => `Deposit event ${externalId || '(empty id)'} carries no usable amount or id`,
 );
 
-export const AmbiguousDepositAddressError = createDomainError(
+const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
   (address, network) =>
     `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
@@ -412,7 +412,7 @@ const WITHDRAWAL_ADDRESS_LIMIT = 50;
 
 // A new payout address cannot be paid to for this long, so a stolen session cannot add its own
 // address and empty the wallet before the owner sees the mail.
-export const WITHDRAWAL_ADDRESS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const WITHDRAWAL_ADDRESS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddress {
   return {
@@ -584,7 +584,7 @@ export function assertDepositAllowed(
   }
 }
 
-function depositFloor(assets: readonly DepositAsset[], network?: string) {
+export function depositFloor(assets: readonly DepositAsset[], network?: string) {
   const wanted = network?.toUpperCase();
   const applicable = wanted
     ? assets.filter((asset) => asset.network.toUpperCase() === wanted)
@@ -856,7 +856,7 @@ export function depositStatusIsNoOp(
   );
 }
 
-function soleNetworkForCurrency(
+export function soleNetworkForCurrency(
   rows: readonly Pick<WalletDepositAddress, 'currency' | 'network'>[],
   currency: string,
 ) {
@@ -1066,7 +1066,7 @@ type ReferenceSnapshot = Pick<
   'referenceCurrency' | 'referenceAmount' | 'referenceRate' | 'referenceRateAsOf'
 >;
 
-function payoutAmount(tx: Pick<WalletTransaction, 'amount' | 'fee'>): string {
+export function payoutAmount(tx: Pick<WalletTransaction, 'amount' | 'fee'>): string {
   return tx.fee === null ? tx.amount : moneySubtract(tx.amount, tx.fee);
 }
 

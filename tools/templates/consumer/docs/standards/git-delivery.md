@@ -27,6 +27,5 @@ Read this before a commit, PR, or branch operation.
   own terminal.
 - Branch off `dev`; never commit directly to a shared branch; never push without an explicit
   per-action "yes push", except the ticket branch `/ship` opens its MR from.
-- PR description is a review pack: the ticket key, "How it was checked", then only the sections
-  whose trigger fires (the `create-pr` skill lists them). No secrets,
+- PR description is a review pack: the ticket key, then the same 14 slots in order, `N/A: <reason>` where one does not apply (the `create-pr` skill lists them). No secrets,
   internal hostnames, or PII - it is the public record.

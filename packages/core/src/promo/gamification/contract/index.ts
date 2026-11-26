@@ -7,6 +7,8 @@ import {
   MoneyAmountSchema,
   RAKEBACK_BASES,
   RANK_PERIODIC_BASES,
+  RANK_PERIODIC_REWARD_KINDS,
+  RANK_PERIODIC_REWARD_STATUSES,
   TimestampSchema,
   UuidSchema,
   WAGER_PRODUCTS,
@@ -39,9 +41,23 @@ export type RankTier = z.infer<typeof RankTierSchema>;
 /** `flat` pays the daily, weekly and monthly amounts; `margin` pays their percents of the margin. */
 const RankPeriodicBasisSchema = z.enum(RANK_PERIODIC_BASES);
 
+/** `bonus` grants a wagered bonus under the kind's terms; `claim` leaves a real-cash reward for the player to claim. */
+export const RANK_PERIODIC_PAYOUT_MODES = ['bonus', 'claim'] as const;
+export const RankPeriodicPayoutModeSchema = z.enum(RANK_PERIODIC_PAYOUT_MODES);
+export type RankPeriodicPayoutMode = z.infer<typeof RankPeriodicPayoutModeSchema>;
+
+/** How each periodic kind pays; a kind with no terms configured reads as `bonus`. */
+export const RankPeriodicPayoutSchema = z.object({
+  daily: RankPeriodicPayoutModeSchema,
+  weekly: RankPeriodicPayoutModeSchema,
+  monthly: RankPeriodicPayoutModeSchema,
+});
+export type RankPeriodicPayout = z.infer<typeof RankPeriodicPayoutSchema>;
+
 export const PlayerRankSchema = z.object({
   currency: CurrencyTickerSchema,
   periodicBasis: RankPeriodicBasisSchema,
+  periodicPayout: RankPeriodicPayoutSchema,
   lifetimeWagered: MoneyAmountSchema,
   tierId: UuidSchema.nullable(),
   tiers: z.array(RankTierSchema),
@@ -52,6 +68,7 @@ export type PlayerRank = z.infer<typeof PlayerRankSchema>;
 export const RankLadderSchema = z.object({
   currency: CurrencyTickerSchema,
   periodicBasis: RankPeriodicBasisSchema,
+  periodicPayout: RankPeriodicPayoutSchema,
   tiers: z.array(RankTierSchema),
 });
 
@@ -171,10 +188,20 @@ export const RankRewardTermsSchema = z.object({
   maxWinMultiplier: MoneyAmountSchema.refine(isAbsentOrPositive, 'must be above zero').nullish(),
 });
 
-/**
- * Ladder-wide settings. A reward kind left out is not paid, whatever amount a tier carries for
- * it - an amount without terms is a bonus nobody decided how to wager.
- */
+export type RankRewardTerms = z.infer<typeof RankRewardTermsSchema>;
+
+/** Level-up is always a bonus: `payout: 'claim'` is refused rather than dropped. */
+const RankLevelUpRewardTermsSchema = RankRewardTermsSchema.extend({
+  payout: z.literal('bonus').optional(),
+});
+
+/** A periodic reward's terms. `payout` left out is `bonus`; `claim` takes no bonus terms and drops any sent. */
+export const RankPeriodicRewardTermsSchema = z.union([
+  RankRewardTermsSchema.extend({ payout: z.literal('bonus').optional() }),
+  z.object({ payout: z.literal('claim') }),
+]);
+export type RankPeriodicRewardTerms = z.infer<typeof RankPeriodicRewardTermsSchema>;
+
 /**
  * When a periodic payout lands, and therefore what period it pays for: the two are one setting,
  * so a payout can never run on a Friday for a Monday-to-Monday week. All in UTC.
@@ -253,10 +280,10 @@ export const RankConfigSchema = z.object({
   rankChallengeEligibleProducts: RankPerkProductsSchema,
   rewards: z
     .object({
-      levelUp: RankRewardTermsSchema,
-      daily: RankRewardTermsSchema,
-      weekly: RankRewardTermsSchema,
-      monthly: RankRewardTermsSchema,
+      levelUp: RankLevelUpRewardTermsSchema,
+      daily: RankPeriodicRewardTermsSchema,
+      weekly: RankPeriodicRewardTermsSchema,
+      monthly: RankPeriodicRewardTermsSchema,
     })
     .partial(),
   payoutAnchors: RankPayoutAnchorsSchema.prefault(DEFAULT_PAYOUT_ANCHORS),
@@ -773,6 +800,77 @@ export const VoidRakebackAccrualInputSchema = z.object({
 });
 export type VoidRakebackAccrualInput = z.infer<typeof VoidRakebackAccrualInputSchema>;
 
+export { RANK_PERIODIC_REWARD_KINDS, RANK_PERIODIC_REWARD_STATUSES };
+export const RankPeriodicRewardKindSchema = z.enum(RANK_PERIODIC_REWARD_KINDS);
+export type RankPeriodicRewardKind = z.infer<typeof RankPeriodicRewardKindSchema>;
+
+export const RankPeriodicRewardStatusSchema = z.enum(RANK_PERIODIC_REWARD_STATUSES);
+export type RankPeriodicRewardStatus = z.infer<typeof RankPeriodicRewardStatusSchema>;
+
+export const RANK_REWARD_CLAIM_BLOCKERS = ['restricted', 'account_blocked'] as const;
+export const RankRewardClaimBlockerSchema = z.enum(RANK_REWARD_CLAIM_BLOCKERS);
+export type RankRewardClaimBlocker = z.infer<typeof RankRewardClaimBlockerSchema>;
+
+/** One claim-mode periodic payout. `amount` is in `currency`, already converted when the period closed. */
+export const RankPeriodicRewardSchema = z.object({
+  id: UuidSchema,
+  kind: RankPeriodicRewardKindSchema,
+  periodKey: z.string(),
+  periodStart: TimestampSchema,
+  periodEnd: TimestampSchema,
+  currency: CurrencyTickerSchema,
+  amount: MoneyAmountSchema,
+  status: RankPeriodicRewardStatusSchema,
+  createdAt: TimestampSchema,
+  settledAt: TimestampSchema.nullable(),
+});
+export type RankPeriodicReward = z.infer<typeof RankPeriodicRewardSchema>;
+
+export const RANK_REWARDS_RECENT_LIMIT = 20;
+export const RANK_REWARDS_CLAIMABLE_LIMIT = 100;
+/** The wallet transaction's `providerName` on every rank reward credit; its `providerRefId` is the reward id. */
+export const RANK_PERIODIC_REWARD_PROVIDER_NAME = 'rank-periodic-reward';
+
+export const RankPeriodicRewardsSchema = z.object({
+  /** Oldest first; the next ones show once these are claimed. */
+  claimable: z.array(RankPeriodicRewardSchema).max(RANK_REWARDS_CLAIMABLE_LIMIT),
+  /** The latest claimed or auto-paid rewards, newest first. */
+  recent: z.array(RankPeriodicRewardSchema).max(RANK_REWARDS_RECENT_LIMIT),
+  /** Why a claim would be refused right now; null when it would pay. */
+  claimBlockedBy: RankRewardClaimBlockerSchema.nullable(),
+});
+export type RankPeriodicRewards = z.infer<typeof RankPeriodicRewardsSchema>;
+
+export const ClaimRankPeriodicRewardInputSchema = z.object({
+  rewardId: UuidSchema,
+  idempotencyKey: UuidSchema,
+});
+
+export const RankPeriodicRewardClaimResultSchema = z.object({
+  rewardId: UuidSchema,
+  kind: RankPeriodicRewardKindSchema,
+  currency: CurrencyTickerSchema,
+  amount: MoneyAmountSchema,
+});
+export type RankPeriodicRewardClaimResult = z.infer<typeof RankPeriodicRewardClaimResultSchema>;
+
+export const AdminRankPeriodicRewardSchema = RankPeriodicRewardSchema.extend({
+  userId: UuidSchema,
+  tierId: UuidSchema,
+  /** What the ladder owed, before conversion into `currency`. */
+  ladderCurrency: CurrencyTickerSchema,
+  ladderAmount: MoneyAmountSchema,
+  transactionId: UuidSchema.nullable(),
+});
+export type AdminRankPeriodicReward = z.infer<typeof AdminRankPeriodicRewardSchema>;
+
+export const ListRankPeriodicRewardsInputSchema = PageQuerySchema.extend({
+  userId: UuidSchema.optional(),
+  status: RankPeriodicRewardStatusSchema.optional(),
+  kind: RankPeriodicRewardKindSchema.optional(),
+});
+export type ListRankPeriodicRewardsInput = z.infer<typeof ListRankPeriodicRewardsInputSchema>;
+
 export const gamificationContract = {
   ranks: {
     get: oc.route({ method: 'GET', path: '/promo/ranks' }).output(PlayerRankSchema),
@@ -797,6 +895,17 @@ export const gamificationContract = {
     players: oc
       .route({ method: 'GET', path: '/promo/ranks/players' })
       .output(z.array(RankPlayersEntrySchema)),
+
+    /** The player's claim-mode daily, weekly and monthly rewards: unclaimed, and the latest paid. */
+    rewards: oc
+      .route({ method: 'GET', path: '/promo/ranks/rewards' })
+      .output(RankPeriodicRewardsSchema),
+
+    /** Pays one reward to the real balance. A retry with the same key returns the first result. */
+    claimReward: oc
+      .route({ method: 'POST', path: '/promo/ranks/rewards/{rewardId}/claim' })
+      .input(ClaimRankPeriodicRewardInputSchema)
+      .output(RankPeriodicRewardClaimResultSchema),
   },
 
   streaks: {
@@ -886,6 +995,11 @@ export const gamificationContract = {
         .route({ method: 'PUT', path: '/backoffice/promo/ranks' })
         .input(SetRankLadderInputSchema)
         .output(RankLadderSchema),
+
+      rewards: oc
+        .route({ method: 'GET', path: '/backoffice/promo/ranks/rewards' })
+        .input(ListRankPeriodicRewardsInputSchema)
+        .output(paginated(AdminRankPeriodicRewardSchema)),
 
       config: {
         get: oc

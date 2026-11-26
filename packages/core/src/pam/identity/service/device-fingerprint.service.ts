@@ -13,7 +13,7 @@ const UNKNOWN_DEVICE_LABEL = 'Unknown device';
 // Browsers ship a new build every few weeks and every one of them changes the
 // User-Agent. Comparing raw strings would revoke every Backoffice session on each
 // auto-update, so the fingerprint keeps only the major version of each token.
-export function normalizeUserAgent(userAgent: string | null | undefined): string {
+function normalizeUserAgent(userAgent: string | null | undefined): string {
   if (!userAgent) {
     return '';
   }

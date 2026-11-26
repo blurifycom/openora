@@ -1,9 +1,13 @@
-import type { RankPayoutAnchors } from '../contract/index.js';
+import {
+  RANK_PERIODIC_REWARD_KINDS,
+  type RankPayoutAnchors,
+  type RankPeriodicRewardKind,
+} from '../contract/index.js';
 
 /** The kinds that pay for a period, and therefore accumulate one. */
-export const RANK_PERIOD_KINDS = ['daily', 'weekly', 'monthly'] as const;
+export const RANK_PERIOD_KINDS = RANK_PERIODIC_REWARD_KINDS;
 
-export type RankPeriodKind = (typeof RANK_PERIOD_KINDS)[number];
+export type RankPeriodKind = RankPeriodicRewardKind;
 
 export type RankPeriod = {
   /** Inclusive. */

@@ -13,7 +13,7 @@ const toUuid = (hex: string) =>
  * An id prefix as the uuid range it covers, so the lookup rides the primary key instead of
  * casting every row's id to text. Null when the input cannot be the start of a uuid.
  */
-export function uuidPrefixRange(search: string): { from: string; to: string } | null {
+function uuidPrefixRange(search: string): { from: string; to: string } | null {
   const hex = search.toLowerCase().replaceAll('-', '');
   if (!HEX_PREFIX.test(hex) || hex.length > UUID_HEX_LENGTH) {
     return null;

@@ -74,6 +74,9 @@ export type PromoOfferStatus = z.infer<typeof PromoOfferStatusSchema>;
 
 /** How the rank daily, weekly and monthly bonuses are sized; see `promo.rankPeriodic.basis`. */
 export const RANK_PERIODIC_BASES = ['flat', 'margin'] as const;
+export const RANK_PERIODIC_REWARD_KINDS = ['daily', 'weekly', 'monthly'] as const;
+/** `auto_paid`: paid without a claim, on self-exclusion or account closure. */
+export const RANK_PERIODIC_REWARD_STATUSES = ['claimable', 'claimed', 'auto_paid'] as const;
 export type RankPeriodicBasis = (typeof RANK_PERIODIC_BASES)[number];
 
 /** Which stake advances rank progress; see `promo.ranks.progressBasis`. */

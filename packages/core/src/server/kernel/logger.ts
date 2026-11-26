@@ -26,7 +26,7 @@ function levelAndDestination(): [string, typeof DISCARD | undefined] {
   return level === 'silent' ? ['info', DISCARD] : [level, undefined];
 }
 
-export function activeTraceLogFields(): Record<string, string> {
+function activeTraceLogFields(): Record<string, string> {
   const spanContext = trace.getActiveSpan()?.spanContext();
   if (!spanContext || !isSpanContextValid(spanContext)) {
     return {};
@@ -186,7 +186,7 @@ function stockErr(value: unknown): unknown {
  * pino's default `err` serializer writes a drizzle query error's message and stack, which
  * carry the bound parameters; a postgres error's `detail` and `where` carry row values.
  */
-export function safeErr(err: unknown) {
+function safeErr(err: unknown) {
   return isError(err) && carriesBoundValues(err, new Set())
     ? scrubbed(err, new Set())
     : stockErr(err);
@@ -208,7 +208,7 @@ function reportable(err: Error, ancestors: ReadonlySet<Error>): Error {
 }
 
 /** The error the bound reporter receives: the original unless it carries bound values. */
-export function reportableError(err: unknown) {
+function reportableError(err: unknown) {
   return isError(err) && carriesBoundValues(err, new Set()) ? reportable(err, new Set()) : err;
 }
 

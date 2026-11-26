@@ -76,7 +76,7 @@ export function posix(path: string): string {
   return path.split(sep).join('/');
 }
 
-export function substitute(content: string, vars: Record<string, string>): string {
+function substitute(content: string, vars: Record<string, string>): string {
   return content.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
     const value = vars[key];
     return value === undefined ? match : value;
@@ -96,11 +96,11 @@ function walk(dir: string): string[] {
   return out;
 }
 
-export function undotSegment(segment: string): string {
+function undotSegment(segment: string): string {
   return segment.startsWith('__dot__') ? `.${segment.slice('__dot__'.length)}` : segment;
 }
 
-export function outputPath(templateRel: string): string {
+function outputPath(templateRel: string): string {
   const mapped = templateRel.split(sep).map(undotSegment).join(sep);
   return mapped.endsWith('.tpl') ? mapped.slice(0, -'.tpl'.length) : mapped;
 }

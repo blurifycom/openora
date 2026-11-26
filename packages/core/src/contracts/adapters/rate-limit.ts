@@ -40,6 +40,7 @@ export const RATE_LIMIT_KEYS = {
   GEO_CHECK_IP: 'geo-check-ip',
   PROMO_PUBLIC_OFFERS_IP: 'promo-public-offers-ip',
   RAKEBACK_CLAIM: 'rakeback-claim',
+  RANK_REWARD_CLAIM: 'rank-reward-claim',
   MCP_TOKEN_MINUTE: 'mcp-token-min',
   MCP_TOKEN_DAY: 'mcp-token-day',
   MCP_IP_MINUTE: 'mcp-ip-min',

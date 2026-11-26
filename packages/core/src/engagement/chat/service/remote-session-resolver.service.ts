@@ -15,10 +15,10 @@ import {
 // how stale a sign-out that no event announces (the player's own logout) can be, and how
 // stale the idle clock identity keeps (its shortest window is 15 minutes, its write throttle
 // 60 seconds).
-export const SESSION_CACHE_TTL_MS = 5_000;
+const SESSION_CACHE_TTL_MS = 5_000;
 const SESSION_CACHE_MAX_ENTRIES = 10_000;
 // While identity is down every request fails; one line per this long says so, with the count.
-export const FAILURE_LOG_INTERVAL_MS = 30_000;
+const FAILURE_LOG_INTERVAL_MS = 30_000;
 
 // The cookies that carry a better-auth session: its token, and the `__Secure-` form it uses over
 // https. The rest of a jar (analytics, consent, other apps on the domain) is neither forwarded
