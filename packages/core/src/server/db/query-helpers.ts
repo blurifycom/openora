@@ -116,6 +116,14 @@ export function moneyCompare(a: string, b: string): -1 | 0 | 1 {
   return diff < 0n ? -1 : diff > 0n ? 1 : 0;
 }
 
+export function moneyMin(a: string, b: string): string {
+  return moneyCompare(a, b) <= 0 ? a : b;
+}
+
+export function moneyMax(a: string, b: string): string {
+  return moneyCompare(a, b) >= 0 ? a : b;
+}
+
 // Exact decimal multiplication of two money amounts (`amount * factor`), via the same
 // bigint minor-units path as moneyEquals/moneyCompare - never JS float. Both operands are
 // non-negative decimal strings; the result is truncated (not rounded) to MONEY_SCALE.

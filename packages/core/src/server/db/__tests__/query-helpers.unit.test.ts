@@ -11,6 +11,8 @@ import {
   moneyDivide,
   moneyEquals,
   moneyFloorToScale,
+  moneyMax,
+  moneyMin,
   moneyMultiplyDivide,
   moneyScaleBy,
   moneySubtract,
@@ -47,6 +49,41 @@ const signedMoney = fc
 const scale = fc.integer({ min: 0, max: MONEY_SCALE });
 
 describe('money arithmetic', () => {
+  describe('moneyMin and moneyMax', () => {
+    it('pick the smaller and the larger amount by minor units', () => {
+      fc.assert(
+        fc.property(signedMoney, signedMoney, (a, b) => {
+          const smallerFirst = moneyToUnits(a) <= moneyToUnits(b);
+          expect(moneyMin(a, b)).toBe(smallerFirst ? a : b);
+          expect(moneyMax(a, b)).toBe(smallerFirst && moneyToUnits(a) !== moneyToUnits(b) ? b : a);
+        }),
+      );
+    });
+
+    it.each([
+      ['1.0', '1'],
+      ['1', '1.000'],
+      ['-0.50', '-0.5'],
+    ])('keep the first of equal amounts %s and %s', (a, b) => {
+      expect(moneyMin(a, b)).toBe(a);
+      expect(moneyMax(a, b)).toBe(a);
+    });
+
+    it.each([
+      ['2', '10', '2', '10'],
+      ['-3', '1', '-3', '1'],
+      [
+        '0.000000000000000002',
+        '0.000000000000000001',
+        '0.000000000000000001',
+        '0.000000000000000002',
+      ],
+    ])('order %s and %s', (a, b, min, max) => {
+      expect(moneyMin(a, b)).toBe(min);
+      expect(moneyMax(a, b)).toBe(max);
+    });
+  });
+
   describe('moneyCompare and moneyEquals', () => {
     it('orders amounts exactly like their minor units', () => {
       fc.assert(

@@ -7,6 +7,8 @@ import {
   isUniqueConstraintViolation,
   moneyAdd,
   moneyCompare,
+  moneyMax,
+  moneyMin,
   moneyDivide,
   moneyEquals,
   moneyFloorToScale,
@@ -251,7 +253,10 @@ function requestFingerprint(parts: FingerprintParts): string {
 type ResolvedStake = Pick<SportsbookBetRow, 'cashStake' | 'voidPayout' | 'maxLossRefund'>;
 
 /** What the player paid, what a void returns and the most a loss may refund, fixed at reserve. */
-function resolveStake(stake: string, promotion: SportsbookPromotion | undefined): ResolvedStake {
+export function resolveStake(
+  stake: string,
+  promotion: SportsbookPromotion | undefined,
+): ResolvedStake {
   if (promotion?.stake === 'promotion') {
     return {
       cashStake: '0',
@@ -276,11 +281,8 @@ function promotionFunder(
   );
 }
 
-const moneyMin = (a: string, b: string) => (moneyCompare(a, b) < 0 ? a : b);
-const moneyMax = (a: string, b: string) => (moneyCompare(a, b) < 0 ? b : a);
-
 /** The most of a player-paid stake's payout a promotion funds: none of a void, its loss refund, or its boost. */
-function cashPromotionCeiling(
+export function cashPromotionCeiling(
   bet: Pick<SportsbookBetRow, 'promotionPotential' | 'maxLossRefund'>,
   result: SportsbookBetResult,
   payout: string,
@@ -334,7 +336,7 @@ function compareExact(a: Exact, b: Exact): number {
 }
 
 /** True when a promotion-paid payout beats the stake times every leg's decimal odds. */
-function isUnusualPromotionPayout(
+export function isUnusualPromotionPayout(
   bet: Pick<SportsbookBetRow, 'cashStake' | 'stake' | 'legs'>,
   payout: string,
 ): boolean {
@@ -383,7 +385,10 @@ function isValidPromotionPotential(amount: string, payout: string, decimals: num
  * How the accepted odds move the combined odds of the legs that carry them: -1, 0 or 1. Null when
  * an odds is not a decimal, so its direction is unknown.
  */
-function oddsDirection(reserved: SportsbookBetLeg[], accepted: SportsbookBetLeg[]): number | null {
+export function oddsDirection(
+  reserved: SportsbookBetLeg[],
+  accepted: SportsbookBetLeg[],
+): number | null {
   let before = EXACT_ONE;
   let after = EXACT_ONE;
   for (const [i, leg] of reserved.entries()) {
@@ -408,7 +413,7 @@ function oddsDirection(reserved: SportsbookBetLeg[], accepted: SportsbookBetLeg[
  * A promotion part needs the pair and a promotion bet, may change only when the odds moved, and is
  * required once the stored one no longer fits the new payout.
  */
-function invalidTerms(
+export function invalidTerms(
   bet: Pick<
     SportsbookBetRow,
     | 'cashStake'

@@ -65,7 +65,10 @@ function alignTxId(
 type Alignment = { steps: LedgerStep[]; mismatch: boolean };
 
 /** The guarded ledger steps that bring the bet to what the provider reports, or a mismatch core cannot apply. */
-function alignmentSteps(bet: SportsbookBetRow, observed: SportsbookProviderBetStatus): Alignment {
+export function alignmentSteps(
+  bet: SportsbookBetRow,
+  observed: SportsbookProviderBetStatus,
+): Alignment {
   const key = { provider: bet.provider, providerBetId: bet.providerBetId };
   const confirm = (): LedgerStep => ({
     kind: 'confirm',

@@ -18,6 +18,7 @@ import {
 import {
   moneyAdd,
   moneyCompare,
+  moneyMin,
   moneyDivide,
   moneyFloorToScale,
   moneyMultiplyDivide,
@@ -64,7 +65,35 @@ export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: str
 }
 
 /** `base × rate% × (1 + uplift%)`: the streak uplift multiplies the rank rate, it never adds to it. */
-function rankedRakeback({
+export function upliftWithinEdge(
+  tier: {
+    rakebackPercent: string;
+    dailyBonusPercent: string | null;
+    weeklyBonusPercent: string | null;
+    monthlyBonusPercent: string | null;
+  },
+  uplift: string,
+  periodicBasis: RankPeriodicBasis,
+): string {
+  const bonuses =
+    periodicBasis === 'margin'
+      ? [tier.dailyBonusPercent, tier.weeklyBonusPercent, tier.monthlyBonusPercent]
+      : [];
+  const headroom = bonuses.reduce<string>(
+    (left, percent) => moneySubtract(left, percent ?? ZERO),
+    moneySubtract('100', tier.rakebackPercent),
+  );
+  if (moneyCompare(headroom, ZERO) <= 0 || moneyCompare(tier.rakebackPercent, ZERO) <= 0) {
+    return ZERO;
+  }
+  const ceiling = moneyFloorToScale(
+    moneyMultiplyDivide(headroom, '100', tier.rakebackPercent),
+    CONTRIBUTION_PERCENT_SCALE,
+  );
+  return moneyMin(uplift, ceiling);
+}
+
+export function rankedRakeback({
   base,
   ratePercent,
   upliftPercent,
@@ -392,36 +421,10 @@ export class RakebackService implements WagerTrackingCommands {
       mode: 'ranked',
       ratePercent: tier.rakebackPercent,
       upliftPercent:
-        this.settings.basis === 'margin' ? this.upliftWithinEdge(tier, uplift) : uplift,
+        this.settings.basis === 'margin'
+          ? upliftWithinEdge(tier, uplift, this.periodicBasis)
+          : uplift,
     };
-  }
-
-  /** Trims the streak uplift so rakeback and the margin bonuses one bet funds pay at most its whole edge. */
-  private upliftWithinEdge(
-    tier: {
-      rakebackPercent: string;
-      dailyBonusPercent: string | null;
-      weeklyBonusPercent: string | null;
-      monthlyBonusPercent: string | null;
-    },
-    uplift: string,
-  ): string {
-    const bonuses =
-      this.periodicBasis === 'margin'
-        ? [tier.dailyBonusPercent, tier.weeklyBonusPercent, tier.monthlyBonusPercent]
-        : [];
-    const headroom = bonuses.reduce<string>(
-      (left, percent) => moneySubtract(left, percent ?? ZERO),
-      moneySubtract('100', tier.rakebackPercent),
-    );
-    if (moneyCompare(headroom, ZERO) <= 0 || moneyCompare(tier.rakebackPercent, ZERO) <= 0) {
-      return ZERO;
-    }
-    const ceiling = moneyFloorToScale(
-      moneyMultiplyDivide(headroom, '100', tier.rakebackPercent),
-      CONTRIBUTION_PERCENT_SCALE,
-    );
-    return moneyCompare(uplift, ceiling) > 0 ? ceiling : uplift;
   }
 
   private async streakRateFor(

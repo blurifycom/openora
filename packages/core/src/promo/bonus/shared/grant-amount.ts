@@ -1,4 +1,4 @@
-import { moneyCompare, moneyDivide, moneyScaleBy } from '@openora/core/server';
+import { moneyMin, moneyDivide, moneyScaleBy } from '@openora/core/server';
 
 /**
  * What a deposit earns: the match, capped. Truncating, so a cap of 1000 on a 100 percent match
@@ -10,5 +10,5 @@ export function grantAmountFor(
   maxGrantAmount: string,
 ): string {
   const matched = moneyDivide(moneyScaleBy(deposit, matchPercent), '100');
-  return moneyCompare(matched, maxGrantAmount) > 0 ? maxGrantAmount : matched;
+  return moneyMin(matched, maxGrantAmount);
 }

@@ -19,6 +19,8 @@ export {
   moneyToNumber,
   moneyEquals,
   moneyCompare,
+  moneyMin,
+  moneyMax,
   isPositiveMoney,
   expandMoneyExponent,
   moneyScaleBy,
