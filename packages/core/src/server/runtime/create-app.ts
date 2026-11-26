@@ -15,6 +15,7 @@ import {
   RedisCache,
   RedisRateLimiter,
   RedisStreamsBroker,
+  streamStartIdFromEnv,
   RedisPubSubRealtimeTransport,
   SseClientAuthorizer,
   createEventBus,
@@ -610,7 +611,13 @@ async function bootApp(
     container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
     container.register(CACHE, () => new RedisCache(redis));
     container.register(MESSAGE_BROKER, () => {
-      const broker = new RedisStreamsBroker(redis, { serviceName });
+      const broker = new RedisStreamsBroker(redis, {
+        serviceName,
+        startId: streamStartIdFromEnv(
+          process.env['EVENT_BUS_START_ID'],
+          parseServiceManifest(process.env['SERVICE_MANIFEST']) !== null,
+        ),
+      });
       container.onDispose(() => broker.close());
       return broker;
     });

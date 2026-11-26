@@ -78,6 +78,7 @@ services:
     environment:
       <<: *runtime-env
       SERVICE_NAME: chat
+      EVENT_BUS_START_ID: '0'
       REALTIME_NAMESPACE: monolith
       SERVICE_MANIFEST: chat,chat-commands,social,identity:no-routes,iam:no-routes,audit:no-routes,mail:no-routes,compliance:no-routes,player-management:no-routes,wallet:no-routes,gaming:no-routes,exchange-rate:no-routes,tag:no-routes
       JOB_WORKERS: chat-*
