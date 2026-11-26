@@ -89,7 +89,10 @@ is reproduced; its "after" twin comes here. Never read a video back.
 ACs a spec drives come first: every spec that drives one, new or existing, in one run with video
 on (the repo's record switch, or `test.use({ video: 'on' })`); each lands in
 `test-results/<test>/video.webm`; copy it to `/tmp/ui-verify/<ac>-<slug>.webm`, since the next run
-wipes `test-results/`. Only an AC no spec drives gets `playwright-cli`:
+wipes `test-results/`. Only an AC no spec drives gets `playwright-cli`. Each clip is the AC's whole
+flow in one take, from the screen the user starts on to the outcome. `video-show-actions` prints every
+typed value on screen, so log in first (`state-load` a saved login) or type a password before
+`video-show-actions`, never after:
 
 ```bash
 playwright-cli -s=v resize 390 844        # 1440 900 for an operator screen
