@@ -21,6 +21,7 @@ export type { RoleName, ResourceName, ActionOf } from './permissions.js';
 export {
   PERMISSION_LEVELS,
   SUPPORTED_LEVELS,
+  readActions,
   readActionsOf,
   actionsOf,
   levelRank,

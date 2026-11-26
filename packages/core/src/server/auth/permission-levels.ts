@@ -18,6 +18,13 @@ export function isLevelSufficient(have: PermissionLevel, required: PermissionLev
 
 // `content` has no 'view' action (create/update/delete/publish only), so read level
 // maps to an empty set there - effectively read_write-or-nothing for that resource.
+export const readActions: Partial<Record<ResourceName, readonly string[]>> = Object.fromEntries(
+  (Object.keys(statement) as ResourceName[]).map((resource) => {
+    const actions = statement[resource] as readonly string[];
+    return [resource, actions.includes('view') ? ['view'] : []];
+  }),
+) as Partial<Record<ResourceName, readonly string[]>>;
+
 export function readActionsOf(actions: readonly string[]): string[] {
   return actions.includes('view') ? ['view'] : [];
 }

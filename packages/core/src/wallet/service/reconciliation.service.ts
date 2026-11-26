@@ -104,6 +104,7 @@ import {
   parseBalanceAtFiling,
   parseLedgerPairKey,
   rebaselinePair,
+  SWAP_DESK_PROVIDER_LABEL,
 } from './ledger-invariant.service.js';
 
 const logger = createLogger('wallet-reconciliation');
@@ -430,7 +431,6 @@ const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
 
 // A swap leg carries no payment provider name, but a finding needs one to be filed under.
-const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
 const PROJECTION_FINDING_LABEL = 'ledger-projection';
 const EVENT_PIPELINE_FINDING_LABEL = 'event-pipeline';
 
@@ -2650,9 +2650,9 @@ export class ReconciliationService {
     return closed;
   }
 
-  // Human resolution only, like a stuck sweep. A swap_out held `processing` past the cutoff
-  // is money debited from the player with nothing credited back, and the desk may or may not
-  // have filled it - so neither a refund nor a credit is safe without someone looking.
+  // Human resolution only: a swap_out held `processing` past the cutoff is money debited from
+  // the player with nothing credited back, and the desk may or may not have filled it - so
+  // neither a refund nor a credit is safe without someone looking.
   //
   // wallet_transaction_status_type_created_at_idx covers the WHERE, but the ORDER BY leads
   // with the correlated EXISTS, which no index serves: every cycle sorts the whole matching

@@ -13,6 +13,7 @@ import {
   moderateContent,
   pageToOffset,
   isUniqueConstraintViolation,
+  uniqueConstraintName,
   withAdvisoryXactLock,
   withAdvisoryXactLocks,
   type DrizzleDb,
@@ -2507,7 +2508,7 @@ export class ChatService {
         return created;
       });
     } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
+      if (uniqueConstraintName(error) === 'chat_room_slug_key') {
         throw new ChatRoomSlugConflictError();
       }
       throw error;
@@ -2581,7 +2582,7 @@ export class ChatService {
         new ChatRoomNotFoundError(id),
       );
     } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
+      if (uniqueConstraintName(error) === 'chat_room_slug_key') {
         throw new ChatRoomSlugConflictError();
       }
       throw error;

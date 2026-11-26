@@ -64,7 +64,6 @@ export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: str
   return basis === 'stake' ? realAmount : houseEdge(realAmount, rtp);
 }
 
-/** `base × rate% × (1 + uplift%)`: the streak uplift multiplies the rank rate, it never adds to it. */
 export function upliftWithinEdge(
   tier: {
     rakebackPercent: string;
@@ -93,6 +92,7 @@ export function upliftWithinEdge(
   return moneyMin(uplift, ceiling);
 }
 
+/** `base × rate% × (1 + uplift%)`: the streak uplift multiplies the rank rate, it never adds to it. */
 export function rankedRakeback({
   base,
   ratePercent,

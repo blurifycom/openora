@@ -1,6 +1,12 @@
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { DrizzleService } from '@openora/core/server';
+import { DEFAULT_PAYMENT_PROVIDER } from '@openora/core/contracts';
 import {
+  SWAP_DESK_PROVIDER_LABEL,
+  checkLedgerPage,
   ledgerBreachKey,
   ledgerPairKey,
   ledgerUncheckedKey,
@@ -158,5 +164,49 @@ describe('parseBalanceAtFiling', () => {
     expect(parseBalanceAtFiling('(balance at filing: 5) trailing')).toBeNull();
     expect(parseBalanceAtFiling('(balance at filing: abc)')).toBeNull();
     expect(parseBalanceAtFiling('(balance at filing: )')).toBeNull();
+  });
+});
+
+describe('checkLedgerPage settled-by-hand rows', () => {
+  const drizzle = new DrizzleService('postgres://unit:[redacted]@127.0.0.1:1/unit');
+  afterAll(() => drizzle.dispose());
+
+  const renderedCheck = async () => {
+    const execute = vi.spyOn(drizzle.db, 'execute').mockResolvedValue({
+      rows: [],
+      command: 'SELECT',
+      rowCount: 0,
+      oid: 0,
+      fields: [],
+    });
+    await checkLedgerPage(drizzle.db, null, 10, '00000000-0000-4000-8000-000000000001');
+    const query = execute.mock.calls[0]?.[0];
+    execute.mockRestore();
+    if (!query || !(query instanceof SQL)) {
+      throw new Error('checkLedgerPage ran no SQL query');
+    }
+    return new PgDialect().sqlToQuery(query);
+  };
+
+  const branch = (text: string, from: string, to: string) =>
+    text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from)));
+
+  it.each([
+    [
+      'a withdrawal',
+      "when t.type = 'withdrawal'",
+      "when t.type = 'swap_out'",
+      'unknown_at_provider',
+      DEFAULT_PAYMENT_PROVIDER,
+    ],
+    ['a swap leg', "when t.type = 'swap_out'", 'else', 'stuck_swap', SWAP_DESK_PROVIDER_LABEL],
+  ])('lets a manual credit settle %s failed by hand', async (_name, from, to, kind, provider) => {
+    const { sql: text, params } = await renderedCheck();
+    const clause = branch(text, from, to);
+    const placeholders = [...clause.matchAll(/\$(\d+)/g)].map((m) => params[Number(m[1]) - 1]);
+    expect(clause).toContain("m.type = 'manual_credit'");
+    expect(clause).toContain('f.external_id in (t.provider_ref_id, t.id::text)');
+    expect(placeholders).toContain(kind);
+    expect(placeholders).toContain(provider);
   });
 });
