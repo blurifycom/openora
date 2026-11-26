@@ -13,13 +13,14 @@ const past = new Date('2026-05-01T12:00:00.000Z');
 const future = new Date('2026-07-01T12:00:00.000Z');
 
 function token(overrides: { expiresAt?: Date; revokedAt?: Date | null; createdAt?: Date } = {}) {
+  const credentialsChangedAt: Date | null = null;
   return {
     id: 'tok_1',
     adminUserId: 'adm_1',
     createdAt: overrides.createdAt ?? past,
     expiresAt: overrides.expiresAt ?? future,
     revokedAt: overrides.revokedAt ?? null,
-    credentialsChangedAt: null as Date | null,
+    credentialsChangedAt,
   };
 }
 
