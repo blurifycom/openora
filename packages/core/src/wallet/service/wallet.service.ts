@@ -1533,15 +1533,16 @@ export class WalletService {
       return;
     }
 
-    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-    const resourceId = playerId ?? userId;
+    // Best-effort on purpose: the refusal is already decided and moves no funds, so a failed
+    // audit write must not turn the player's 409 into a 5xx. The error log keeps the trail.
     try {
+      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
       await this.audit.record({
         actorType: 'player',
-        actorId: resourceId,
+        actorId: userId,
         action: 'wallet.withdrawal.kyc_required',
         resourceType: playerId ? 'player' : 'user',
-        resourceId,
+        resourceId: playerId ?? userId,
         result: 'failure',
         after: { amount, currency },
         ...meta,
