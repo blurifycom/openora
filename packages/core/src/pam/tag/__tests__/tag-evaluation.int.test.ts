@@ -356,3 +356,64 @@ describe('tag evaluation', () => {
     expect(auditOf(holder.playerId, 'tag.player.assigned', 'level')).toHaveLength(2);
   });
 });
+
+describe('TagService.getActiveTagKeys', () => {
+  async function tagIdFor(key: TagKey) {
+    const [existing] = await db().select({ id: tag.id }).from(tag).where(eq(tag.key, key));
+    if (existing) {
+      return existing.id;
+    }
+    const [created] = await db().insert(tag).values({ key }).returning({ id: tag.id });
+    if (!created) {
+      throw new Error('tag insert returned no row');
+    }
+    return created.id;
+  }
+
+  it('reads on the caller transaction when given one, and nothing leaks after it rolls back', async () => {
+    const userId = randomUUID();
+    const rollback = new Error('rollback');
+    const vip = await tagIdFor('vip');
+
+    const seen = await db()
+      .transaction(async (tx) => {
+        const [row] = await tx.insert(player).values({ userId }).returning({ id: player.id });
+        await tx.insert(playerTag).values({
+          playerId: row?.id ?? '',
+          tagId: vip,
+          assignReason: 'seed',
+          assignActor: 'manual',
+          assignActorUserId: randomUUID(),
+        });
+        expect((await tags.getActiveTagKeys([userId], tx)).get(userId)).toEqual(['vip']);
+        expect((await tags.getActiveTagKeys([userId])).has(userId)).toBe(false);
+        throw rollback;
+      })
+      .catch((err: unknown) => err);
+
+    expect(seen).toBe(rollback);
+    expect((await tags.getActiveTagKeys([userId])).has(userId)).toBe(false);
+  });
+
+  it('groups active keys per user and leaves out removed assignments and untagged users', async () => {
+    const tagged = await newPlayer();
+    const untagged = await newPlayer();
+    const [vip, risk] = [await tagIdFor('vip'), await tagIdFor('high_risk')];
+    const assign = {
+      assignReason: 'seed',
+      assignActor: 'manual',
+      assignActorUserId: randomUUID(),
+    } as const;
+    await db()
+      .insert(playerTag)
+      .values([
+        { playerId: tagged.playerId, tagId: vip, ...assign },
+        { playerId: tagged.playerId, tagId: risk, ...assign, removedAt: new Date() },
+      ]);
+
+    const map = await tags.getActiveTagKeys([tagged.userId, untagged.userId]);
+
+    expect(map.get(tagged.userId)).toEqual(['vip']);
+    expect(map.has(untagged.userId)).toBe(false);
+  });
+});

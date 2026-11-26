@@ -12,6 +12,7 @@ import {
   SUPPORT_HISTORY_READER,
   UuidSchema,
   WALLET_READER,
+  PLAYER_RANK_READER,
   domainEventSchemas,
   queue,
   type DomainEventName,
@@ -64,7 +65,8 @@ const SYNC_TOPICS = [
 
 export default {
   id: 'support-chat',
-  dependsOn: ['identity', 'profile', 'gamification', 'wallet', 'compliance', 'audit'],
+  dependsOn: ['identity', 'profile', 'compliance', 'audit'],
+  requiresPorts: [WALLET_READER, PLAYER_RANK_READER],
   register(ctx) {
     // Set by the router factory, which runs after subscriptions are wired but before any
     // event or job arrives (see create-app.ts boot order).
@@ -178,6 +180,7 @@ export default {
           events: c.get(EVENT_BUS),
           identityReader: c.get(IDENTITY_READER),
           walletReader: c.get(WALLET_READER),
+          rankReader: c.get(PLAYER_RANK_READER),
           rgExclusionReader: c.get(RG_EXCLUSION_READER),
           accountManagerReader: c.has(PLAYER_ACCOUNT_MANAGER_READER)
             ? c.get(PLAYER_ACCOUNT_MANAGER_READER)

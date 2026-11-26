@@ -87,6 +87,12 @@ function snapshotOf(userId: User['id'], state: ProjectedState): PlayEligibilityS
   };
 }
 
+const snapshotState = (s: PlayEligibilitySnapshot) => ({
+  ...s,
+  rgBlockedUntil: s.rgBlockedUntil === null ? null : new Date(s.rgBlockedUntil),
+  banExpires: s.banExpires === null ? null : new Date(s.banExpires),
+});
+
 /**
  * Writes a user's play eligibility to the ledger, the only place a stake is checked. Every
  * writer of an input (the RG block, `isActive`, the player status) calls `publish` in its own
@@ -127,7 +133,10 @@ export class PlayEligibilityPublisher {
       .where(eq(player.userId, userId))
       .limit(1);
     const snapshot = snapshotOf(userId, { ...account, status: profile?.status ?? null });
-    await this.projection()?.write(snapshot, tx);
+    const projection = this.projection();
+    if (projection && (!projection.remote || playRefusalOf(snapshotState(snapshot)) !== null)) {
+      await projection.write(snapshot, tx);
+    }
     await this.events.emitInTransaction(tx, 'identity.play_eligibility.changed', snapshot);
   }
 

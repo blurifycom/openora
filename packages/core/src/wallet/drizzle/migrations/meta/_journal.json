@@ -372,6 +372,13 @@
       "when": 1795537745111,
       "tag": "0052_demonic_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795721001809,
+      "tag": "0053_productive_nomad",
+      "breakpoints": true
     }
   ]
 }

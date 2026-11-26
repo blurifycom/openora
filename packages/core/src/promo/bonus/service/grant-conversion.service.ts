@@ -4,11 +4,11 @@ import {
   WalletReplayMismatchError,
   type AuditWritePort,
   type ClientMeta,
+  type IdentityReader,
   type TurnoverEntryStatus,
   type Uuid,
   type WalletCommands,
 } from '@openora/core/contracts';
-import { player } from '@openora/core/pam/schema/profile';
 import {
   makeConflictError,
   moneyCompare,
@@ -102,6 +102,7 @@ export class GrantConversionService {
     private readonly wallet: () => WalletCommands | undefined,
     private readonly turnoverOn: boolean,
     private readonly logger: Logger,
+    private readonly identity: Pick<IdentityReader, 'getPlayerIdByUserId'>,
   ) {}
 
   async convert(
@@ -306,13 +307,10 @@ export class GrantConversionService {
     if (!credited.moved) {
       return;
     }
-    const [account] = await tx
-      .select({ id: player.id })
-      .from(player)
-      .where(eq(player.userId, grant.userId));
+    const playerId = await this.identity.getPlayerIdByUserId(grant.userId, tx);
     await this.events.emitInTransaction(tx, 'wallet.balance.changed', {
       userId: grant.userId,
-      playerId: account?.id ?? null,
+      playerId,
       amount: cash,
       currency: grant.currency,
       transactionId: credited.transactionId,

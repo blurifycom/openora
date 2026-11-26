@@ -37,6 +37,16 @@ export type GameGeoCheckPort = {
   checkGame(input: GameGeoCheckInput): Promise<GameGeoDecision>;
   /** Sorted, deduped country codes blocked platform-wide (config + a global block rule). */
   listGloballyBlockedCountries(): Promise<string[]>;
+  listGeoRulePairs?(filter?: {
+    countries?: readonly string[];
+    gameIds?: readonly string[];
+    source?: string;
+  }): Promise<GameGeoRules>;
+};
+
+export type GameGeoRules = {
+  games: { gameId: string; countryCode: string; source: string }[];
+  providers: { providerId: string; countryCode: string }[];
 };
 
 export const GAME_GEO_CHECK: Token<GameGeoCheckPort> =

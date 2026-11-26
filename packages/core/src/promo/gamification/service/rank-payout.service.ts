@@ -4,7 +4,7 @@ import type {
   BonusGrantCommands,
   ExchangeRateReader,
   DomainEventPayload,
-  PlayEligibilityPort,
+  LedgerPlayEligibilityPort,
   RankPeriodicBasis,
   Uuid,
   WalletReader,
@@ -93,7 +93,7 @@ export class RankPayoutService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly grants: BonusGrantCommands | undefined,
-    private readonly eligibility: PlayEligibilityPort | undefined,
+    private readonly eligibility: LedgerPlayEligibilityPort | undefined,
     private readonly rates: ExchangeRateReader,
     private readonly wallet: WalletReader,
     private readonly events: EventBus,

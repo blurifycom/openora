@@ -1,7 +1,12 @@
-import { and, asc, count, desc, eq, gte, inArray, lte } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleService } from '@openora/core/server';
-import { dayEnd, dayStart } from '@openora/core/contracts';
-import { player } from '@openora/core/pam/schema/profile';
+import {
+  dayEnd,
+  dayStart,
+  userIdOfPlayer,
+  withPlayerIds,
+  type IdentityReader,
+} from '@openora/core/contracts';
 import type { GrantsFind, GrantsFindInput } from '../contract/index.js';
 import { promoGrant } from '../schema/index.js';
 
@@ -12,7 +17,10 @@ const grant = promoGrant;
 
 /** Finds bonus grants across all players, each by player id and without the admin's note. */
 export class GrantsFindService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly identity: IdentityReader,
+  ) {}
 
   async find(
     {
@@ -28,15 +36,11 @@ export class GrantsFindService {
     now = new Date(),
   ): Promise<GrantsFind> {
     const db = this.drizzle.db;
+    const playerUserId = playerId ? await userIdOfPlayer(this.identity, playerId) : null;
     const where = and(
       status?.length ? inArray(grant.status, status) : undefined,
       source?.length ? inArray(grant.source, source) : undefined,
-      playerId
-        ? inArray(
-            grant.userId,
-            db.select({ userId: player.userId }).from(player).where(eq(player.id, playerId)),
-          )
-        : undefined,
+      playerId ? (playerUserId === null ? sql`false` : eq(grant.userId, playerUserId)) : undefined,
       currency ? eq(grant.currency, currency.toUpperCase()) : undefined,
       activatedFrom ? gte(grant.activatedAt, dayStart(activatedFrom)) : undefined,
       activatedTo ? lte(grant.activatedAt, dayEnd(activatedTo)) : undefined,
@@ -56,7 +60,7 @@ export class GrantsFindService {
       db
         .select({
           grantId: grant.id,
-          playerId: player.id,
+          userId: grant.userId,
           status: grant.status,
           source: grant.source,
           currency: grant.currency,
@@ -70,7 +74,6 @@ export class GrantsFindService {
           forfeitReason: grant.forfeitReason,
         })
         .from(grant)
-        .leftJoin(player, eq(player.userId, grant.userId))
         .where(where)
         .orderBy(...order)
         .limit(limit + 1),
@@ -79,7 +82,7 @@ export class GrantsFindService {
     return {
       total: totals[0]?.total ?? 0,
       truncated: rows.length > limit,
-      grants: rows.slice(0, limit).map((row) => ({
+      grants: (await withPlayerIds(this.identity, rows.slice(0, limit))).map((row) => ({
         ...row,
         activatedAt: row.activatedAt?.toISOString() ?? null,
         expiresAt: row.expiresAt.toISOString(),

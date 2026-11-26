@@ -1897,7 +1897,6 @@ export class WalletService {
     idempotencyKey?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
-    await this.assertDepositAdmitted(userId);
     await this.assertDepositable(currency, amount);
 
     // Short-circuit a replay BEFORE the PSP call - the common retry case (client
@@ -1917,6 +1916,7 @@ export class WalletService {
         .from(wallet)
         .where(eq(wallet.userId, userId));
     }
+    await this.assertDepositAdmitted(userId);
 
     // Reserve the RG headroom BEFORE charging the PSP: the check and the pending row that
     // consumes it commit together under the player's deposit lock, so a second concurrent
@@ -1942,6 +1942,7 @@ export class WalletService {
           return { walletRecord: holder, row: existing, replay: true };
         }
 
+        await this.assertDepositPlayable(userId, txn);
         await this.assertWithinRgDepositLimit(txn, userId, amount, currency);
 
         const { row } = await this.insertIdempotentTransaction(txn, {
@@ -4367,24 +4368,32 @@ export class WalletService {
   }
 
   async assertDepositAdmitted(userId: User['id']): Promise<void> {
-    const refusal = await this.playRefusal(userId);
+    await this.assertDepositPlayable(userId);
+    await this.assertDepositPolicyAdmits(userId);
+  }
+
+  private async assertDepositPlayable(userId: User['id'], txn?: DrizzleTx): Promise<void> {
+    const refusal = await this.playRefusal(userId, txn);
     if (refusal) {
       throw new DepositRefusedError(refusal);
     }
+  }
+
+  private async assertDepositPolicyAdmits(userId: User['id']): Promise<void> {
     const reason = await this.depositAdmission?.refusalReason(userId);
     if (typeof reason === 'string') {
       throw new DepositRefusedError(reason);
     }
   }
 
-  private async playRefusal(userId: User['id']): Promise<string | null> {
+  private async playRefusal(userId: User['id'], txn?: DrizzleTx): Promise<string | null> {
     if (!this.playEligibility) {
       return null;
     }
     if (this.playEligibility.checkPlay) {
-      return this.playEligibility.checkPlay(userId);
+      return this.playEligibility.checkPlay(userId, txn);
     }
-    return (await this.playEligibility.isRestricted(userId)) ? 'restricted' : null;
+    return (await this.playEligibility.isRestricted(userId, txn)) ? 'restricted' : null;
   }
 
   async getOrCreateDepositAddress(

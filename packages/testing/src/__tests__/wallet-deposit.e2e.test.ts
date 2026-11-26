@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
+import { user } from '@openora/core/pam/schema/identity';
 import {
   walletDepositAddress,
   walletDepositStatusEvent,
@@ -29,11 +31,21 @@ import {
   barFromDepositing,
   BARRED_HOLD_REASON,
 } from './support/test-deposit-hold-plugin.js';
+import {
+  ADMISSION_REFUSAL_REASON,
+  refuseDepositAdmission,
+} from './support/test-deposit-admission-plugin.js';
+import { depositRows, newRgPlayer, readBody } from './support/compliance.js';
 
 let e2e: WalletE2e;
 
 beforeAll(async () => {
-  e2e = await bootWalletE2e();
+  e2e = await bootWalletE2e([
+    {
+      id: 'testing-deposit-admission',
+      path: fileURLToPath(new URL('./support/test-deposit-admission-plugin.ts', import.meta.url)),
+    },
+  ]);
 }, 60_000);
 
 afterAll(() => closeWalletE2e(e2e));
@@ -443,5 +455,52 @@ describe('player deposit address and crediting', () => {
     expect([first.status, second.status]).toEqual([200, 200]);
     expect(await findingsFor(e2e, event.externalId)).toHaveLength(1);
     expect(await ledgerRows(e2e, event.externalId)).toHaveLength(1);
+  });
+});
+
+describe('player deposit through the payment provider', () => {
+  const depositWith = (
+    player: Awaited<ReturnType<typeof newRgPlayer>>,
+    idempotencyKey: string,
+    amount = '30',
+  ) =>
+    player.client
+      .post('/wallet/deposit', { amount, currency: player.currency, idempotencyKey })
+      .then(readBody);
+
+  async function blockPlayEligibility(userId: string) {
+    await db().update(user).set({ rgBlocked: true }).where(eq(user.id, userId));
+  }
+
+  it('a completed deposit replayed after the player is blocked answers the first result and credits once', async () => {
+    const player = await newRgPlayer(e2e);
+    const idempotencyKey = randomUUID();
+    const first = await depositWith(player, idempotencyKey);
+    await blockPlayEligibility(player.userId);
+
+    const replay = await depositWith(player, idempotencyKey);
+    const fresh = await depositWith(player, randomUUID());
+
+    expect(first.status).toBe(200);
+    expect(replay).toEqual(first);
+    expect(fresh.status).toBe(403);
+    expect(await depositRows(e2e, player.userId)).toHaveLength(1);
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe('30.000000000000000000');
+  });
+
+  it('a completed deposit replayed after the admission policy starts refusing answers the first result and credits once', async () => {
+    const player = await newRgPlayer(e2e);
+    const idempotencyKey = randomUUID();
+    const first = await depositWith(player, idempotencyKey);
+    refuseDepositAdmission(player.userId);
+
+    const replay = await depositWith(player, idempotencyKey);
+    const fresh = await depositWith(player, randomUUID());
+
+    expect(first.status).toBe(200);
+    expect(replay).toEqual(first);
+    expect(fresh.status).toBe(403);
+    expect(JSON.stringify(fresh.body)).toContain(ADMISSION_REFUSAL_REASON);
+    expect(await depositRows(e2e, player.userId)).toHaveLength(1);
   });
 });

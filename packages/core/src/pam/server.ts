@@ -7,3 +7,4 @@ export { default as profilePlugin } from './profile/plugin.js';
 export { default as tagPlugin } from './tag/plugin.js';
 export { default as playerManagementPlugin } from './player-management/plugin.js';
 export { default as playerNotePlugin } from './player-note/plugin.js';
+export { IdentityReaderService } from './identity/adapters/identity-reader.service.js';

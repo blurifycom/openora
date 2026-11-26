@@ -1,40 +1,57 @@
-import { eq } from 'drizzle-orm';
-import { player } from '@openora/core/pam/schema/profile';
-import type { PlayEligibilityPort, RgExclusionReader, Uuid } from '@openora/core/contracts';
+import type {
+  LedgerPlayEligibilityPort,
+  PlayEligibilityState,
+  RgExclusionReader,
+  Uuid,
+} from '@openora/core/contracts';
 import type { RankRewardClaimBlocker } from '../contract/index.js';
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 
-export const CLAIM_BLOCKED_STATUSES = ['suspended', 'closed'] as const;
+const CLAIM_BLOCKED_STATUSES = ['suspended', 'closed'] as const;
 
 export type CashClaimBlocker = RankRewardClaimBlocker;
 
 /**
- * Why the player may not claim real cash right now, or null. Inside a claim, pass the claim's
- * transaction: the player row is then share-locked so a status change waits for the claim.
  */
 export async function cashClaimBlocker(
   db: DrizzleDb | DrizzleTx,
-  eligibility: PlayEligibilityPort | undefined,
+  ledger: LedgerPlayEligibilityPort | undefined,
   userId: Uuid,
   { lock }: { lock: boolean },
 ): Promise<CashClaimBlocker | null> {
-  if (!eligibility) {
+  if (!ledger) {
     return 'restricted';
   }
-  // The player row before the user row: a status writer holds the player row while identity
-  // republishes play eligibility, which takes the user row, so the other order deadlocks.
-  const query = db.select({ status: player.status }).from(player).where(eq(player.userId, userId));
-  const [account] = lock ? await query.for('share') : await query;
-  if (await eligibility.isRestricted(userId, lock ? db : undefined)) {
+  return claimBlockerOf(await ledger.stateOf(userId, lock ? db : undefined));
+}
+
+export function claimBlockerOf(
+  state: PlayEligibilityState | null,
+  now = new Date(),
+): CashClaimBlocker | null {
+  const rgBlocked =
+    state?.rgBlocked === true && (state.rgBlockedUntil === null || state.rgBlockedUntil > now);
+  if (!state || rgBlocked || state.status === null || state.status === 'self_excluded') {
     return 'restricted';
   }
-  if (!account || account.status === 'self_excluded') {
-    return 'restricted';
-  }
-  if ((CLAIM_BLOCKED_STATUSES as readonly string[]).includes(account.status)) {
+  if ((CLAIM_BLOCKED_STATUSES as readonly string[]).includes(state.status)) {
     return 'account_blocked';
   }
   return null;
+}
+
+export async function autoPayoutCandidates(
+  ledger: LedgerPlayEligibilityPort | undefined,
+  userIds: readonly Uuid[],
+): Promise<{ userId: Uuid; status: string | null }[]> {
+  const states = (await ledger?.statesOf(userIds)) ?? new Map<Uuid, PlayEligibilityState>();
+  return userIds.flatMap((userId) => {
+    const state = states.get(userId);
+    return state &&
+      (state.rgBlocked || state.status === 'closed' || state.status === 'self_excluded')
+      ? [{ userId, status: state.status }]
+      : [];
+  });
 }
 
 /**
@@ -55,16 +72,17 @@ export async function isDueForAutoPayout(
   return state?.isSelfExcluded === true;
 }
 
-/** `isDueForAutoPayout` with the player row share-locked for the payout's transaction. */
 export async function isDueForAutoPayoutLocked(
   tx: DrizzleTx,
+  ledger: LedgerPlayEligibilityPort | undefined,
   exclusions: RgExclusionReader | undefined,
   userId: Uuid,
 ): Promise<boolean> {
-  const [account] = await tx
-    .select({ status: player.status })
-    .from(player)
-    .where(eq(player.userId, userId))
-    .for('share');
-  return isDueForAutoPayout(exclusions, userId, account?.status ?? null, tx);
+  const exclusion = await exclusions?.getExclusionState(userId, tx);
+  const state = (await ledger?.stateOf(userId, tx)) ?? null;
+  return (
+    state?.status === 'closed' ||
+    state?.status === 'self_excluded' ||
+    exclusion?.isSelfExcluded === true
+  );
 }

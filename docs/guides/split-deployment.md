@@ -136,6 +136,43 @@ Any realtime endpoint your frontend uses for chat must be routed to the chat ser
 
 A main API that does not load chat runs none of chat's handlers or jobs. The chat service runs them all.
 
+## Worked example: money apart from the platform
+
+The money modules (`wallet`, `bonus`, `gamification`, `gaming`, `betting`, `exchange-rate`) can run in a `money` service while a `platform` service runs the rest (ADR-0067). Set `MONEY_SERVICE_URL` on the platform and `createApp` drops the money modules and every plugin that `dependsOn` one, directly or through another dropped one, before it applies any manifest, as `CHAT_SERVICE_URL` does for chat. A platform module that should stay must require money ports, not `dependsOn` a money module. The `money-remote` plugin, part of `corePlugins()`, then binds these ports to the money service's internal API:
+
+| Port                                             | Remote methods                                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `WALLET_READER`                                  | every read                                                                          |
+| `EXCHANGE_RATE_READER`                           | `getRate`, `convert`                                                                |
+| `ADMIN_WALLET_REPORTING`, `ADMIN_GAME_REPORTING` | every report                                                                        |
+| `PLAY_ELIGIBILITY_PROJECTION`                    | `write`, `reconcile`, `heartbeat`, bound with `remote: true`                        |
+| `RG_LIMIT_LEDGER`                                | `write`, `reconcile`, `drifted`, `heartbeat`, `spendFor`, bound with `remote: true` |
+
+`remote: true` makes the owners follow ADR-0066: a lift or a loosened limit reaches the ledger by its event, and a restriction still writes first and fails the change when the write fails. On the money service, a non-empty `MONEY_PORTS_CALLERS` arms the stale check: stakes, deposits and wagers refuse once the last heartbeat is older than `LEDGER_PROJECTION_STALE_MS`, or missing. A fresh split install therefore refuses until the platform's first beat, at most `LEDGER_PROJECTION_HEARTBEAT_MS`.
+
+Ports that take the caller's transaction cannot cross the network: `WALLET_COMMANDS`, `WAGER_TRACKING`, `BONUS_LIFECYCLE`, `BONUS_WAGERING`, `BONUS_GRANTS`, `BONUS_GRANT_LEDGER`, `GAMING_COMMANDS`, `RG_LIMITS` and `LEDGER_PLAY_ELIGIBILITY`. With `MONEY_SERVICE_URL` set, a kept module whose `requiresPorts` names one fails the boot with the module and the port in the message.
+
+Platform service:
+
+```
+SERVICE_NAME=platform
+MONEY_SERVICE_URL=https://money.internal   # the money service's private origin
+MONEY_SERVICE_NAME=money                   # its SERVICE_NAME, default money
+INTERNAL_API_SECRETS=<shared secret>
+```
+
+Money service:
+
+```
+SERVICE_NAME=money
+MONEY_PORTS_CALLERS=platform   # POST /internal/v1/money/ports/call
+INTERNAL_API_SECRETS=<shared secret>
+```
+
+`MONEY_PORTS_CALLERS` is a comma list of `SERVICE_NAME`s; unset refuses every caller. Every call goes through one route, naming the port and method; the money service answers from its own binding and refuses a port or method outside the table above. A required `tx` argument is never sent: the money service runs a write in a transaction of its own and a read on its own connection.
+
+Failures close. Nothing is cached, and each call times out at 2s. A read that cannot be answered (timeout, network, 5xx) throws a 503 `SERVICE_UNAVAILABLE`, never a zero balance; a refused call (4xx) stays a 500. A write is retried once with the same body after a timeout, network failure or 5xx, then throws. Every remote write is idempotent at the money service (a projection write keeps the newer version, a reconcile applies only a newer one, a heartbeat), so a retry or a late first attempt never replaces newer state. A typed port refusal (`RgRateUnavailableError`) comes back as a 422 with its code, is rethrown as the same class and is never retried. In production the URL must be https unless `MONEY_SERVICE_ALLOW_HTTP=true`. Rollback is redeploying the platform with `MONEY_SERVICE_URL` unset.
+
 ## A module on a database of its own
 
 Every step above works on one shared database. Giving the chat service a database of its own adds three jobs: migrate each database, ship audit from each, and make sure every queue still has a consumer.
@@ -183,6 +220,29 @@ The account closed and account reopened jobs read the account fresh from the ide
 Until step 3 the main API still loads chat, so chat handlers run in both services, idempotently. Its consumer group does not move, so step 3 loses nothing. The chat service's group is new: it starts at the stream tail, so deploy it (step 1) before you depend on it, or set `EVENT_BUS_START_ID=0` on it so the new group starts at the oldest retained event instead and a one-step rollout (as in `compose.prod.yml`) misses nothing. Every handler in that process, infra overlays included, then replays up to seven days of retained events once, so each must be safe to run twice; the chat handlers are. The setting applies whenever the process first creates a group, which includes a topic a later release starts consuming, and an existing group keeps its cursor. It is a first-rollout switch: drop it once the chat service has booted. `createApp` refuses it on a process without `SERVICE_MANIFEST`, so the main API never replays.
 
 Rollback is routing and that variable. Redeploy the main API with `CHAT_SERVICE_URL` unset, and point the prefixes back at it.
+
+## Redis loss
+
+Every service shares one Redis. It holds the event streams with each consumer group's position, and the BullMQ queues. Postgres holds the copy that survives: every event written with `emitInTransaction` stays in `event_outbox` for 7 days after the relay published it (`EVENT_RETENTION_MS`), and each consumer records what it applied in `processed_events`, kept a day longer.
+
+When Redis is lost or restored from a snapshot:
+
+1. Restore the latest snapshot, or start an empty Redis.
+2. Start the services. A consumer group the restore lost is recreated at the stream tail on boot, so it sees only events published from then on. Recurring job schedules are upserted again at boot.
+3. Once every service is up, replay what was published since the snapshot, with a margin, against each database that has an outbox:
+
+   ```sh
+   DATABASE_URL=... REDIS_URL=... npx openora-outbox-replay --since 2026-11-25T08:00:00Z --dry-run
+   DATABASE_URL=... REDIS_URL=... npx openora-outbox-replay --since 2026-11-25T08:00:00Z
+   ```
+
+   It republishes every published `event_outbox` row with `published_at` at or after `--since`, oldest first, and prints a count per topic. `--topic <topic>` limits it to one topic; `--dry-run` only counts. A consumer skips an event it already applied, so a generous `--since` and a second run are safe. A `--since` older than the 7-day retention is refused with a non-zero exit: part of that range is already pruned. Unpublished rows are left to the relay.
+
+Not recoverable from Postgres:
+
+- An event sent with plain `emit()`. It never had an outbox row. Those are informational, catalog and cache-invalidation events; anything reporting committed money, compliance or account state uses `emitInTransaction`.
+- A queued or delayed BullMQ job. It exists only in Redis. A recurring schedule comes back at boot; a one-off job enqueued before the loss does not.
+- Realtime pushes, presence and the shared cache. They rebuild as players reconnect and caches miss.
 
 ## Checklist
 

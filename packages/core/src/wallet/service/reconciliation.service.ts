@@ -2447,6 +2447,12 @@ export class ReconciliationService {
         .map((snapshot) => snapshot.userId)
         .filter((userId) => reported.has(userId) && !isDrifting.has(userId));
       const fresh = drifting.filter((userId) => !reported.has(userId));
+      if (fresh.length > 0) {
+        logger.error(
+          { runId, kind: check.kind, players: fresh.length, behind: behind.length },
+          'reconciliation: a ledger projection drifted from its owner; repairing',
+        );
+      }
       if (inStep.length > 0 || fresh.length > 0) {
         const versionOf = new Map(snapshots.map((s) => [s.userId, s.version]));
         await this.drizzle.db.transaction(async (txn) => {

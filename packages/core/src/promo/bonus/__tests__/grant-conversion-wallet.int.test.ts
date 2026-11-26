@@ -28,6 +28,7 @@ const service = (wallet: WalletCommands | undefined, turnoverOn = true) =>
     () => wallet,
     turnoverOn,
     { error: vi.fn() },
+    { getPlayerIdByUserId: async () => null },
   );
 
 const input = { limit: 100, dryRun: false };

@@ -58,6 +58,7 @@ export const LEDGER_V1_REFUSAL_REASONS = [
   'insufficient_funds',
   /** Excluded, cooling off or otherwise barred from play. */
   'player_blocked',
+  'ledger_unavailable',
   /** A responsible-gambling wager limit. */
   'limit',
   /** Above the max bet of the bonus the stake would draw on. */

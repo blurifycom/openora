@@ -38,6 +38,8 @@ const RETENTION = { removeOnComplete: RETAIN_COMPLETED, removeOnFail: RETAIN_FAI
 // every 100ms retry of its worker loop - millions of lines while Redis is down or OOM.
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
+const CLOSE_SETTLE_MS = 2_000;
+
 // The wire shape stored on every BullMQ job: the caller payload plus carried meta.
 // The worker validates `payload` against the registration schema before the handler
 // runs, exactly as the in-process driver does.
@@ -69,6 +71,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
   private readonly queues = new Map<string, Queue<JobEnvelope>>();
   private readonly workers: Worker<JobEnvelope>[] = [];
   private readonly orderingWarned = new Set<string>();
+  private readonly pending = new Set<Promise<unknown>>();
   // One window per process, not per queue or message: every queue shares one Redis, so an
   // outage logs once a minute per instance, and messages carrying job ids stay bounded.
   private redisErrorLoggedAt = Number.NEGATIVE_INFINITY;
@@ -106,9 +109,11 @@ export class BullMqJobQueue implements JobQueueAdapter {
       ...RETENTION,
     };
 
-    return this.getQueue(queue)
-      .add(queue, envelope, jobOpts)
-      .then((job) => ({ id: job.id ?? '' }));
+    return this.track(
+      this.getQueue(queue)
+        .add(queue, envelope, jobOpts)
+        .then((job) => ({ id: job.id ?? '' })),
+    );
   }
 
   registerWorker<T>(registration: WorkerRegistration<T>): void {
@@ -156,27 +161,45 @@ export class BullMqJobQueue implements JobQueueAdapter {
     repeat: RepeatOptions,
   ): Promise<void> {
     const envelope: JobEnvelope = { payload, meta: {} };
-    return this.getQueue(queue)
-      .upsertJobScheduler(
-        scheduleId,
-        { pattern: repeat.cron, every: repeat.everyMs, tz: repeat.timezone },
-        // Without opts every cron run stays in Redis forever (~1 KB per run).
-        { name: queue, data: envelope, opts: RETENTION },
-      )
-      .then(() => undefined);
+    return this.track(
+      this.getQueue(queue)
+        .upsertJobScheduler(
+          scheduleId,
+          { pattern: repeat.cron, every: repeat.everyMs, tz: repeat.timezone },
+          { name: queue, data: envelope, opts: RETENTION },
+        )
+        .then(() => undefined),
+    );
   }
 
   unschedule(queue: QueueName, scheduleId: string): Promise<void> {
-    return this.getQueue(queue)
-      .removeJobScheduler(scheduleId)
-      .then(() => undefined);
+    return this.track(
+      this.getQueue(queue)
+        .removeJobScheduler(scheduleId)
+        .then(() => undefined),
+    );
   }
 
   async close(): Promise<void> {
     // Workers first (drain in-flight), then queues; each close() tears down its own
     // BullMQ-owned connection.
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.allSettled([...this.workers.map((w) => w.waitUntilReady()), ...this.pending]),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, CLOSE_SETTLE_MS);
+      }),
+    ]);
+    clearTimeout(timer);
     await Promise.allSettled(this.workers.map((w) => w.close()));
     await Promise.allSettled([...this.queues.values()].map((q) => q.close()));
+  }
+
+  private track<T>(write: Promise<T>): Promise<T> {
+    this.pending.add(write);
+    const settled = () => this.pending.delete(write);
+    write.then(settled, settled);
+    return write;
   }
 
   private getQueue(queue: QueueName): Queue<JobEnvelope> {

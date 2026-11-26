@@ -38,6 +38,7 @@ import {
   type LedgerV1MoveOutcome,
   type LedgerV1RefusalReason,
   type LedgerV1Refused,
+  LedgerProjectionStaleError,
   type LedgerV1ReverseArgs,
   type LedgerV1WinArgs,
   type SportsbookLedger,
@@ -113,6 +114,7 @@ const REFUSAL_BY_ERROR: ReadonlyArray<
 > = [
   [WalletReplayMismatchError, 'fingerprint_mismatch'],
   [WalletRgRestrictedError, 'player_blocked'],
+  [LedgerProjectionStaleError, 'ledger_unavailable'],
   [RgLimitExceededError, 'limit'],
   [MaxBetExceededError, 'max_bet_exceeded'],
   [GamingUnknownGameError, 'unknown_game'],
@@ -133,6 +135,7 @@ const STORES_REFUSAL: Readonly<Record<LedgerV1RefusalReason, boolean>> = {
   round_mismatch: false,
   insufficient_funds: true,
   player_blocked: true,
+  ledger_unavailable: false,
   limit: true,
   max_bet_exceeded: true,
   wallet_not_found: true,

@@ -88,7 +88,8 @@ async function assignForProposal(
 
 export default {
   id: 'tag',
-  dependsOn: ['wallet', 'identity', 'audit'],
+  dependsOn: ['identity', 'audit'],
+  requiresPorts: [WALLET_READER],
   register(ctx) {
     // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;

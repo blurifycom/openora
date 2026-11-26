@@ -3,11 +3,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import { DRIZZLE } from '@openora/core/server';
 import {
+  ConversionFunnelSchema,
   FinancialSummarySchema,
   GgrSeriesSchema,
   ProductRevenueSchema,
 } from '@openora/core/analytics/contract';
 import { gameRound, ledgerGame } from '@openora/core/casino/schema/gaming';
+import { user } from '@openora/core/pam/schema/identity';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   asAdmin,
@@ -447,5 +449,93 @@ describe('financial analytics reports', () => {
       const res = await superAdmin.get(`/analytics/financial/${report}${query(inverted)}`);
       expect(res.status).toBe(400);
     }
+  });
+});
+
+describe('conversion funnel report', () => {
+  type Step = { type: TxType; status?: TxStatus };
+
+  async function seedMember(
+    window: { at: (day: number) => Date },
+    steps: Step[],
+    emailVerified = true,
+    day = 11,
+  ) {
+    const userId = randomUUID();
+    await db()
+      .insert(user)
+      .values({
+        id: userId,
+        name: 'Funnel',
+        username: `funnel_${userId.replaceAll('-', '').slice(0, 12)}`,
+        email: `${userId}@test.dev`,
+        emailVerified,
+        createdAt: window.at(day),
+      });
+    const [owned] = await db()
+      .insert(wallet)
+      .values({ userId, currency: 'USD' })
+      .returning({ id: wallet.id });
+    for (const { type, status = 'completed' } of steps) {
+      await db()
+        .insert(walletTransaction)
+        .values({
+          walletId: owned?.id ?? '',
+          type,
+          amount: '10',
+          currency: 'USD',
+          status,
+          createdAt: window.at(day),
+        });
+    }
+  }
+
+  const funnel = async (client: TestClient, window: { dateFrom: string; dateTo: string }) =>
+    client.get(`/analytics/funnel/conversion${query(window)}`);
+
+  it('counts each stage by verified, completed deposit and completed bet, and ignores members outside the range', async () => {
+    const window = nextWindow();
+    await seedMember(window, [{ type: 'deposit' }, { type: 'bet' }, { type: 'bet' }]);
+    await seedMember(window, [{ type: 'bet' }]);
+    await seedMember(window, [{ type: 'deposit' }, { type: 'bet', status: 'failed' }]);
+    await seedMember(window, [{ type: 'deposit', status: 'pending' }, { type: 'bet' }]);
+    await seedMember(window, [{ type: 'withdrawal' }]);
+    await seedMember(window, [{ type: 'deposit' }, { type: 'bet' }], false);
+    await seedMember({ at: () => new Date(Date.parse(window.dateFrom) - 60 * 86_400_000) }, [
+      { type: 'deposit' },
+    ]);
+
+    const res = await funnel(superAdmin, window);
+
+    expect(res.status).toBe(200);
+    const stages = ConversionFunnelSchema.parse(await res.json());
+    expect(stages.map((stage) => [stage.stage, stage.count])).toEqual([
+      ['registered', 6],
+      ['email_verified', 5],
+      ['first_deposit', 2],
+      ['first_bet', 1],
+    ]);
+    expect(stages.map((stage) => stage.dropOffRate)).toEqual([null, 1 / 6, 3 / 5, 1 / 2]);
+  });
+
+  it('an empty range reports zero counts and zero drop-off rather than dividing by zero', async () => {
+    const res = await funnel(superAdmin, nextWindow());
+
+    expect(res.status).toBe(200);
+    expect(ConversionFunnelSchema.parse(await res.json()).map((stage) => stage.count)).toEqual([
+      0, 0, 0, 0,
+    ]);
+  });
+
+  it('a caller without the analytics permission is refused and sees no counts', async () => {
+    const window = nextWindow();
+    await seedMember(window, [{ type: 'deposit' }]);
+
+    for (const client of [playerClient, noAnalyticsClient]) {
+      expect((await funnel(client, window)).status).toBe(403);
+    }
+    expect((await funnel(readOnlyClient, window)).status).toBe(200);
+    const anonymous = await e2e.app.app.request(`/analytics/funnel/conversion${query(window)}`);
+    expect(anonymous.status).toBe(401);
   });
 });

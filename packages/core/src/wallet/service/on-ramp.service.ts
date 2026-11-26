@@ -195,6 +195,9 @@ export class OnRampService {
     );
     const purchaseId = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, depositSlotKey(userId), async () => {
+        if (await isPlayRefused(this.playEligibility, userId, tx)) {
+          throw new OnRampRestrictedError();
+        }
         await this.wallet.assertWithinRgDepositLimit(
           tx,
           userId,

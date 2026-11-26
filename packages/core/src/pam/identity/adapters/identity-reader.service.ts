@@ -1,5 +1,13 @@
 import { createLogger, DrizzleService, type DrizzleTx } from '@openora/core/server';
-import type { IdentityReader, KycStatus, Player, User } from '@openora/core/contracts';
+import type {
+  IdentityReader,
+  KycStatus,
+  LeaderboardName,
+  Player,
+  PlayerFacts,
+  User,
+  UserContact,
+} from '@openora/core/contracts';
 import { and, eq, exists, inArray, isNull, lt, max, ne, or, sql, SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { session, user } from '../schema/index.js';
@@ -86,6 +94,71 @@ export class IdentityReaderService implements IdentityReader {
       .from(player)
       .where(sql`${player.id} = ANY(${sql.param([...playerIds])}::uuid[])`);
     return new Map(rows.map((row) => [row.id, row.userId]));
+  }
+
+  async getPlayerIdsByUserIds(
+    userIds: readonly User['id'][],
+  ): Promise<Map<User['id'], Player['id']>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.drizzle.db
+      .select({ userId: player.userId, id: player.id })
+      .from(player)
+      .where(sql`${player.userId} = ANY(${sql.param([...userIds])}::uuid[])`);
+    return new Map(rows.map((row) => [row.userId, row.id]));
+  }
+
+  async getLeaderboardNames(
+    userIds: readonly User['id'][],
+  ): Promise<Map<User['id'], LeaderboardName>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.drizzle.db
+      .select({
+        userId: user.id,
+        username: user.username,
+        hideUsername: player.hideUsernameOnLeaderboards,
+      })
+      .from(user)
+      .leftJoin(player, eq(player.userId, user.id))
+      .where(sql`${user.id} = ANY(${sql.param([...userIds])}::uuid[])`);
+    return new Map(
+      rows.map((row) => [
+        row.userId,
+        { username: row.username, hideUsername: row.hideUsername ?? false },
+      ]),
+    );
+  }
+
+  async getUserContacts(userIds: readonly User['id'][]): Promise<Map<User['id'], UserContact>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.drizzle.db
+      .select({ userId: user.id, name: user.name, email: user.email })
+      .from(user)
+      .where(sql`${user.id} = ANY(${sql.param([...userIds])}::uuid[])`);
+    return new Map(rows.map(({ userId, ...contact }) => [userId, contact]));
+  }
+
+  async getPlayerFacts(userIds: readonly User['id'][]): Promise<Map<User['id'], PlayerFacts>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.drizzle.db
+      .select({
+        userId: user.id,
+        country: player.country,
+        firstName: player.firstName,
+        lastName: player.lastName,
+        preferredLanguage: user.language,
+      })
+      .from(user)
+      .leftJoin(player, eq(player.userId, user.id))
+      .where(sql`${user.id} = ANY(${sql.param([...userIds])}::uuid[])`);
+    return new Map(rows.map(({ userId, ...facts }) => [userId, facts]));
   }
 
   async getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null> {

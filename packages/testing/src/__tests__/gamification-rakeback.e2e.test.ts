@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import * as z from 'zod';
 import {
   JOB_QUEUE,
   LEDGER_API_V1,
   LedgerV1MoveOutcomeSchema,
+  PLAY_ELIGIBILITY_PROJECTION,
   queue,
 } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
+import { backfillPlayEligibility } from '@openora/core/pam/identity/seed';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import {
@@ -72,6 +74,9 @@ const LiabilitySchema = SummarySchema.pick({
 });
 
 const dbOf = (e2e: WalletE2e) => e2e.app.container.get(DRIZZLE).db;
+
+const reproject = (e2e: WalletE2e) =>
+  backfillPlayEligibility(dbOf(e2e), e2e.app.container.get(PLAY_ELIGIBILITY_PROJECTION));
 
 async function configureLadder(e2e: WalletE2e) {
   const config = await e2e.admin.put('/backoffice/promo/ranks/config', {
@@ -322,6 +327,7 @@ describe('player rakeback', () => {
       .update(player)
       .set({ status: 'closed' })
       .where(eq(player.userId, closed.userId));
+    await reproject(e2e);
 
     const results = [await claimWith(suspended.client), await claimWith(closed.client)];
 
@@ -338,7 +344,11 @@ describe('player rakeback', () => {
 
   it('a player under a responsible-gambling block cannot claim rakeback', async () => {
     const blocked = await bettorWithAccrual(e2e, '10');
-    await dbOf(e2e).update(user).set({ rgBlocked: true }).where(eq(user.id, blocked.userId));
+    await dbOf(e2e)
+      .update(user)
+      .set({ rgBlocked: true, playEligibilityVersion: sql`${user.playEligibilityVersion} + 1` })
+      .where(eq(user.id, blocked.userId));
+    await reproject(e2e);
 
     const res = await claimWith(blocked.client);
 
@@ -359,6 +369,7 @@ describe('player rakeback', () => {
       .update(player)
       .set({ status: 'suspended' })
       .where(eq(player.userId, suspended.userId));
+    await reproject(e2e);
 
     await e2e.app.container.get(JOB_QUEUE).enqueue(queue('promo-rakeback-sweep'), {});
     await vi.waitFor(async () => expect(await cashbackRows(e2e, closed.userId)).toHaveLength(1), {

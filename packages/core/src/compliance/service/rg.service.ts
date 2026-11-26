@@ -414,7 +414,7 @@ export type RgServiceDeps = {
   audit?: AuditWritePort | null;
   rates: ExchangeRateReader;
   /** The ledger's limits projection, written in every limit change's own transaction. */
-  limitsLedger: Pick<RgLimitLedgerPort, 'write'>;
+  limitsLedger: Pick<RgLimitLedgerPort, 'write' | 'remote'>;
 };
 
 /**

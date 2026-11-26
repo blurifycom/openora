@@ -1,6 +1,6 @@
 import { asc, desc, eq, gt, sql } from 'drizzle-orm';
-import { user } from '@openora/core/pam/schema/identity';
 import type {
+  IdentityReader,
   ExchangeRateReader,
   Uuid,
   WagerTrackingArgs,
@@ -20,7 +20,12 @@ import {
   promoRankChallengeWager,
   promoRankConfig,
 } from '../schema/index.js';
-import { TIER_COLUMNS, withWinners } from '../shared/rank-challenge-ladder.js';
+import {
+  nameWinners,
+  TIER_COLUMNS,
+  withUsernames,
+  withWinners,
+} from '../shared/rank-challenge-ladder.js';
 
 /**
  * The Rank Challenge engine: a fifth `WAGER_TRACKING` consumer alongside `RankService`,
@@ -46,6 +51,7 @@ export class RankChallengeService implements WagerTrackingCommands {
     private readonly drizzle: DrizzleService,
     private readonly rates: ExchangeRateReader,
     private readonly logger: { warn: (context: object, message: string) => void },
+    private readonly identity: IdentityReader,
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
@@ -162,7 +168,10 @@ export class RankChallengeService implements WagerTrackingCommands {
   /** The ladder as an operator configured it, plus who has won each tier so far. Public. */
   async getLadder(): Promise<RankChallengeLadder> {
     const { currency, tiers } = await this.getTiers();
-    return { currency, tiers: await withWinners(this.drizzle.db, tiers) };
+    return {
+      currency,
+      tiers: await nameWinners(this.identity, await withWinners(this.drizzle.db, tiers)),
+    };
   }
 
   async getForPlayer(userId: Uuid): Promise<PlayerRankChallenge> {
@@ -179,16 +188,17 @@ export class RankChallengeService implements WagerTrackingCommands {
       .where(eq(promoRankChallengeWager.userId, userId));
     const lifetimeWagered = row?.lifetimeWagered ?? '0';
 
-    const top = await this.drizzle.db
-      .select({
-        userId: promoRankChallengeWager.userId,
-        lifetimeWagered: promoRankChallengeWager.lifetimeWagered,
-        username: user.username,
-      })
-      .from(promoRankChallengeWager)
-      .innerJoin(user, eq(user.id, promoRankChallengeWager.userId))
-      .orderBy(desc(promoRankChallengeWager.lifetimeWagered))
-      .limit(5);
+    const top = await withUsernames(
+      this.identity,
+      await this.drizzle.db
+        .select({
+          userId: promoRankChallengeWager.userId,
+          lifetimeWagered: promoRankChallengeWager.lifetimeWagered,
+        })
+        .from(promoRankChallengeWager)
+        .orderBy(desc(promoRankChallengeWager.lifetimeWagered))
+        .limit(5),
+    );
 
     const leaderboard = top.map((r, index) => ({
       userId: r.userId,

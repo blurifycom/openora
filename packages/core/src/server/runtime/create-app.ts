@@ -74,7 +74,7 @@ import {
 } from '../auth/index.js';
 import { loadPlugins, parseServiceManifest, type PluginEntry } from '../plugin-host/index.js';
 import { importPlugin } from '../plugin-host/load-plugins.js';
-import { withoutChatModules } from '../plugin-host/remote-chat.js';
+import { withoutRemoteModules } from '../plugin-host/remote-modules.js';
 import {
   assertServiceComplete,
   selectServiceEntries,
@@ -520,8 +520,7 @@ function reportServerFault(error: unknown) {
 
 /**
  * The single composition root: wires the DI container, boots the plugins in
- * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset; with
- * `CHAT_SERVICE_URL` set, minus `chat` and the plugins that depend on it), and
+ * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
  * mounts the resulting oRPC router on a Hono app. A manifest that leaves out a module its
  * modules depend on, the module that binds a port they require, or the module behind a
  * control - a selected module's `controlPorts`, or AdminGuard's - that the plugin list has,
@@ -689,15 +688,12 @@ async function bootApp(
   const corsOrigins = resolveCorsOrigins(config.cors);
 
   const bootLogger = createLogger('create-app');
-  const registryEntries = await withoutChatModules(config.plugins, importPlugin<CoreTokenCatalog>);
-  const droppedForChat = config.plugins
-    .filter((e) => !registryEntries.includes(e))
-    .map((e) => e.id);
-  if (droppedForChat.length > 0) {
-    bootLogger.info(
-      { modules: droppedForChat },
-      'CHAT_SERVICE_URL is set: not loading the chat modules here',
-    );
+  const { entries: registryEntries, dropped: droppedForRemote } = await withoutRemoteModules(
+    config.plugins,
+    importPlugin<CoreTokenCatalog>,
+  );
+  for (const { env, modules } of droppedForRemote) {
+    bootLogger.info({ modules }, `${env} is set: not loading these modules here`);
   }
   const manifestCheck: ServiceManifestCheck<CoreTokenCatalog> | null =
     manifest === null

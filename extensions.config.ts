@@ -27,6 +27,8 @@ export const extensions = [
   { id: 'chat-commands', path: './packages/core/dist/engagement/chat-commands/plugin.js' },
   // Binds the chat ports to a chat service in another process; nothing unless CHAT_SERVICE_URL is set.
   { id: 'chat-remote', path: './packages/core/dist/engagement/chat-remote/plugin.js' },
+  // Binds the money ports to a money service in another process; nothing unless MONEY_SERVICE_URL is set.
+  { id: 'money-remote', path: './packages/core/dist/money-remote/plugin.js' },
   { id: 'support-chat', path: './packages/core/dist/engagement/support-chat/plugin.js' },
   { id: 'bonus', path: './packages/core/dist/promo/bonus/plugin.js' },
   { id: 'gamification', path: './packages/core/dist/promo/gamification/plugin.js' },

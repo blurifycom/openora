@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
-import { user } from '@openora/core/pam/schema/identity';
-import type { AuditWritePort, Uuid } from '@openora/core/contracts';
+import type { AuditWritePort, IdentityReader, Uuid } from '@openora/core/contracts';
 import {
   createDomainError,
   withAdvisoryXactLock,
@@ -15,7 +14,12 @@ import type {
   SetRankChallengeLadderInput,
 } from '../contract/index.js';
 import { promoRankChallengeClaim, promoRankChallengeTier } from '../schema/index.js';
-import { TIER_COLUMNS, withWinners } from '../shared/rank-challenge-ladder.js';
+import {
+  nameWinners,
+  TIER_COLUMNS,
+  withUsernames,
+  withWinners,
+} from '../shared/rank-challenge-ladder.js';
 
 export const RankChallengeLadderCurrencyHeldError = createDomainError(
   'RankChallengeLadderCurrencyHeldError',
@@ -38,10 +42,11 @@ const LADDER_LOCK_KEY = 'promo_rank_challenge_ladder';
 const ladderVersion = (rows: readonly object[]) =>
   createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 
-async function toLadder(
-  tx: DrizzleTx,
-  fallbackCurrency: string,
-): Promise<RankChallengeAdminLadder> {
+type UnnamedLadder = Omit<RankChallengeAdminLadder, 'tiers'> & {
+  tiers: Omit<RankChallengeAdminLadder['tiers'][number], 'winnerUsername'>[];
+};
+
+async function toLadder(tx: DrizzleTx, fallbackCurrency: string): Promise<UnnamedLadder> {
   const rows = await tx
     .select({ ...TIER_COLUMNS, currency: promoRankChallengeTier.currency })
     .from(promoRankChallengeTier)
@@ -84,7 +89,6 @@ const claimsQuery = (db: DrizzleDb | DrizzleTx) =>
       tierId: promoRankChallengeClaim.tierId,
       tierKey: promoRankChallengeTier.key,
       userId: promoRankChallengeClaim.userId,
-      username: user.username,
       cashAmount: promoRankChallengeClaim.cashAmount,
       physicalItem: promoRankChallengeClaim.physicalItem,
       claimedAt: promoRankChallengeClaim.claimedAt,
@@ -95,8 +99,7 @@ const claimsQuery = (db: DrizzleDb | DrizzleTx) =>
     .innerJoin(
       promoRankChallengeTier,
       eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
-    )
-    .innerJoin(user, eq(user.id, promoRankChallengeClaim.userId));
+    );
 
 /**
  * The operator's side of the Rank Challenge: read/replace the ladder, list winner records, and
@@ -111,10 +114,11 @@ export class RankChallengeAdminService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
+    private readonly identity: IdentityReader,
   ) {}
 
   async getLadder(): Promise<RankChallengeAdminLadder> {
-    return this.drizzle.db.transaction((tx) => toLadder(tx, 'USD'));
+    return this.named(await this.drizzle.db.transaction((tx) => toLadder(tx, 'USD')));
   }
 
   /**
@@ -125,16 +129,22 @@ export class RankChallengeAdminService {
     adminId: Uuid,
     input: SetRankChallengeLadderInput,
   ): Promise<RankChallengeAdminLadder> {
-    return this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLock(tx, LADDER_LOCK_KEY, () => this.replaceLadder(tx, adminId, input)),
+    return this.named(
+      await this.drizzle.db.transaction((tx) =>
+        withAdvisoryXactLock(tx, LADDER_LOCK_KEY, () => this.replaceLadder(tx, adminId, input)),
+      ),
     );
+  }
+
+  private async named(ladder: UnnamedLadder): Promise<RankChallengeAdminLadder> {
+    return { ...ladder, tiers: await nameWinners(this.identity, ladder.tiers) };
   }
 
   private async replaceLadder(
     tx: DrizzleTx,
     adminId: Uuid,
     input: SetRankChallengeLadderInput,
-  ): Promise<RankChallengeAdminLadder> {
+  ): Promise<UnnamedLadder> {
     const before = await toLadder(tx, input.currency);
     if (before.version !== input.version) {
       throw new RankChallengeLadderVersionConflictError();
@@ -199,7 +209,7 @@ export class RankChallengeAdminService {
     const rows = await claimsQuery(this.drizzle.db).orderBy(
       desc(promoRankChallengeClaim.claimedAt),
     );
-    return rows.map(toClaim);
+    return (await withUsernames(this.identity, rows)).map(toClaim);
   }
 
   async listFulfilmentQueue(): Promise<RankChallengeClaim[]> {
@@ -211,7 +221,7 @@ export class RankChallengeAdminService {
         ),
       )
       .orderBy(desc(promoRankChallengeClaim.claimedAt));
-    return rows.map(toClaim);
+    return (await withUsernames(this.identity, rows)).map(toClaim);
   }
 
   /**
@@ -220,7 +230,7 @@ export class RankChallengeAdminService {
    * admin UI (see contract/index.ts).
    */
   async markFulfilled(adminId: Uuid, tierId: Uuid, note: string): Promise<RankChallengeClaim> {
-    return this.drizzle.db.transaction(async (tx) => {
+    const row = await this.drizzle.db.transaction(async (tx) => {
       const [claim] = await tx
         .select()
         .from(promoRankChallengeClaim)
@@ -250,7 +260,12 @@ export class RankChallengeAdminService {
       if (!row) {
         throw new Error('rank challenge claim vanished after update');
       }
-      return toClaim(row);
+      return row;
     });
+    const [named] = await withUsernames(this.identity, [row]);
+    if (!named) {
+      throw new Error('rank challenge claim winner is unknown to identity');
+    }
+    return toClaim(named);
   }
 }

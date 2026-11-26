@@ -45,7 +45,7 @@ export type OutboxRelayOptions = {
   onError?: (err: unknown) => void;
 };
 
-function toEnvelope(row: EventOutboxRow): EventEnvelope {
+export function toEnvelope(row: EventOutboxRow): EventEnvelope {
   return {
     eventId: row.eventId,
     topic: row.topic,

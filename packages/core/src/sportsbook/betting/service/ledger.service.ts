@@ -17,6 +17,7 @@ import {
   type EventBus,
 } from '@openora/core/server';
 import {
+  LedgerProjectionStaleError,
   MONEY_SCALE,
   RgLimitExceededError,
   SportsbookCancelArgsSchema,
@@ -818,6 +819,9 @@ export class SportsbookLedgerService {
         throw err;
       });
     } catch (err) {
+      if (err instanceof LedgerProjectionStaleError) {
+        return { status: 'refused', reason: 'player_blocked' };
+      }
       if (!(err instanceof LedgerRefusal)) {
         throw err;
       }

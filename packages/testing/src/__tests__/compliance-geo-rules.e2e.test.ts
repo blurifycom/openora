@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import * as z from 'zod';
+import { GAME_GEO_CHECK } from '@openora/core/contracts';
 import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import {
   CountryRuleSchema,
@@ -13,7 +14,7 @@ import {
 import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
 import { game, gameProvider, gameRound, ledgerGame } from '@openora/core/casino/schema/gaming';
 import { user } from '@openora/core/pam/schema/identity';
-import { bootE2e, closeE2e, newPlayer, uniqueUsername, type E2e } from '../index.js';
+import { bootE2e, closeE2e, newPlayer, newStaff, uniqueUsername, type E2e } from '../index.js';
 import {
   balanceOf,
   bootWalletE2e,
@@ -621,5 +622,103 @@ describe('Geo rule administration', () => {
     expect(anonymous.map((res) => res.status)).toEqual([401, 401, 401]);
     expect((await countryRules()).find((rule) => rule.countryCode === 'NR')).toBeUndefined();
     expect(await db().select().from(gameGeoRule).where(eq(gameGeoRule.gameId, gameId))).toEqual([]);
+  });
+});
+
+describe('Geo rule pairs for the game catalog', () => {
+  const restrict = async (path: string, body: Record<string, unknown>) => {
+    const res = await e2e.admin.put(path, body);
+    expect(res.status).toBe(200);
+  };
+
+  const listed = async (query: string) => {
+    const res = await e2e.admin.get(`/backoffice/gaming/games?limit=100&${query}`);
+    expect(res.status).toBe(200);
+    return PageSchema(z.object({ id: z.string() }))
+      .parse(await bodyOf(res))
+      .items.map((item) => item.id);
+  };
+
+  it('the port narrows game pairs by country, game and source and provider pairs by country only', async () => {
+    const [first, second, other] = [await newGame(), await newGame(), await newGame()];
+    await db()
+      .insert(gameGeoRule)
+      .values([
+        { gameId: first.gameId, countryCode: 'IS', reason: 'sync', source: 'vendor' },
+        { gameId: first.gameId, countryCode: 'NO', reason: 'admin' },
+        { gameId: second.gameId, countryCode: 'IS', reason: 'sync', source: 'vendor' },
+      ]);
+    await db()
+      .insert(providerGeoRule)
+      .values([
+        { providerId: other.providerId, countryCode: 'IS', reason: 'licence' },
+        { providerId: other.providerId, countryCode: 'NO', reason: 'licence' },
+      ]);
+    const port = e2e.app.container.get(GAME_GEO_CHECK);
+
+    const narrowed = await port.listGeoRulePairs?.({
+      countries: ['IS'],
+      gameIds: [first.gameId],
+      source: 'vendor',
+    });
+    const byGame = await port.listGeoRulePairs?.({ gameIds: [first.gameId] });
+    const bySource = await port.listGeoRulePairs?.({
+      source: 'vendor',
+      gameIds: [first.gameId, second.gameId],
+    });
+
+    expect(narrowed?.games).toEqual([
+      { gameId: first.gameId, countryCode: 'IS', source: 'vendor' },
+    ]);
+    expect(narrowed?.providers).toContainEqual({
+      providerId: other.providerId,
+      countryCode: 'IS',
+    });
+    expect(narrowed?.providers).not.toContainEqual({
+      providerId: other.providerId,
+      countryCode: 'NO',
+    });
+    expect(byGame?.games).toHaveLength(2);
+    expect(bySource?.games).toHaveLength(2);
+  });
+
+  it('an admin filters the game list by game and provider geo rules, and the rules stay untouched', async () => {
+    const byGame = await newGame();
+    const byProvider = await newGame();
+    const open = await newGame();
+    await restrict(`/compliance/game-geo-rules/${byGame.gameId}`, {
+      gameId: byGame.gameId,
+      countryCodes: ['EE'],
+      reason: 'licence gap',
+    });
+    await restrict(`/compliance/provider-geo-rules/${byProvider.providerId}`, {
+      providerId: byProvider.providerId,
+      countryCodes: ['EE'],
+      reason: 'provider licence gap',
+    });
+
+    const blockedInEstonia = await listed('geoBlockedCountries[0]=EE');
+    const blockedAnywhere = await listed('geoBlocked=true');
+    const notBlocked = await listed('geoBlocked=false');
+    const availableInEstonia = await listed('geoAvailableCountries[0]=EE');
+
+    expect(blockedInEstonia.sort()).toEqual([byGame.gameId, byProvider.gameId].sort());
+    expect(blockedAnywhere).toEqual(expect.arrayContaining([byGame.gameId, byProvider.gameId]));
+    expect(blockedAnywhere).not.toContain(open.gameId);
+    expect(notBlocked).toContain(open.gameId);
+    expect(notBlocked).not.toContain(byGame.gameId);
+    expect(availableInEstonia).toContain(open.gameId);
+    expect(availableInEstonia).not.toEqual(expect.arrayContaining([byGame.gameId]));
+    expect(availableInEstonia).not.toContain(byProvider.gameId);
+  });
+
+  it('a staff member without the compliance grant is refused the geo filters but still lists games', async () => {
+    const { client } = await newStaff(e2e.app, 'geo-filter-agent', 'casino-manager');
+
+    const filtered = await client.get('/backoffice/gaming/games?geoBlocked=true');
+    const plain = await client.get('/backoffice/gaming/games');
+
+    expect(filtered.status).toBe(403);
+    expect(plain.status).toBe(200);
   });
 });

@@ -1,4 +1,11 @@
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, createLogger } from '@openora/core/server';
+import {
+  ADMIN_GUARD,
+  EVENT_BUS,
+  DRIZZLE,
+  createLogger,
+  envMs,
+  parseInternalCallers,
+} from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
@@ -57,6 +64,7 @@ import {
   runActorAdminId,
   userIdOfPlayer,
   type RealtimeTransport,
+  MONEY_REPORTING,
 } from '@openora/core/contracts';
 import {
   holdWithdrawalAction,
@@ -89,7 +97,9 @@ import {
 import { WalletReaderService } from './adapters/wallet-reader.service.js';
 import { WalletAssetCatalogService } from './adapters/wallet-asset-catalog.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
+import { MoneyReportingService } from './service/money-reporting.service.js';
 import { createWalletRouter, walletBalanceChannel } from './router/index.js';
+import { createInternalMoneyPortsRouter } from './router/internal-money-ports.router.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 import {
@@ -173,14 +183,28 @@ export default {
     // One instance behind both play eligibility ports; the router factory constructs it, and runs
     // in every process before any event is delivered.
     let playEligibility: LedgerPlayEligibilityService | null = null;
+    const moneyPortsCallers = parseInternalCallers(process.env['MONEY_PORTS_CALLERS']);
+    const remoteWriter = () => moneyPortsCallers.size > 0;
+    const staleMs = envMs('LEDGER_PROJECTION_STALE_MS', 60_000);
+    const alertMs = envMs('LEDGER_PROJECTION_ALERT_MS', 30_000);
+    if (alertMs >= staleMs) {
+      throw new Error(
+        `LEDGER_PROJECTION_ALERT_MS (${alertMs}) must be below LEDGER_PROJECTION_STALE_MS (${staleMs})`,
+      );
+    }
     const sharedPlayEligibility = (c: TypedContainer<CoreTokenCatalog>) =>
-      (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE)));
+      (playEligibility ??= new LedgerPlayEligibilityService(c.get(DRIZZLE), {
+        remoteWriter,
+        staleMs,
+        alertMs,
+      }));
     // Same for the limits gate and its projection writer (ADR-0057).
     let rgLimitsRef: LedgerRgLimitsService | null = null;
     const sharedRgLimits = (c: TypedContainer<CoreTokenCatalog>) =>
       (rgLimitsRef ??= new LedgerRgLimitsService(
         c.get(DRIZZLE),
         c.has(EXCHANGE_RATE_READER) ? c.get(EXCHANGE_RATE_READER) : undefined,
+        { remoteWriter, staleMs, alertMs },
       ));
 
     // Publishes a change *signal*, never the balance itself - see the comment on
@@ -417,7 +441,7 @@ export default {
 
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(transactionsFindTool, (c) => {
-      const transactions = new TransactionsFindService(c.get(DRIZZLE));
+      const transactions = new TransactionsFindService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => transactions.find(input);
     });
 
@@ -608,9 +632,17 @@ export default {
         }),
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
+    ctx.provide(MONEY_REPORTING, (c) => new MoneyReportingService(c.get(DRIZZLE)));
     // Operator-editable currency/network config, readable by a payment adapter without
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
+    ctx.routers.addInternal('money', (c) =>
+      createInternalMoneyPortsRouter(
+        (token) => c.get(token as CoreTokenCatalog[keyof CoreTokenCatalog]),
+        c.get(DRIZZLE).db,
+        moneyPortsCallers,
+      ),
+    );
     ctx.routers.add('wallet', (c, options) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       sharedPlayEligibility(c);
