@@ -43,6 +43,7 @@ export type {
   WalletDebitOutcome,
   WalletCreditArgs,
   WalletCreditOutcome,
+  WalletCloseRoundArgs,
   WalletProviderRef,
   WalletCorrectionDebitArgs,
   WalletCorrectionDebitOutcome,
@@ -80,8 +81,11 @@ export type {
   BonusGrantArgs,
   BonusGrantOutcome,
   BonusGrantTerms,
+  BonusFundSettings,
 } from './bonus-grants.js';
 export { BONUS_GRANTS } from './bonus-grants.js';
+export type { BonusDepositArgs, BonusDepositCommands } from './bonus-deposits.js';
+export { BONUS_DEPOSITS } from './bonus-deposits.js';
 
 export type { BonusGrantLedgerReader } from './bonus-grant-ledger.js';
 export { BONUS_GRANT_LEDGER } from './bonus-grant-ledger.js';
@@ -100,6 +104,8 @@ export type {
   BonusWagerOutcome,
   BonusSettleArgs,
   BonusSettleOutcome,
+  BonusCompletion,
+  BonusCloseRoundArgs,
 } from './bonus-wagering.js';
 export { BONUS_WAGERING, MaxBetExceededError } from './bonus-wagering.js';
 

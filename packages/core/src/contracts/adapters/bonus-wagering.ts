@@ -19,8 +19,11 @@ export type BonusWagerArgs = {
   currency: string;
   /** Full stake, as a decimal string, before any weighting and regardless of which balance pays. */
   stake: string;
-  /** Part of the stake the real balance could not cover. `'0'` when the player paid it all in cash. */
-  fromBonus: string;
+  /**
+   * Real balance the stake may draw on, as a decimal string. The engine splits the stake across
+   * free real money and the grant's buckets; the wallet debits `stake - bonusSpent` from it.
+   */
+  realAvailable: string;
   context: WagerContext;
   /**
    * The wallet's own provider identity for this bet (`providerRef.providerName`), not
@@ -44,7 +47,7 @@ export type BonusWagerOutcome =
        * player holds none, or the product never uses bonus funds.
        */
       grantId: string | null;
-      /** Part of the stake actually taken from bonus funds. Echoes `fromBonus` on success. */
+      /** Part of the stake taken from bonus funds (bucket C). The rest is real money. */
       bonusSpent: string;
       /**
        * Stake after weighting, each part at the weight of the grant it was attributed to, as a
@@ -55,18 +58,17 @@ export type BonusWagerOutcome =
       weightedAmount: string;
       /** Bonus funds left across the player's active grants in the bet's currency. */
       bonusBalanceAfter: string;
-      /**
-       * Each grant this bet pushed over its wagering requirement, in rollover order, and the bonus
-       * funds it owes the real balance. A bet spread across several grants can finish more than
-       * one. The wallet performs each credit itself, so the two modules never call back into
-       * each other.
-       */
-      completed: { grantId: string; convertedAmount: string }[];
       /** Whatever a `WAGER_TRACKING` consumer credited to the real balance alongside this bet - rank rakeback today. */
       walletCredits: WagerTrackingWalletCredit[];
     }
-  /** Bonus funds could not cover `fromBonus`. The wallet turns this into its own insufficient-funds outcome. */
+  /** Real and bonus funds together could not cover the stake. The wallet turns this into its own insufficient-funds outcome. */
   | { ok: false; reason: 'insufficient_bonus'; bonusAvailable: string }
+  /**
+   * The grant's terms keep this kind of bet off some of its buckets, and the funds it may use
+   * fall short. `permitted` is everything it may draw on, free real money included; the wallet
+   * reports it as the available balance. A disallowed bucket never tops the stake up.
+   */
+  | { ok: false; reason: 'restricted_funds'; permitted: string }
   /**
    * The round's total stake, this bet included, is larger than the strictest `maxBet` among the
    * active grants. A refusal, not a silent pass: the limit exists so a player cannot turn a
@@ -110,6 +112,29 @@ export type BonusSettleArgs = {
   providerName: string;
   externalRoundId: string;
   kind: Extract<WalletTransactionType, 'win' | 'bet_reversal'>;
+  /** Real balance before this credit; the grant's real-cash counters never exceed it. */
+  realBalance: string;
+  /**
+   * The provider marked this the round's last result. Without it a win leaves the round open, and
+   * a reversal closes it only once nothing is left staked on it, so no grant completes mid-round.
+   */
+  final?: boolean;
+};
+
+/**
+ * A grant whose wagering requirement is met and whose last open bet has settled, and the bonus
+ * funds it owes the real balance. The wallet performs the credit itself, so the two modules never
+ * call back into each other.
+ */
+export type BonusCompletion = { grantId: string; convertedAmount: string };
+
+/** A round that settled with nothing to pay back: a lost bet. */
+export type BonusCloseRoundArgs = {
+  userId: string;
+  currency: string;
+  providerName: string;
+  externalRoundId: string;
+  realBalance: string;
 };
 
 export type BonusSettleOutcome = {
@@ -124,11 +149,14 @@ export type BonusSettleOutcome = {
    * reports `'0'` on both shares rather than paying an already-returned stake out as cash.
    */
   realShare: string;
+  /** Grants this settlement let complete: requirement met and no bet of theirs still open. */
+  completed: BonusCompletion[];
 };
 
 export type BonusWageringCommands = {
   wager(tx: unknown, args: BonusWagerArgs): Promise<BonusWagerOutcome>;
   settle(tx: unknown, args: BonusSettleArgs): Promise<BonusSettleOutcome>;
+  closeRound(tx: unknown, args: BonusCloseRoundArgs): Promise<{ completed: BonusCompletion[] }>;
 };
 
 export const BONUS_WAGERING: SealedToken<BonusWageringCommands> =

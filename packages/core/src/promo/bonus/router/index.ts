@@ -29,6 +29,7 @@ import {
   GrantNotActivatableError,
   GrantNotForfeitableError,
   GrantNotFoundError as GrantNotForfeitableNotFoundError,
+  PlayerForfeitNotAllowedError,
 } from '../service/grant-lifecycle.service.js';
 import { GrantNotFoundError, GrantReaderService } from '../service/grant-reader.service.js';
 import {
@@ -245,6 +246,25 @@ export function createBonusRouter({
           grants.entries(getUserId(context), input.id, input),
         ),
       ),
+
+      forfeit: os.grants.forfeit.handler(({ input, context }) => {
+        const userId = getUserId(context);
+        return mapErrors(
+          {
+            FORBIDDEN: PlayerForfeitNotAllowedError,
+            CONFLICT: GrantNotForfeitableError,
+            NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
+          },
+          async () => {
+            await lifecycle.forfeitByPlayer({
+              userId,
+              grantId: input.id,
+              meta: context.clientMeta,
+            });
+            return grants.get(userId, input.id);
+          },
+        );
+      }),
     },
   });
 }

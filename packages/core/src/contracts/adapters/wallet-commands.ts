@@ -6,6 +6,7 @@ import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 import type { WagerContext } from './wager-context.js';
 import type { BonusGrantTerms } from './bonus-grants.js';
+import type { BonusCompletion } from './bonus-wagering.js';
 import type { WagerTrackingWalletCredit } from './wager-tracking.js';
 
 export type WalletProviderRef = {
@@ -50,8 +51,6 @@ export type WalletDebitOutcome =
       bonusSpent?: string;
       /** Bonus funds left across the player's active grants in this currency; `'0'` when the bet was attributed to none. */
       bonusBalance?: string;
-      /** Each grant this debit pushed over its requirement, and what it released into the real balance. Absent when none. */
-      completed?: { grantId: string; convertedAmount: string }[];
       /**
        * Whatever `WAGER_TRACKING` credited to the real balance alongside this bet (rank rakeback),
        * inside the same transaction. Empty when nothing was. The caller emits `wallet.balance.
@@ -67,8 +66,13 @@ export type WalletDebitOutcome =
       currency: string;
       /** The row a replay answered from. Not a move: never emit `wallet.balance.changed` for it. */
       replayedTransactionId?: string;
+      /** Grants a `loss` closing their last open round completed, already converted. */
+      completed?: BonusCompletion[];
     }
-  /** `available` is the real balance plus whatever bonus funds could have covered the rest. */
+  /**
+   * `available` is the most this bet could have staked: the real balance plus the bonus funds that
+   * could cover it, less any bucket its bet class may not use (so it can be below the real balance).
+   */
   | { ok: false; available: string };
 
 export type WalletCreditArgs = {
@@ -109,6 +113,8 @@ export type WalletCreditArgs = {
    * that still holds that much unreversed stake.
    */
   reversesTransactionId?: string;
+  /** A `win` or `bet_reversal` the provider marked as its round's last result. */
+  closesRound?: boolean;
 };
 
 /**
@@ -128,7 +134,14 @@ export const WALLET_REVERSAL_UNMATCHED = 'bet reversal matches no stake';
 
 /** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */
 export type WalletCreditOutcome =
-  | { ok: true; moved: true; transactionId: string; newBalance: string }
+  | {
+      ok: true;
+      moved: true;
+      transactionId: string;
+      newBalance: string;
+      /** Bonus grants this settlement completed, already converted into the real balance. */
+      completed?: BonusCompletion[];
+    }
   | {
       ok: true;
       moved: false;
@@ -137,6 +150,12 @@ export type WalletCreditOutcome =
       replayedTransactionId?: string;
     }
   | { ok: false; reason: string };
+
+export type WalletCloseRoundArgs = {
+  userId: string;
+  currency: string;
+  providerRef: { providerName: string; externalRoundId: string };
+};
 
 /** Debit types a correction may take back: a reversed payout, or the stake of a voided bet a reopen puts back in play. */
 export const WALLET_CORRECTION_DEBIT_TYPES = ['win_reversal', 'bet'] as const;
@@ -344,6 +363,14 @@ export type WalletCommands = {
     tx: unknown,
     args: Omit<WalletWithdrawalHoldArgs, 'reason'>,
   ): Promise<{ released: boolean }>;
+  /**
+   * Reports a round that settled with nothing to pay - a lost bet - so a bonus grant waiting on
+   * it can complete or deplete. Moves the converted bonus, if any, into the real balance.
+   */
+  closeRound?(
+    tx: unknown,
+    args: WalletCloseRoundArgs,
+  ): Promise<{ completed: BonusCompletion[]; newBalance: string | null }>;
 };
 
 export const WALLET_COMMANDS: Token<WalletCommands> = createToken('WALLET_COMMANDS');
