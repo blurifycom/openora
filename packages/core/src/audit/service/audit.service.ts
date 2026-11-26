@@ -142,7 +142,7 @@ function canonicalHashInput(fields: CanonicalHashInput): string {
   });
 }
 
-function computeHash(fields: CanonicalHashInput): string {
+export function computeHash(fields: CanonicalHashInput): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
 }
 
