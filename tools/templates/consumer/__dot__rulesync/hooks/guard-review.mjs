@@ -2,7 +2,8 @@
 // PreToolUse guard: no push and no new merge/pull request until the `review` skill approved HEAD.
 // `review` (and `ship`, which runs it) saves `.claude/reviews/<pr or branch>.json` in the main
 // checkout with the reviewed `sha` and the `verdict`. A push, `gh stack submit|push`, or a new
-// MR/PR is denied unless one of those files records the current HEAD as APPROVED (or GO). A
+// MR/PR is denied unless one of those files records the current HEAD as APPROVED (or GO), in a
+// repo whose tracked .claude/settings.json wires this hook; any other repo needs no review. A
 // PR/MR that names two different source branches is denied.
 // Each command in a chain is judged on its own: a branch delete or a tag-only push passes, and
 // so does a PR/MR opened from a shared branch (a promotion, which no branch review covers). A
@@ -18,6 +19,15 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
+const wiresGate = (root) => {
+  try {
+    return readFileSync(join(root, '.claude', 'settings.json'), 'utf8').includes(
+      'guard-review.mjs',
+    );
+  } catch {
+    return false;
+  }
+};
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
 const PREFIX = String.raw`^(?:(?:env\s+)?\w+=\S*\s+)*(?:(?:command|env|time|nohup)\s+)?(?:\S*/)?`;
 const GIT_PUSH = new RegExp(`${PREFIX}git((?:\\s+(?:-[cC]\\s+\\S+|--\\S+))*)\\s+push\\b(.*)$`);
@@ -238,14 +248,18 @@ const check = ({ dir, opensReview, pushArgs, sendsNothingNew, source }) => {
   if (!top || !common || (opensReview && !source && SHARED.test(branch))) {
     return;
   }
+  if (!wiresGate(top)) {
+    return;
+  }
+  const mainCheckout = dirname(isAbsolute(common) ? common : resolve(dir, common));
+  const checkouts = [...new Set([top, mainCheckout])];
   if (!head) {
     if (source) {
       deny(`Blocked: \`${source}\` is not a local or fetched branch here; fetch it, then retry.`);
     }
     return;
   }
-  const mainCheckout = dirname(isAbsolute(common) ? common : resolve(dir, common));
-  if (!isApproved([...new Set([top, mainCheckout])], head)) {
+  if (!isApproved(checkouts, head)) {
     deny(
       `Blocked: no APPROVED review of HEAD ${head.slice(0, 9)}. Run \`ship\` for a ticket, or the \`review\` skill on this branch until it says APPROVED, then push. A person can still push from their own terminal.`,
     );

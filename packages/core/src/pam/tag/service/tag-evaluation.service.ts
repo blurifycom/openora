@@ -16,6 +16,7 @@ import {
   TagService,
   TagAlreadyInUseError,
   TagAssignmentNotFoundError,
+  TagNotFoundError,
   PlayerNotFoundError,
 } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
@@ -119,7 +120,7 @@ export class TagEvaluationService {
     }
   }
 
-  /** Idempotently removes a tag; swallows TagAssignmentNotFoundError. */
+  /** Idempotently removes a tag: no assignment, or no such tag at all, is nothing to remove. */
   private async tryRemoveTag(args: { userId: User['id']; tagKey: TagKey; reason: string }) {
     const { userId, ...removal } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
@@ -144,7 +145,7 @@ export class TagEvaluationService {
         removalActorUserId: SYSTEM_ACTOR_ID,
       });
     } catch (e) {
-      if (e instanceof TagAssignmentNotFoundError) {
+      if (e instanceof TagAssignmentNotFoundError || e instanceof TagNotFoundError) {
         return;
       }
       throw e;

@@ -1,6 +1,8 @@
 import type { RankPeriodicBasis } from '@openora/core/contracts';
-import type { RankLadder } from '../contract/index.js';
-import { promoRankTier, type PromoRankTier } from '../schema/index.js';
+import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
+import type { RankLadder, RankPeriodicPayout } from '../contract/index.js';
+import { promoRankConfig, promoRankTier, type PromoRankTier } from '../schema/index.js';
+import { RANK_PERIOD_KINDS } from './rank-period.js';
 
 export const TIER_COLUMNS = {
   id: promoRankTier.id,
@@ -20,12 +22,21 @@ export const TIER_COLUMNS = {
 
 type LadderRow = Pick<PromoRankTier, keyof typeof TIER_COLUMNS | 'currency'>;
 
+export async function readPeriodicPayout(db: DrizzleDb | DrizzleTx): Promise<RankPeriodicPayout> {
+  const [config] = await db.select({ rewards: promoRankConfig.rewards }).from(promoRankConfig);
+  const modeOf = (kind: (typeof RANK_PERIOD_KINDS)[number]) =>
+    config?.rewards[kind]?.payout ?? 'bonus';
+  return { daily: modeOf('daily'), weekly: modeOf('weekly'), monthly: modeOf('monthly') };
+}
+
 export const toLadder = (
   currency: string,
   tiers: readonly LadderRow[],
   periodicBasis: RankPeriodicBasis,
+  periodicPayout: RankPeriodicPayout,
 ): RankLadder => ({
   currency,
   periodicBasis,
+  periodicPayout,
   tiers: tiers.map(({ currency: _currency, ...tier }) => tier),
 });

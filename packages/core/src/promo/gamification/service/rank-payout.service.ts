@@ -21,26 +21,32 @@ import {
   promoPlayerRank,
   promoRankConfig,
   promoRankLevelUp,
+  promoRankPeriodPayout,
   promoRankPeriodWager,
+  promoRankPeriodicReward,
   promoRankRoundWager,
   promoRankTier,
   type RankRewardTerms,
   type RankRewards,
 } from '../schema/index.js';
+import type { RankPeriodicRewardTerms } from '../contract/index.js';
 import {
   lastCompletePeriod,
   RANK_PERIOD_KINDS,
   type RankPeriod,
   type RankPeriodKind,
 } from '../shared/rank-period.js';
+import { cashClaimBlocker } from '../shared/cash-claim-eligibility.js';
 
 type Granted = DomainEventPayload<'promo.bonus.granted'>;
+type Claimable = DomainEventPayload<'promo.rank.reward.claimable'>;
 type RankChanged = DomainEventPayload<'promo.rank.changed'>;
 
 /** What a reward is credited in, in the order the operator asked for it. */
 type PayoutSettings = { currency: string | null; inPlayerCurrency: boolean };
 
 type Logger = {
+  info: (context: object, message: string) => void;
   warn: (context: object, message: string) => void;
   error: (context: object, message: string) => void;
 };
@@ -65,11 +71,15 @@ function marginBonus(margin: string, percent: string, cap: string | null): strin
   return cap !== null && moneyCompare(earned, cap) > 0 ? cap : earned;
 }
 
+const isClaimMode = (terms: RankPeriodicRewardTerms): terms is { payout: 'claim' } =>
+  terms.payout === 'claim';
+
 /**
  * Pays what a rank earns: the level-up bonuses `RankService.recordWager` recorded, and the
- * daily, weekly and monthly bonuses. Every payout is a grant through BONUS_GRANTS, whose
+ * daily, weekly and monthly bonuses. A bonus is a grant through BONUS_GRANTS, whose
  * `(user, source, source_ref)` index is the guard that makes a re-run or a second worker pay
- * nothing twice.
+ * nothing twice. A periodic kind in claim mode instead leaves a `promo_rank_periodic_reward` row
+ * for `RankRewardClaimService`, unique per player and period for the same reason.
  *
  * A player under a responsible-gambling block gets nothing, and the payout is not held for
  * later: a bonus waiting at the end of a block is an incentive to come back and play. If the
@@ -221,19 +231,28 @@ export class RankPayoutService {
    * it. Safe to run as often as the operator likes: a period already settled is skipped, so the
    * job can tick hourly and still pay a monthly bonus exactly once.
    */
-  async payPeriodic(kind: RankPeriodKind, now: Date): Promise<Granted[]> {
+  async payPeriodic(kind: RankPeriodKind, now: Date): Promise<(Granted | Claimable)[]> {
     const settings = await this.settingsFor(kind);
     if (!settings) {
       return [];
     }
-    const { terms, anchors, paidThrough, payout, requiresActivity, minimumWager } = settings;
+    const { anchors, paidThrough, payout, requiresActivity, minimumWager } = settings;
     const period = lastCompletePeriod(kind, now, anchors);
     const settled = paidThrough[kind];
     if (settled !== undefined && new Date(settled) >= period.end) {
       return [];
     }
+    const terms = await this.pinTerms(kind, period, settings.terms);
+    const claimMode = isClaimMode(terms);
+    if (!claimMode && !this.grants) {
+      this.logger.warn(
+        { kind, sourceRef: period.sourceRef },
+        'rank periodic payout skipped - pinned as a bonus with no bonus grants bound',
+      );
+      return [];
+    }
     const bonus = PERIOD_BONUS[kind];
-    const granted: Granted[] = [];
+    const granted: (Granted | Claimable)[] = [];
     let retryRequired = false;
     let after = '00000000-0000-0000-0000-000000000000';
 
@@ -250,12 +269,28 @@ export class RankPayoutService {
             : player.percent === null || player.margin === null
               ? null
               : marginBonus(player.margin, player.percent, player.amount);
-        if (amount === null || (await this.isBlocked(player.userId))) {
+        // Claim mode checks the block under the player row's lock in the transaction below.
+        if (amount === null || (!claimMode && (await this.isBlocked(player.userId)))) {
           continue;
         }
         const owed = { userId: player.userId, currency: player.currency, amount };
         try {
           const paid = await this.drizzle.db.transaction(async (tx) => {
+            if (claimMode) {
+              // Real cash: a closed, suspended or self-excluded account gets no row, checked under
+              // the player row's lock so a status change cannot land between check and insert.
+              const blocker = await cashClaimBlocker(tx, this.eligibility, player.userId, {
+                lock: true,
+              });
+              if (blocker) {
+                this.logger.info(
+                  { kind, sourceRef: period.sourceRef, userId: player.userId, blocker },
+                  'rank periodic reward skipped - the player cannot claim cash',
+                );
+                return null;
+              }
+              return this.leaveClaimable(tx, owed, { kind, period, tierId: player.tierId }, payout);
+            }
             const grant = await this.grant(tx, owed, period.sourceRef, terms, payout);
             return this.announced(tx, grant && { ...grant, rankBonusKind: kind });
           });
@@ -290,6 +325,38 @@ export class RankPayoutService {
     }
   }
 
+  /** The terms the period's first run fixed, so a retry pays in the mode the period started in. */
+  private async pinTerms(
+    kind: RankPeriodKind,
+    period: RankPeriod,
+    current: RankPeriodicRewardTerms,
+  ): Promise<RankPeriodicRewardTerms> {
+    const db = this.drizzle.db;
+    await db
+      .insert(promoRankPeriodPayout)
+      .values({ kind, periodKey: period.sourceRef, terms: current })
+      .onConflictDoNothing();
+    const [pinned] = await db
+      .select({ terms: promoRankPeriodPayout.terms })
+      .from(promoRankPeriodPayout)
+      .where(
+        and(
+          eq(promoRankPeriodPayout.kind, kind),
+          eq(promoRankPeriodPayout.periodKey, period.sourceRef),
+        ),
+      );
+    if (!pinned) {
+      throw new Error(`rank periodic payout: no terms pinned for ${period.sourceRef}`);
+    }
+    if (isClaimMode(pinned.terms) !== isClaimMode(current)) {
+      this.logger.warn(
+        { kind, sourceRef: period.sourceRef, pinned: pinned.terms.payout ?? 'bonus' },
+        'rank payout mode changed mid-period - the period finishes in the mode it started in',
+      );
+    }
+    return pinned.terms;
+  }
+
   /**
    * Everyone a period owes: the players holding a rank that carries an amount (a percent, under
    * the `margin` basis) and, when the operator asks for it, who wagered enough inside the period
@@ -305,6 +372,7 @@ export class RankPayoutService {
   ) {
     const columns = {
       userId: promoPlayerRank.userId,
+      tierId: promoRankTier.id,
       amount: bonus.amount,
       percent: bonus.percent,
       currency: promoRankTier.currency,
@@ -382,6 +450,45 @@ export class RankPayoutService {
     const paid = await this.grant(tx, row, `rank-level-up:${row.tierId}`, terms, payout);
     await settle('granted', paid?.grantId ?? null);
     return paid;
+  }
+
+  /** Writes the period's claimable reward, converted now, and announces it; null when it exists. */
+  private async leaveClaimable(
+    tx: DrizzleTx,
+    owed: { userId: Uuid; currency: string; amount: string },
+    { kind, period, tierId }: { kind: RankPeriodKind; period: RankPeriod; tierId: Uuid },
+    payout: PayoutSettings,
+  ): Promise<Claimable | null> {
+    const paid = await this.inPayoutCurrency(tx, owed, payout);
+    const [row] = await tx
+      .insert(promoRankPeriodicReward)
+      .values({
+        userId: owed.userId,
+        kind,
+        periodKey: period.sourceRef,
+        periodStart: period.start,
+        periodEnd: period.end,
+        tierId,
+        ladderCurrency: owed.currency,
+        ladderAmount: owed.amount,
+        currency: paid.currency,
+        amount: paid.amount,
+      })
+      .onConflictDoNothing()
+      .returning({ id: promoRankPeriodicReward.id, amount: promoRankPeriodicReward.amount });
+    if (!row) {
+      return null;
+    }
+    const claimable: Claimable = {
+      userId: owed.userId,
+      rewardId: row.id,
+      kind,
+      periodKey: period.sourceRef,
+      currency: paid.currency,
+      amount: row.amount,
+    };
+    await this.events.emitInTransaction(tx, 'promo.rank.reward.claimable', claimable);
+    return claimable;
   }
 
   private async announced(tx: DrizzleTx, granted: Granted | null) {
@@ -501,12 +608,9 @@ export class RankPayoutService {
     );
   }
 
-  private async settingsFor(kind: keyof RankRewards) {
-    if (!this.grants || !this.eligibility) {
-      this.logger.warn(
-        { kind },
-        'rank payout skipped - bonus grants or play eligibility not bound',
-      );
+  private async settingsFor<Kind extends keyof RankRewards>(kind: Kind) {
+    if (!this.eligibility) {
+      this.logger.warn({ kind }, 'rank payout skipped - play eligibility not bound');
       return null;
     }
     const [config] = await this.drizzle.db
@@ -520,9 +624,13 @@ export class RankPayoutService {
         periodicMinimumWager: promoRankConfig.periodicMinimumWager,
       })
       .from(promoRankConfig);
-    const terms = config?.rewards[kind];
+    const terms: RankRewards[Kind] = config?.rewards[kind];
     if (!config || !terms) {
       this.logger.warn({ kind }, 'rank payout skipped - no terms configured for this reward');
+      return null;
+    }
+    if (!this.grants && !('payout' in terms && terms.payout === 'claim')) {
+      this.logger.warn({ kind }, 'rank payout skipped - bonus grants not bound');
       return null;
     }
     return {

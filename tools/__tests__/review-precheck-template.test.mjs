@@ -285,3 +285,148 @@ test('NEW-ENV lists only env vars absent at the base ref, once each', () => {
     ['NEW-ENV: NEW_ONE - apps/api/src/cfg.ts:1'],
   );
 });
+
+test('ROSTER spawns only the lenses the diff needs', () => {
+  for (const [name, files, want, unwanted, baseFiles] of [
+    [
+      'docs',
+      { 'docs/guide.md': 'notes\n' },
+      ['ROSTER: none - '],
+      ['ROSTER: quality', 'ROSTER: risk', 'ROSTER-ASK'],
+    ],
+    [
+      'ui',
+      { 'apps/web/src/shell/components/card.tsx': 'export const Card = () => null;\n' },
+      ['ROSTER: quality - 1 runtime files'],
+      ['ROSTER: risk', 'ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'srv',
+      { 'apps/api/src/routes/games.ts': 'export const byId = 1;\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'money',
+      { 'apps/web/src/hooks/use-wallet.ts': 'export const withdraw = 1;\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK critical'],
+      ['ROSTER-ASK'],
+    ],
+    [
+      'kw',
+      {
+        'apps/web/src/shell/components/session-skeleton.tsx':
+          'export const S = () => null; // session\n',
+      },
+      ['ROSTER: quality - ', 'ROSTER-ASK: risk - domain keywords in 1 files'],
+      ['ROSTER: risk', 'ROSTER: none'],
+    ],
+    [
+      'kwdoc',
+      { 'docs/wallet-notes.md': 'notes\n' },
+      ['ROSTER-ASK: risk - '],
+      ['ROSTER: quality', 'ROSTER: risk', 'ROSTER: none'],
+    ],
+    [
+      'apidoc',
+      { 'docs/api/games.md': 'notes\n' },
+      ['ROSTER: none - '],
+      ['ROSTER: quality', 'ROSTER: risk'],
+    ],
+    [
+      'deps',
+      { 'package.json': '{"dependencies":{"left-pad":"1.0.0"}}\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'gitlab',
+      { '.gitlab-ci.yml': 'stages: [build]\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'ghwf',
+      { '.github/workflows/ci.yml': 'on: push\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'envex',
+      { '.env.example': 'FOO=\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'nginx',
+      { 'apps/infra/docker/nginx.conf.template': 'server {}\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'nextcfg',
+      { 'apps/web/next.config.ts': 'export default {};\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'action',
+      { 'apps/web/src/app/send.ts': "'use server';\nexport const send = 1;\n" },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'hookkw',
+      { 'apps/web/src/hooks/use-login.ts': 'export const token = 1;\n' },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+    ],
+    [
+      'oldaction',
+      { 'apps/web/src/app/pay.ts': "'use server';\nexport const pay = 2;\n" },
+      ['ROSTER: quality - ', 'ROSTER: risk - RISK high'],
+      ['ROSTER-ASK', 'ROSTER: none'],
+      { 'apps/web/src/app/pay.ts': "'use server';\nexport const pay = 1;\n" },
+    ],
+    [
+      'uihref',
+      { 'apps/web/src/shell/components/nav.tsx': 'export const Nav = () => null;\n' },
+      ['ROSTER: quality - ', 'ROSTER-ASK: risk - '],
+      ['ROSTER: risk', 'ROSTER: none'],
+      {
+        'apps/web/src/shell/components/nav.tsx':
+          'export const Nav = () => null;\nconst a = <a href={url} />;\n',
+      },
+    ],
+    [
+      'unguard',
+      { 'apps/web/src/shell/components/gate.tsx': 'export const Gate = () => null;\n' },
+      ['ROSTER: quality - ', 'ROSTER-ASK: risk - '],
+      ['ROSTER: risk', 'ROSTER: none'],
+      {
+        'apps/web/src/shell/components/gate.tsx':
+          'export const Gate = () => null;\nif (!password) throw new Error();\n',
+      },
+    ],
+  ]) {
+    git('checkout', '-q', '-b', `roster-${name}-base`, 'dev');
+    if (baseFiles) {
+      commit(`${name}-base`, baseFiles);
+    }
+    git('checkout', '-q', '-b', `roster-${name}`);
+    commit(name, files);
+    const out = precheck('--base', `roster-${name}-base`, '--head', `roster-${name}`);
+    for (const prefix of want) {
+      assert.ok(
+        out.some((row) => row.startsWith(prefix)),
+        `${name} wants ${prefix}:\n${out.join('\n')}`,
+      );
+    }
+    for (const prefix of unwanted) {
+      assert.ok(
+        !out.some((row) => row.startsWith(prefix)),
+        `${name} must not print ${prefix}:\n${out.join('\n')}`,
+      );
+    }
+  }
+});

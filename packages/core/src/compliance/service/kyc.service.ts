@@ -108,7 +108,7 @@ const KycReferenceTierMismatchError = createDomainError<[referenceId: string]>(
     `webhook-supplied tier and resolveDecision-supplied tier disagree for referenceId ${referenceId}`,
 );
 
-function mapVendorStatus(vendor: KycVendorStatus) {
+export function mapVendorStatus(vendor: KycVendorStatus) {
   switch (vendor) {
     case 'approved':
       return 'approved';
@@ -121,14 +121,14 @@ function mapVendorStatus(vendor: KycVendorStatus) {
   }
 }
 
-function isDecided(status: KycStatus) {
+export function isDecided(status: KycStatus) {
   const normalized = normalizeKycStatus(status);
   return (
     normalized === 'approved' || normalized === 'rejected' || normalized === 'manually_overridden'
   );
 }
 
-function resolveManualStatus(status: KycOverrideStatus): KycStatus {
+export function resolveManualStatus(status: KycOverrideStatus): KycStatus {
   return status === 'approved' ? 'manually_overridden' : status;
 }
 
@@ -147,7 +147,7 @@ const HIGH_RISK_SIGNAL_KEYS = [
   'highRiskCountryDetected',
 ] as const satisfies ReadonlyArray<keyof KycRiskSignals>;
 
-function warrantsHighRiskTag(signals: KycRiskSignals): boolean {
+export function warrantsHighRiskTag(signals: KycRiskSignals): boolean {
   return HIGH_RISK_SIGNAL_KEYS.some((key) => signals[key]);
 }
 
@@ -167,7 +167,7 @@ function describeIncompleteCheck(check: KycCheckResult): string {
   return `Vendor reported approved but "${check.step}" has not reached a successful state (status: ${check.status})`;
 }
 
-function gateVendorDecision(
+export function gateVendorDecision(
   vendorStatus: KycVendorStatus,
   checks: KycCheckResult[] | undefined,
   dob: VendorDateOfBirth,

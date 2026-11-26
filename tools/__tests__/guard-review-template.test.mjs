@@ -1,5 +1,5 @@
 // The consumer guard-review hook keeps an agent from pushing or opening a PR/MR on a commit the
-// `review` skill never approved. Drive it in a throwaway git repo: no review state is denied, an
+// `review` skill never approved. Drive it in a throwaway git repo that wires it: no review state is denied, an
 // APPROVED or GO state for HEAD is allowed, a stale or rejected one is denied, deletes pass.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -19,13 +19,32 @@ const reviews = join(repo, '.claude', 'reviews');
 mkdirSync(join(repo, '.rulesync', 'hooks'), { recursive: true });
 copyFileSync(join(hooks, '_shared.mjs'), join(repo, '.rulesync', 'hooks', '_shared.mjs'));
 copyFileSync(join(hooks, 'guard-review.mjs'), guard);
-writeFileSync(join(repo, '.gitignore'), '.claude/\n');
+writeFileSync(join(repo, '.gitignore'), '.claude/*\n!.claude/settings.json\n');
+mkdirSync(join(repo, '.claude'), { recursive: true });
+writeFileSync(join(repo, '.claude', 'settings.json'), '{"hooks":"guard-review.mjs"}');
 const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
 git('init', '-q', '-b', 'feat/x');
 git('add', '-A');
 git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
 const head = git('rev-parse', 'HEAD');
-after(() => rmSync(repo, { recursive: true, force: true }));
+const plain = realpathSync(mkdtempSync(join(tmpdir(), 'guard-review-plain-')));
+const plainGit = (...args) => execFileSync('git', args, { cwd: plain, encoding: 'utf8' }).trim();
+plainGit('init', '-q', '-b', 'feat/y');
+plainGit(
+  '-c',
+  'user.name=t',
+  '-c',
+  'user.email=t@t',
+  'commit',
+  '-q',
+  '--allow-empty',
+  '-m',
+  'init',
+);
+after(() => {
+  rmSync(repo, { recursive: true, force: true });
+  rmSync(plain, { recursive: true, force: true });
+});
 beforeEach(() => rmSync(reviews, { recursive: true, force: true }));
 
 const saveReview = (sha, verdict) => {
@@ -187,6 +206,7 @@ test('a review saved in the main checkout covers a linked worktree', () => {
   const worktree = `${repo}-wt`;
   git('worktree', 'add', '-q', '-b', 'feat/wt', worktree);
   after(() => rmSync(worktree, { recursive: true, force: true }));
+  assert.equal(exitCode(`cd ${worktree} && git push`), DENIED);
   saveReview(head, 'APPROVED');
   assert.equal(exitCode(`cd ${worktree} && git push`), ALLOWED);
 });
@@ -239,4 +259,13 @@ test('a glued or repeated source flag is read per CLI', () => {
   assert.equal(exitCode('gh pr create -dH feat/other'), DENIED);
   assert.equal(exitCode('gh pr create -dH feat/x'), ALLOWED);
   assert.equal(exitCode('gh pr create -H=dev'), ALLOWED);
+});
+
+test('a repo that does not wire the gate needs no review, but keeps its shared branches', () => {
+  assert.equal(exitCode(`cd ${plain} && git push -u origin HEAD`), ALLOWED);
+  assert.equal(exitCode(`git -C ${plain} push -u origin HEAD`), ALLOWED);
+  assert.equal(exitCode(`cd ${plain} && glab mr create --source-branch feat/y --fill`), ALLOWED);
+  assert.equal(exitCode(`git -C ${plain} push origin HEAD:main`), DENIED);
+  assert.equal(exitCode(`cd ${plain} && glab mr create --source-branch missing --fill`), ALLOWED);
+  assert.equal(exitCode('git push -u origin feat/x'), DENIED);
 });

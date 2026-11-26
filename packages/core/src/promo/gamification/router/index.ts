@@ -52,12 +52,21 @@ import {
   type RakebackClaimService,
 } from '../service/rakeback-claim.service.js';
 import {
+  RankRewardAccountBlockedError,
+  RankRewardAlreadyClaimedError,
+  RankRewardClaimRestrictedError,
+  RankRewardIdempotencyKeyReusedError,
+  RankRewardNotFoundError,
+  type RankRewardClaimService,
+} from '../service/rank-reward-claim.service.js';
+import {
   RakebackAccrualNotFoundError,
   RakebackAccrualNotVoidableError,
   type RakebackAdminService,
 } from '../service/rakeback-admin.service.js';
 
 const RAKEBACK_CLAIM_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const;
+const RANK_REWARD_CLAIM_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const;
 
 export function createGamificationRouter({
   ranks,
@@ -71,6 +80,7 @@ export function createGamificationRouter({
   rankChallengeAdmin,
   rakebackClaims,
   rakebackAdmin,
+  rankRewards,
   rateLimiter,
   adminGuard,
 }: {
@@ -85,6 +95,7 @@ export function createGamificationRouter({
   rankChallengeAdmin: RankChallengeAdminService;
   rakebackClaims: RakebackClaimService;
   rakebackAdmin: RakebackAdminService;
+  rankRewards: RankRewardClaimService;
   rateLimiter: RateLimiterAdapter<RateLimitKey> | undefined;
   adminGuard: AdminGuard;
 }) {
@@ -108,6 +119,25 @@ export function createGamificationRouter({
 
       // No `getUserId`: public, like `ladder`.
       players: os.ranks.players.handler(() => ranks.playersPerTier()),
+
+      rewards: os.ranks.rewards.handler(({ context }) => rankRewards.list(getUserId(context))),
+
+      claimReward: os.ranks.claimReward.handler(async ({ input, context }) => {
+        const userId = getUserId(context);
+        await assertRateLimit(
+          rateLimiter,
+          makeRateLimitKey(RATE_LIMIT_KEYS.RANK_REWARD_CLAIM, userId),
+          RANK_REWARD_CLAIM_RATE_LIMIT,
+        );
+        return mapErrors(
+          {
+            FORBIDDEN: [RankRewardClaimRestrictedError, RankRewardAccountBlockedError],
+            NOT_FOUND: RankRewardNotFoundError,
+            CONFLICT: [RankRewardAlreadyClaimedError, RankRewardIdempotencyKeyReusedError],
+          },
+          () => rankRewards.claim(userId, input.rewardId, input.idempotencyKey),
+        );
+      }),
     },
 
     streaks: {
@@ -232,6 +262,11 @@ export function createGamificationRouter({
         get: os.admin.ranks.get.handler(async ({ context }) => {
           await adminGuard.assert(context, 'bonus', 'view');
           return mapErrors({ NOT_FOUND: RankLadderNotConfiguredError }, () => admin.get());
+        }),
+
+        rewards: os.admin.ranks.rewards.handler(async ({ input, context }) => {
+          await adminGuard.assert(context, 'bonus', 'view');
+          return rankRewards.adminList(input);
         }),
 
         set: os.admin.ranks.set.handler(async ({ input, context }) => {

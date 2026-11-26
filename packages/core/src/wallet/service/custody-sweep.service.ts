@@ -30,7 +30,7 @@ import { recordReconciliationFinding } from './reconciliation-finding.service.js
 
 const logger = createLogger('wallet-custody-sweep');
 
-export const CUSTODY_SWEEP_JOB_NAME = 'wallet-custody-sweep';
+const CUSTODY_SWEEP_JOB_NAME = 'wallet-custody-sweep';
 export const CUSTODY_SWEEP_QUEUE = queue('wallet.custody-sweep');
 
 // `runId` is only present when an admin's on-demand POST /wallet/custody/sweep/run
@@ -58,7 +58,7 @@ export type SweepCycleSummary = {
   unknown: number;
 };
 
-export type SweepGateDecision = 'sweep' | 'dust' | 'fee' | 'ceiling';
+type SweepGateDecision = 'sweep' | 'dust' | 'fee' | 'ceiling';
 
 /**
  * Pure gate over a single custody balance, in the exact order
@@ -69,7 +69,7 @@ export type SweepGateDecision = 'sweep' | 'dust' | 'fee' | 'ceiling';
  * the adapter has no `getPoolBalance`, or the asset has no `poolLiquidityFloor`) - null
  * always means "the ceiling stays absolute", never an accidental override.
  */
-export function gateSweepBalance(args: {
+function gateSweepBalance(args: {
   amount: string;
   estimatedFee: string;
   dustThreshold: string;

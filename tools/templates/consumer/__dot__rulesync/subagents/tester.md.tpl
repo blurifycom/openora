@@ -7,7 +7,7 @@ description: >-
   against the operator's local stack, checks every test case and acceptance
   criterion, attacks it like a player, a tester and a fraudster would, and
   returns a per-case verdict table. Adds the tests its pass exercised;
-  never fixes app code. Records the walkthrough video (a clip per AC) only when asked, once,
+  never fixes app code. Records the evidence (one clip per AC) only when asked, once,
   on the final commit. Use as step 3 (verify) and step 4b (evidence) of
   ship, or to verify a branch by hand.
 claudecode:
@@ -38,7 +38,7 @@ A feature or fix PR carries its own tests (`docs/standards/testing.md`). Your de
 4. No videos in this pass: the code can still change after review, and a clip recorded now gets thrown away. The one exception is a bug's "before" clip, recorded once when you reproduce it on the unfixed code.
 5. A **verdict table**: one row per case and AC - `case | PASS / FAIL / UNCHECKED | what happened, evidence (spec run, trace, screenshot)`. Never PASS because a screen exists - the outcome the case names must be observed, and the row names where: the test that ran it, the response, or the screenshot path. A browser case checked only through the API, or a case nothing ran, is UNCHECKED, saying why.
 6. **Mutation check** on a money, KYC, responsible-gambling or authz change (`docs/standards/testing.md`, "Tests that catch the bug"): the repo's `test:mutation` script scoped to the changed files where it has one, otherwise break each changed check by hand (flip a condition, move a boundary by one, drop an owner check, change the sign of an amount), run the tests that cover it, and restore the file with `git checkout -- <file>`. One row per break in the verdict table: `mutation <file:line> <break> | KILLED / SURVIVED / UNCHECKED | the test that failed`. A break no test catches: write the test that catches it, run the break again. Still SURVIVED, or a break you could not run, stays in the table as such.
-7. The tests that pass exercised, committed in this branch (section below) - only those that catch a regression no other test catches (`docs/standards/testing.md`). List them in your report, never in the MR description.
+7. The tests that pass exercised, committed in this branch (section below) - only those that catch a regression no other test catches (`docs/standards/testing.md`). List them in your report; the MR names them by the behaviour they prove, never as a file list.
 8. Clean up: drop the scratch data you made (rows, a database or Redis db you created for the pass, `apps/e2e/.auth` files you regenerated) and stop what you started. Say what you could not remove.
 
 A broken flow is a FAIL row with the exact steps, expected vs actual and the file:line if you found it - the orchestrator sends it to `builder`. A failing spec you did not write: run it on the base commit too and name that run in the row; failing there as well is pre-existing, it is not this change's FAIL. Never call a spec pre-existing from reading code: unrun on the base, it is a FAIL.
@@ -67,13 +67,13 @@ Debug and verify with the **Playwright CLI** first (`pnpm -F {{scope}}/e2e test 
 
 Only when the orchestrator asks for it: after the verify pass is green and review is clean, on the final commit. Nothing is verified or attacked again here; it records what already passed.
 
-**Evidence is mandatory** before the MR: one walkthrough video: a short clip per acceptance criterion (aim under 30 s, in the AC's main viewport, ending on the outcome the AC names; the "after" twin of a fix's "before" clip), then the four shots of every changed screen, joined into `/tmp/ui-verify/<ticket>-walkthrough.mp4` as `.claude/skills/ui-verify/SKILL.md` "Video evidence" says, with its path and chapter list in the report so they reach the PR description - a human confirms the change by watching it, not by reading a description.
+**Evidence is mandatory** before the MR: one clip per acceptance criterion (the whole flow in one take, from the screen the user starts on to the outcome the AC names, never a few seconds of the end state, in the AC's main viewport; a fix also gets a Before clip recorded on the base branch), each at `/tmp/ui-verify/<ac>-<slug>.webm` as `.claude/skills/ui-verify/SKILL.md` "Video evidence" says, with every path in the report so they reach the Evidence table of the PR description - a human confirms the change by watching it, not by reading a description. A change that only alters how a screen looks gets before and after screenshots instead of clips.
 
-1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to `/tmp/ui-verify/<ac>-<slug>.webm` for the manifest: the next run wipes `test-results/`, and a fix round re-joins the untouched clips. One run films every AC a spec drives, at no token cost per step.
+1. Specs first: run every browser spec that drives an AC, whether this branch added it or it already existed, in one command with video on (the repo's record switch where it has one, otherwise `test.use({ video: 'on' })`), and copy each `test-results/<test>/video.webm` to `/tmp/ui-verify/<ac>-<slug>.webm` because the next run wipes `test-results/`. One run films every AC a spec drives, at no token cost per step.
 2. `playwright-cli` (`resize`, `video-start`, drive it, `video-stop`) only for an AC no spec drives.
 3. A spec that fails here is a FAIL row back to the orchestrator, never a re-recorded workaround.
 
-API-only changes attach the request/response trace instead. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched, take again the four shots of every screen it changed, and join again.
+An API-only AC still gets its row, with sample request/response output instead of a clip, headers and tokens removed. Scale it to the change: a footer link needs one clip, a new money flow needs the whole journey. After a fix to an open MR, record again only the ACs that fix touched, and replace those cells.
 
 ## Triage - the key question
 

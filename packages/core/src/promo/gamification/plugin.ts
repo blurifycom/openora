@@ -43,6 +43,7 @@ import {
 import { RakebackAdminService } from './service/rakeback-admin.service.js';
 import { RakebackLiabilityService } from './service/rakeback-liability.service.js';
 import { RankAdminService } from './service/rank-admin.service.js';
+import { RankRewardClaimService } from './service/rank-reward-claim.service.js';
 import { RankPayoutService } from './service/rank-payout.service.js';
 import { RankService } from './service/rank.service.js';
 import { StreakAdminService } from './service/streak-admin.service.js';
@@ -75,6 +76,7 @@ const RANK_CHALLENGE_PAYOUT_QUEUE = queue('promo-rank-challenge-payout');
 const RANK_ANNOUNCE_QUEUE = queue('promo-rank-announce');
 const RANK_PERIOD_PRUNE_QUEUE = queue('promo-rank-period-prune');
 const RAKEBACK_AUTO_PAYOUT_QUEUE = queue('promo-rakeback-auto-payout');
+const RANK_REWARD_AUTO_PAYOUT_QUEUE = queue('promo-rank-reward-auto-payout');
 const RAKEBACK_SWEEP_QUEUE = queue('promo-rakeback-sweep');
 const RAKEBACK_NOTIFY_QUEUE = queue('promo-rakeback-notify');
 // Races close at whatever timestamp the operator configured, not a shared daily/weekly/monthly
@@ -107,7 +109,7 @@ const StreakForfeitJobSchema = z.object({
 });
 const FORFEIT_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
-const RakebackAutoPayoutJobSchema = z.object({ userId: UuidSchema });
+const AutoPayoutJobSchema = z.object({ userId: UuidSchema });
 
 /** Fans a bet out to every wager-tracking consumer this module owns, on the one sealed port. */
 class CompositeWagerTracking implements WagerTrackingCommands {
@@ -214,13 +216,14 @@ export default {
     let racePayouts: RacePayoutService | null = null;
     let rankChallengePayouts: RankChallengePayoutService | null = null;
     let rakebackClaims: RakebackClaimService | null = null;
+    let rankRewardClaims: RankRewardClaimService | null = null;
     let streaks: StreakService | null = null;
     let events: EventBus | null = null;
     let jobs: JobQueueAdapter | null = null;
 
     ctx.jobs.worker({
       queue: RAKEBACK_AUTO_PAYOUT_QUEUE,
-      schema: RakebackAutoPayoutJobSchema,
+      schema: AutoPayoutJobSchema,
       handler: async ({ payload }) => {
         if (!rakebackClaims) {
           throw new Error('promo-rakeback-auto-payout: service not constructed');
@@ -230,10 +233,21 @@ export default {
     });
 
     ctx.jobs.worker({
+      queue: RANK_REWARD_AUTO_PAYOUT_QUEUE,
+      schema: AutoPayoutJobSchema,
+      handler: async ({ payload }) => {
+        if (!rankRewardClaims) {
+          throw new Error('promo-rank-reward-auto-payout: service not constructed');
+        }
+        await rankRewardClaims.autoPay(payload.userId);
+      },
+    });
+
+    ctx.jobs.worker({
       queue: RAKEBACK_SWEEP_QUEUE,
       schema: EmptyJobSchema,
       handler: async () => {
-        if (!rakebackClaims) {
+        if (!rakebackClaims || !rankRewardClaims) {
           logger.warn({}, 'rakeback sweep skipped - service not constructed');
           return;
         }
@@ -247,6 +261,17 @@ export default {
             logger.error({ err, userId }, 'rakeback sweep payout failed');
             failures.push(err);
           });
+        }
+        try {
+          for (const userId of await rankRewardClaims.dueForAutoPayout()) {
+            await rankRewardClaims.autoPay(userId).catch((err: unknown) => {
+              logger.error({ err, userId }, 'rank reward sweep payout failed');
+              failures.push(err);
+            });
+          }
+        } catch (err) {
+          logger.error({ err }, 'rank reward sweep could not list who is due');
+          failures.push(err);
         }
         if (failures.length > 0) {
           throw new AggregateError(failures, `rakeback sweep: ${failures.length} payouts failed`);
@@ -268,23 +293,25 @@ export default {
       },
     });
 
-    const autoPayRakeback =
+    const autoPayUnclaimed =
       (topic: 'rg.self_exclusion.activated' | 'player.account.closed') => (payload: unknown) => {
         const parsed = domainEventSchemas[topic].safeParse(payload);
         if (!parsed.success) {
-          logger.error({ topic }, 'rakeback auto-payout skipped - event payload failed validation');
+          logger.error({ topic }, 'auto-payout skipped - event payload failed validation');
           return;
         }
         if (!jobs) {
-          logger.error({ topic }, 'rakeback auto-payout dropped - job queue not bound yet');
+          logger.error({ topic }, 'auto-payout dropped - job queue not bound yet');
           return;
         }
         const { userId } = parsed.data;
-        void jobs
-          .enqueue(RAKEBACK_AUTO_PAYOUT_QUEUE, { userId }, FORFEIT_JOB_RETRY)
-          .catch((err: unknown) =>
-            logger.error({ err, userId }, 'rakeback auto-payout enqueue failed'),
-          );
+        for (const queueName of [RAKEBACK_AUTO_PAYOUT_QUEUE, RANK_REWARD_AUTO_PAYOUT_QUEUE]) {
+          void jobs
+            .enqueue(queueName, { userId }, FORFEIT_JOB_RETRY)
+            .catch((err: unknown) =>
+              logger.error({ err, userId, queue: queueName }, 'auto-payout enqueue failed'),
+            );
+        }
       };
 
     ctx.jobs.worker({
@@ -415,8 +442,8 @@ export default {
       'rg.cooling_off.activated',
       forfeitUnclaimedStreakRewards('rg.cooling_off.activated', 'cooling_off'),
     );
-    ctx.events.on('rg.self_exclusion.activated', autoPayRakeback('rg.self_exclusion.activated'));
-    ctx.events.on('player.account.closed', autoPayRakeback('player.account.closed'));
+    ctx.events.on('rg.self_exclusion.activated', autoPayUnclaimed('rg.self_exclusion.activated'));
+    ctx.events.on('player.account.closed', autoPayUnclaimed('player.account.closed'));
 
     ctx.jobs.worker({
       queue: STREAK_CLOSE_QUEUE,
@@ -536,6 +563,15 @@ export default {
         events: c.get(EVENT_BUS),
         logger,
       });
+      rankRewardClaims = new RankRewardClaimService({
+        drizzle: c.get(DRIZZLE),
+        wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
+        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        exclusions: c.has(RG_EXCLUSION_READER) ? c.get(RG_EXCLUSION_READER) : undefined,
+        audit: c.get(AUDIT_WRITER),
+        events: c.get(EVENT_BUS),
+        logger,
+      });
       const jobQueue = c.get(JOB_QUEUE);
       jobs = jobQueue;
       // The periodic kinds share one tick: each run pays only a period that has closed since
@@ -633,6 +669,7 @@ export default {
           audit: c.get(AUDIT_WRITER),
           referenceCurrency,
         }),
+        rankRewards: rankRewardClaims,
         rateLimiter: c.has(RATE_LIMITER) ? c.get(RATE_LIMITER) : undefined,
         adminGuard: c.get(ADMIN_GUARD),
       });

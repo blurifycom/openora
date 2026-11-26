@@ -13,6 +13,7 @@ export * from './lobby.js';
 export * from './igaming-config.js';
 export * from './tag.js';
 export * from './platform-config.js';
+export * from './cms-banner.js';
 export * from './host-allowlist.js';
 export * from './events.js';
 export * from './reporting.js';

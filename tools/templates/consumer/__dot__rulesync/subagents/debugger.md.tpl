@@ -64,11 +64,11 @@ Local stack: API :3001, player :3000, backoffice :3002. Dead port = service not 
 
 ### Deployed environments
 
-A failure reported from a deployed environment and not reproduced locally starts in the error tracker (Sentry), read only: never resolve, mute, or delete an issue. Use `sentry-cli`; a self-hosted instance needs `--url` (or `SENTRY_URL`) on every call, otherwise the CLI talks to sentry.io and finds nothing. One project per service (api, web, backoffice); org, project names and token come from the CI/CD variables (`SENTRY_ORG`, `SENTRY_PROJECT*`, `SENTRY_AUTH_TOKEN`) - locally run `sentry-cli login` or export them.
+A failure reported from a deployed environment and not reproduced locally starts in the error tracker (Sentry), read only: never resolve, mute, or delete an issue. Use the `sentry` CLI (getsentry/cli, not the legacy `sentry-cli`). Log in once per machine; for a self-hosted instance the `--url` login is what points the CLI at it: `sentry auth login --url <sentry-url>` (or `--token <token>` with it). One project per service (api, web, backoffice); org and project names come from the CI/CD variables (`SENTRY_ORG`, `SENTRY_PROJECT*`).
 
 ```bash
-sentry-cli issues list -o "$SENTRY_ORG" -p <project> --query "is:unresolved" --max-rows 20
-sentry-cli issues list -o "$SENTRY_ORG" -p <project> -i <issue-id>
+sentry issue list "$SENTRY_ORG/<project>" --query "is:unresolved" --period 7d --limit 20
+sentry issue view <issue-id>
 ```
 
 The release tag is the short commit SHA, so an issue maps straight back to a commit: `git show <short-sha>`. Use that to date the regression before reading stack frames.

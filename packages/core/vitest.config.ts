@@ -9,10 +9,5 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.ts'],
     exclude: ['dist/**', 'node_modules/**', 'src/**/*.int.{test,spec}.ts'],
     setupFiles: ['./vitest.setup.ts'],
-    // Deliberately left isolated. `isolate: false` would share one module graph across
-    // files, but a shared graph defeats `vi.mock` - a file that already imported the real
-    // module wins, and auth.test.ts/migrate.test.ts fail depending on how files group onto
-    // workers. It also buys no CI wall-clock: this tier is a few seconds and runs
-    // concurrently underneath the much longer integration tier.
   },
 });

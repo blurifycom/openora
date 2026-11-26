@@ -95,6 +95,8 @@ export type DirectAuditAction =
   | 'promo.rank_ladder.installed'
   | 'promo.rank_config.set'
   | 'promo.rank_config.installed'
+  | 'promo.rank_reward.claimed'
+  | 'promo.rank_reward.auto_paid'
   | 'promo.rakeback.claimed'
   | 'promo.rakeback.auto_paid'
   | 'promo.rakeback.voided'

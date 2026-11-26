@@ -1,7 +1,7 @@
 // Run from the repo root (`test:mutation` does the cd) so the sandbox holds both test tiers.
 //
 // Stryker only writes its incremental file when a run finishes, so a run that outgrows the job's
-// time limit loses everything and starts over the next night. At about 7 mutants a minute after a
+// time limit loses everything and starts over from the previous run's baseline next week. At about 7 mutants a minute after a
 // 30 minute initial run, one job fits about 2200 mutants, so each shard stays under that. A file
 // that grows past it gets split here, by line range when it is one file. `.github/workflows/mutation.yml`
 // runs one job per shard and lists these names.
@@ -50,12 +50,12 @@ const toRepoPath = (path) =>
 
 export default {
   testRunner: 'vitest',
+  thresholds: { high: 80, low: 65, break: 55 },
   vitest: {
     configFile: 'packages/core/vitest.mutation.config.ts',
     // Plugins load through `import(path)`, which vitest's related-files graph cannot see, so
     // with this on a mutant in plugin code runs zero tests and is reported as survived.
     related: false,
-    // A test calls `process.chdir()`, which threads do not support.
     pool: 'forks',
   },
   checkers: ['typescript'],

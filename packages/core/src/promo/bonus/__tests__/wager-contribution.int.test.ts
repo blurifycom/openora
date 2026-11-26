@@ -9,7 +9,7 @@ import type {
   Uuid,
   WagerContext,
 } from '@openora/core/contracts';
-import { makeAuditWriter } from '../../../testing/mock.js';
+import { makeAuditWriter } from './support/doubles.js';
 import { migrate } from '../migrate.js';
 import {
   promoGrant,

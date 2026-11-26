@@ -139,7 +139,7 @@ export function buildDepGraph(root: string): DepGraph {
 }
 
 /** Transitive importers of `file`, up to `maxDepth` hops, nearest first. */
-export function importersOf(graph: DepGraph, file: string, maxDepth: number): string[] {
+function importersOf(graph: DepGraph, file: string, maxDepth: number): string[] {
   const depth = new Map([[file, 0]]);
   const queue = [file];
   for (let current = queue.shift(); current !== undefined; current = queue.shift()) {

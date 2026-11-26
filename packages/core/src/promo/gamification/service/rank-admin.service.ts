@@ -10,14 +10,20 @@ import {
   type DrizzleService,
   type DrizzleTx,
 } from '@openora/core/server';
-import { promoPlayerRank, promoRankConfig, promoRankTier } from '../schema/index.js';
+import {
+  promoPlayerRank,
+  promoRankConfig,
+  promoRankPeriodPayout,
+  promoRankTier,
+} from '../schema/index.js';
 import type {
   RankConfig,
   SetRankConfigInput,
   SetRankLadderInput,
   SubmittedRankTier,
 } from '../contract/index.js';
-import { TIER_COLUMNS, toLadder } from '../shared/rank-ladder.js';
+import { TIER_COLUMNS, readPeriodicPayout, toLadder } from '../shared/rank-ladder.js';
+import { RANK_PERIOD_KINDS, lastCompletePeriod } from '../shared/rank-period.js';
 import { RankLadderNotConfiguredError } from './rank.service.js';
 
 export const RankLadderMismatchError = createDomainError<[detail: string]>(
@@ -125,7 +131,12 @@ export class RankAdminService {
     if (!lowest) {
       throw new RankLadderNotConfiguredError('default');
     }
-    return toLadder(lowest.currency, tiers, this.periodicBasis);
+    return toLadder(
+      lowest.currency,
+      tiers,
+      this.periodicBasis,
+      await readPeriodicPayout(this.drizzle.db),
+    );
   }
 
   async set(adminId: Uuid, input: SetRankLadderInput) {
@@ -136,7 +147,13 @@ export class RankAdminService {
         .orderBy(asc(promoRankTier.position))
         .for('update');
       const [lowest] = locked;
-      const before = toLadder(lowest?.currency ?? input.currency, locked, this.periodicBasis);
+      const periodicPayout = await readPeriodicPayout(tx);
+      const before = toLadder(
+        lowest?.currency ?? input.currency,
+        locked,
+        this.periodicBasis,
+        periodicPayout,
+      );
 
       assertKnownTiers(new Set(locked.map((tier) => tier.id)), input.tiers);
       assertLadderHolds(input.tiers);
@@ -157,7 +174,7 @@ export class RankAdminService {
         .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
         .from(promoRankTier)
         .orderBy(asc(promoRankTier.position));
-      const ladder = toLadder(input.currency, saved, this.periodicBasis);
+      const ladder = toLadder(input.currency, saved, this.periodicBasis, periodicPayout);
       await this.audit.recordInTransaction(tx, {
         actorId: adminId,
         actorType: 'admin',
@@ -181,6 +198,9 @@ export class RankAdminService {
 
   async setConfig(adminId: Uuid, input: SetRankConfigInput): Promise<RankConfig> {
     for (const terms of Object.values(input.rewards)) {
+      if (!('wageringMultiplier' in terms)) {
+        continue;
+      }
       if (moneyCompare(terms.wageringMultiplier, MAX_WAGERING_MULTIPLIER) > 0) {
         throw new RankConfigInvalidError(
           `a wagering multiplier is at most ${MAX_WAGERING_MULTIPLIER}`,
@@ -200,6 +220,12 @@ export class RankAdminService {
     };
     return this.drizzle.db.transaction(async (tx) => {
       const [before] = await tx.select(CONFIG_COLUMNS).from(promoRankConfig).for('update');
+      if (before) {
+        const [{ paidThrough } = { paidThrough: {} }] = await tx
+          .select({ paidThrough: promoRankConfig.paidThrough })
+          .from(promoRankConfig);
+        await pinSwitchedPeriods(tx, before.rewards, paidThrough, input);
+      }
       // An undefined list or minimum wager is left out of both the insert and the update.
       const saved = findOneOrThrow(
         await tx
@@ -223,6 +249,36 @@ export class RankAdminService {
       });
       return saved;
     });
+  }
+}
+
+/**
+ * Pins the last complete period of each kind switching between bonus and claim, or dropped, to the
+ * terms it was earned under, unless it is already settled, so a retry of it never pays in a new mode.
+ * This also covers a period that started paying before periods were pinned at all.
+ */
+async function pinSwitchedPeriods(
+  tx: DrizzleTx,
+  rewards: RankConfig['rewards'],
+  paidThrough: Partial<Record<string, string>>,
+  input: SetRankConfigInput,
+) {
+  const now = new Date();
+  for (const kind of RANK_PERIOD_KINDS) {
+    const was = rewards[kind];
+    const next = input.rewards[kind];
+    if (!was || (next && (was.payout === 'claim') === (next.payout === 'claim'))) {
+      continue;
+    }
+    const period = lastCompletePeriod(kind, now, input.payoutAnchors);
+    const settled = paidThrough[kind];
+    if (settled !== undefined && new Date(settled) >= period.end) {
+      continue;
+    }
+    await tx
+      .insert(promoRankPeriodPayout)
+      .values({ kind, periodKey: period.sourceRef, terms: was })
+      .onConflictDoNothing();
   }
 }
 
