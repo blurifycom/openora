@@ -32,7 +32,7 @@ type GameMembershipSnapshot = {
 };
 
 /** What one game update could have moved for a rule, or null when no rule could care. */
-function membershipChangeForGameUpdate(
+export function membershipChangeForGameUpdate(
   before: GameMembershipSnapshot,
   after: GameMembershipSnapshot,
 ): GameCategoryRuleChange | null {
@@ -56,7 +56,7 @@ function membershipChangeForGameUpdate(
   };
 }
 
-function mergeChanges(changes: readonly GameCategoryRuleChange[]): GameCategoryRuleChange {
+export function mergeChanges(changes: readonly GameCategoryRuleChange[]): GameCategoryRuleChange {
   return {
     providerIds: [...new Set(changes.flatMap((change) => change.providerIds))],
     tagIds: [...new Set(changes.flatMap((change) => change.tagIds))],

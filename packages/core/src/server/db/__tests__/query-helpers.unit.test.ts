@@ -1,10 +1,13 @@
 import fc from 'fast-check';
+import { DrizzleQueryError } from 'drizzle-orm';
+import { DatabaseError } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { MONEY_SCALE } from '@openora/core/contracts';
 import {
   expandMoneyExponent,
   houseEdge,
   isPositiveMoney,
+  isUniqueConstraintViolation,
   moneyAdd,
   moneyCeilToScale,
   moneyCompare,
@@ -16,6 +19,8 @@ import {
   moneyMultiplyDivide,
   moneyScaleBy,
   moneySubtract,
+  pageToOffset,
+  uniqueConstraintName,
 } from '../query-helpers.js';
 
 const ONE = 10n ** BigInt(MONEY_SCALE);
@@ -302,5 +307,93 @@ describe('money arithmetic', () => {
     it('is the literal zero when the rtp is missing', () => {
       expect(houseEdge('100', null)).toBe('0');
     });
+  });
+});
+
+const pgError = (code: string, constraint?: string) => {
+  const error = new DatabaseError('duplicate key value violates unique constraint', 1, 'error');
+  error.code = code;
+  error.constraint = constraint;
+  return error;
+};
+
+describe('pageToOffset', () => {
+  it.each([
+    [1, 20, 0],
+    [2, 20, 20],
+    [3, 25, 50],
+    [1, 1, 0],
+  ])('page %i of %i skips %i rows', (page, limit, expected) => {
+    expect(pageToOffset(page, limit)).toBe(expected);
+  });
+
+  it('starts each page right after the previous one ends', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 10_000 }),
+        fc.integer({ min: 1, max: 500 }),
+        (page, limit) => {
+          expect(pageToOffset(page + 1, limit) - pageToOffset(page, limit)).toBe(limit);
+        },
+      ),
+    );
+  });
+});
+
+describe('isUniqueConstraintViolation', () => {
+  it.each([
+    ['a pg unique violation', pgError('23505'), true],
+    ['a plain object with the code', { code: '23505' }, true],
+    ['a foreign key violation', pgError('23503'), false],
+    ['the code as a number', { code: 23505 }, false],
+    ['null', null, false],
+    ['a string', '23505', false],
+    ['an error without a code', new Error('23505'), false],
+  ])('%s is %s', (_name, error, expected) => {
+    expect(isUniqueConstraintViolation(error)).toBe(expected);
+  });
+
+  it('sees a unique violation that drizzle wrapped in a DrizzleQueryError', () => {
+    const wrapped = new DrizzleQueryError(
+      'insert into tag ...',
+      [],
+      pgError('23505', 'tag_name_key'),
+    );
+    expect(isUniqueConstraintViolation(wrapped)).toBe(true);
+  });
+});
+
+describe('uniqueConstraintName', () => {
+  it.each([
+    ['a pg error', pgError('23505', 'tag_name_key'), 'tag_name_key'],
+    [
+      'a drizzle-wrapped pg error',
+      new DrizzleQueryError('insert ...', [], pgError('23505', 'tag_slug_key')),
+      'tag_slug_key',
+    ],
+    [
+      'an error two causes deep',
+      new Error('outer', { cause: new Error('middle', { cause: { constraint: 'deep_key' } }) }),
+      'deep_key',
+    ],
+    ['a pg error without a constraint', pgError('23505'), null],
+    ['a non-string constraint', { constraint: 42 }, null],
+    ['null', null, null],
+    ['a string', 'tag_name_key', null],
+  ])('reads %s', (_name, error, expected) => {
+    expect(uniqueConstraintName(error)).toBe(expected);
+  });
+
+  it('stops on a cause cycle', () => {
+    const a: { cause?: unknown } = {};
+    const b = { cause: a };
+    a.cause = b;
+    expect(uniqueConstraintName(a)).toBeNull();
+  });
+
+  it('returns the outermost constraint when several layers carry one', () => {
+    expect(
+      uniqueConstraintName({ constraint: 'outer_key', cause: { constraint: 'inner_key' } }),
+    ).toBe('outer_key');
   });
 });

@@ -73,7 +73,7 @@ export function isUnresolvableRuleError(err: unknown): err is Error {
  * whose key is unbound, whose params no longer parse, or whose definition declares no
  * `isAffectedBy` never triggers - the periodic sweep covers it.
  */
-function isRuleAffectedBy(
+export function isRuleAffectedBy(
   catalog: GameCategoryRuleCatalog,
   rule: GameCategoryRule,
   change: GameCategoryRuleChange,

@@ -66,7 +66,7 @@ export function parseJobWorkers(raw: string | undefined): JobWorkerSelection | n
   return { include: none ? [] : include.length > 0 ? include : null, exclude };
 }
 
-function matches(pattern: string, queue: string): boolean {
+export function matches(pattern: string, queue: string): boolean {
   return pattern.endsWith('*') ? queue.startsWith(pattern.slice(0, -1)) : queue === pattern;
 }
 

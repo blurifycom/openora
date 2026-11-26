@@ -6,7 +6,10 @@ function isAllowedHost(hostname: string, allowedHosts: readonly string[]): boole
   return allowedHosts.some((allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`));
 }
 
-function validateUrl(raw: string, allowedHosts: readonly string[]): AttachmentValidationResult {
+export function validateUrl(
+  raw: string,
+  allowedHosts: readonly string[],
+): AttachmentValidationResult {
   let url: URL;
   try {
     url = new URL(raw);

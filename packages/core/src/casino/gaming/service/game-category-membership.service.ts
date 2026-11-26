@@ -42,7 +42,7 @@ const MAX_EVALUATE_ATTEMPTS = 3;
 const MEMBERSHIP_LAST_ERROR_MAX = 500;
 
 // Only this module's own messages leave it, never a definition's raw error.
-function failureReason(err: unknown) {
+export function failureReason(err: unknown) {
   const reason =
     isUnresolvableRuleError(err) ||
     err instanceof GameCategoryRuleUnavailableError ||
