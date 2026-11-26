@@ -69,7 +69,7 @@ type SweepGateDecision = 'sweep' | 'dust' | 'fee' | 'ceiling';
  * the adapter has no `getPoolBalance`, or the asset has no `poolLiquidityFloor`) - null
  * always means "the ceiling stays absolute", never an accidental override.
  */
-function gateSweepBalance(args: {
+export function gateSweepBalance(args: {
   amount: string;
   estimatedFee: string;
   dustThreshold: string;

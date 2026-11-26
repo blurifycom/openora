@@ -155,7 +155,7 @@ class DebitRefused extends Error {
  * those columns and matches any. A correction row never matches: its `amount` is what was
  * collected, not what was asked.
  */
-function assertReplayMatches(
+export function assertReplayMatches(
   stored: WalletTransaction,
   request: LedgerRequest,
   providerRef: WalletProviderRef,

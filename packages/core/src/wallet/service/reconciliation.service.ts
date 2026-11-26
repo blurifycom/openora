@@ -143,6 +143,7 @@ export type ReconciliationRefusalReason =
   | 'deposit_credit_names_a_transaction'
   | 'credit_names_no_transaction'
   | 'withdrawal_not_processing'
+  | 'swap_not_processing'
   | 'refund_destination_without_note'
   | 'refund_without_vendor_id'
   | 'ledger_deposit_not_completed'
@@ -210,13 +211,28 @@ const DISMISS_ONLY_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> =
   'stuck_withdrawal_processing',
   'ledger_request_mismatch',
   'ledger_unrequested_transaction',
+  'rg_limit_breach',
+  'stuck_sweep',
+  'unconfigured_asset',
   'play_eligibility_drift',
   'rg_limits_drift',
   'outbox_relay_lag',
   'event_dead_letters',
 ]);
 
-function assertOutcomeAllowed(
+type HeldRowType = 'withdrawal' | 'swap_out';
+
+const HELD_ROW_SETTLED_BY_CREDIT: Partial<
+  Record<
+    WalletReconciliationFindingKind,
+    { type: HeldRowType; refusal: ReconciliationRefusalReason }
+  >
+> = {
+  unknown_at_provider: { type: 'withdrawal', refusal: 'withdrawal_not_processing' },
+  stuck_swap: { type: 'swap_out', refusal: 'swap_not_processing' },
+};
+
+export function assertOutcomeAllowed(
   kind: WalletReconciliationFindingKind,
   outcome: ReconciliationResolution['outcome'],
 ): void {
@@ -370,7 +386,7 @@ type LedgerMatch = Pick<WalletTransaction, 'id' | 'currency' | 'amount' | 'netwo
  * without a database. Never routes through moneyToNumber (see money.md): an exact
  * decimal compare, not a float one.
  */
-function diffDeposit(
+export function diffDeposit(
   event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   tx: LedgerMatch | undefined,
 ): 'missing_deposit' | 'currency_mismatch' | 'amount_mismatch' | null {
@@ -669,7 +685,7 @@ export class ReconciliationService {
 
       let transactionId: string | undefined;
       let resolutionNote: string | null = null;
-      let heldWithdrawalId: string | null = null;
+      let settledHeldRow: { id: string; type: HeldRowType } | null = null;
       let refundedDepositId: string | null = null;
       let creditedDeposit: CreditedDeposit | undefined;
       let releasedDeposit: CreditedDeposit | undefined;
@@ -734,29 +750,26 @@ export class ReconciliationService {
             );
           }
           transactionId = tx.id;
-          // Crediting a player for a withdrawal whose vendor outcome is unknown settles it by
-          // hand. The held row must leave `processing` with it, or the next reconciliation
-          // run (or a late webhook) can still refund or complete it on top of the credit; one
-          // that already left it was settled another way, and the credit would pay it twice.
-          if (finding.kind === 'unknown_at_provider') {
-            const [withdrawal] = finding.transactionId
+          const held = HELD_ROW_SETTLED_BY_CREDIT[finding.kind];
+          if (held) {
+            const [heldRow] = finding.transactionId
               ? await txn
                   .select()
                   .from(walletTransaction)
                   .where(eq(walletTransaction.id, finding.transactionId))
                   .for('update')
               : [];
-            if (withdrawal?.type !== 'withdrawal' || withdrawal.status !== 'processing') {
+            if (heldRow?.type !== held.type || heldRow.status !== 'processing') {
               throw new ReconciliationOutcomeNotAllowedError(
                 finding.kind,
                 'credited',
-                'withdrawal_not_processing',
+                held.refusal,
               );
             }
-            if (tx.walletId !== withdrawal.walletId) {
+            if (tx.walletId !== heldRow.walletId) {
               throw new ReconciliationCreditMismatchError();
             }
-            heldWithdrawalId = withdrawal.id;
+            settledHeldRow = { id: heldRow.id, type: held.type };
           }
         }
       } else if (resolution.outcome === 'released') {
@@ -843,14 +856,14 @@ export class ReconciliationService {
         throw new ReconciliationFindingNotFoundError(id);
       }
 
-      if (heldWithdrawalId) {
+      if (settledHeldRow) {
         await txn
           .update(walletTransaction)
           .set({ status: 'failed' })
           .where(
             and(
-              eq(walletTransaction.id, heldWithdrawalId),
-              eq(walletTransaction.type, 'withdrawal'),
+              eq(walletTransaction.id, settledHeldRow.id),
+              eq(walletTransaction.type, settledHeldRow.type),
               eq(walletTransaction.status, 'processing'),
             ),
           );
@@ -872,7 +885,8 @@ export class ReconciliationService {
           outcome: resolution.outcome,
           transactionId: row.transactionId,
           resolutionNote: row.resolutionNote,
-          closedWithdrawalId: heldWithdrawalId,
+          closedWithdrawalId: settledHeldRow?.type === 'withdrawal' ? settledHeldRow.id : null,
+          closedSwapId: settledHeldRow?.type === 'swap_out' ? settledHeldRow.id : null,
           releasedDepositId: releasedDeposit?.transactionId ?? null,
           creditedDeposit: creditedDeposit ?? null,
           refundedDepositId,

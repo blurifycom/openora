@@ -873,7 +873,7 @@ function assertRecordableDeposit(event: Pick<DepositEvent, 'externalId' | 'amoun
   }
 }
 
-function isAddressCurrencyMismatch(
+export function isAddressCurrencyMismatch(
   event: Pick<DepositEvent, 'network' | 'currency'>,
   depositAddress: Pick<WalletDepositAddress, 'currency'>,
 ) {
@@ -965,6 +965,9 @@ const TX_SORT_COLUMNS = {
 } as const satisfies Record<WalletTransactionSortBy, keyof TransactionHistoryRow>;
 
 export function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
+  if (namespace.includes(':')) {
+    throw new RangeError(`idempotency namespace must not contain ':' (got ${namespace})`);
+  }
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
   return [
     hex.slice(0, 8),

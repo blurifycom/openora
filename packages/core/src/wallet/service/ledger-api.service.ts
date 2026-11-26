@@ -153,7 +153,7 @@ function refusalOf(err: unknown): LedgerRefusal | undefined {
 }
 
 /** A malformed amount refuses as `invalid_amount`; any other malformed field is the caller's bug. */
-function parseArgs<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
+export function parseArgs<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
   const parsed = schema.safeParse(input);
   if (parsed.success) {
     return parsed.data;
@@ -168,14 +168,14 @@ const canonicalDecimal = (value: string | undefined) =>
   value === undefined ? null : moneyFloorToScale(value, MONEY_SCALE);
 
 /** sha256 over the canonical request, so '10' and '10.00' are one request and '10' and '11' two. */
-function fingerprint(parts: readonly unknown[]): string {
+export function fingerprint(parts: readonly unknown[]): string {
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 
 /** A UUID's case is not part of it, so `A1..` and `a1..` are one request. */
 const uuid = (id: string) => id.toLowerCase();
 
-function reverseFingerprint(args: ReverseKey): string {
+export function reverseFingerprint(args: ReverseKey): string {
   return fingerprint([
     'reverse',
     args.providerName,
