@@ -1,66 +1,67 @@
 <!--
-A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. Plain words and diagrams, no code, paths or symbol names; generated from the diff, the schema diff and real spans, never invented. This repo is public: bare ticket keys only, no internal URLs, hosts, operator names or personal data.
-Keep a section only when its trigger fires; delete the rest. Budget: what shows before anything is expanded fits one screen (about 1500 characters), and each section fits one screen (about 1500 characters plus its diagram); the detail lives in the diagram or table, not in paragraphs. Every section but "How it was checked" stays collapsed, its summary line carrying the gist. Mermaid: horizontal, no fills, a coloured border on what changed (added #3fb950, changed #d29922, removed #f85149 dashed).
-First line: the bare ticket key, or `Closes #<issue>`. Sections 2 (infra path), 7 (e2e steps) and 11 (video) are left out: this repo has no deploy infra or player UI.
+A review pack: a reviewer approves from it without reading code, and every claim in it is checkable. First line: the bare ticket key, or `Closes #<issue>`. Then one summary line and the generated "Touches:" line. The same 14 slots in every PR, every heading kept, open, in this order; a slot that does not apply says "N/A: <reason>". Size changes nothing. This repo is public: no internal URLs, hosts, operator names or personal data. Plain words and diagrams, no code, paths or symbol names. Mermaid is horizontal (`flowchart LR`, an erDiagram or stateDiagram-v2 with `direction LR`), no theme or `style` lines, what changed filled with the added / changed / removed classes and the legend line under it. No `<details>` folds and no tables outside slot 12. What nobody measured stays visible: "not labelled", "not measured", "not traced". On a money, KYC, responsible-gambling or authz change slots 1 and 3 are never N/A.
 -->
 
-## How it was checked
+## 1. Decisions made
 
-<!-- Checks result for the head SHA, then each test that proves the change, named by the behaviour it proves. Review findings dropped as not holding, each with why; a dropped security finding as a count only. -->
+<!-- Per call the issue did not settle: Chose / Instead of / Set by (the person or role who owns it). -->
 
-<details><summary><b>1. Architecture diff</b>: </summary>
+## 2. Origin
 
-<!-- Trigger: a new module, package, external call or dependency between modules, or 3+ modules touched. Changed nodes plus one neighbour each side, max ~10 nodes. -->
+<!-- A fix: "Found:" (report, CI, a consumer), "Lives in:" (module or package), "Cause:", "Reproduced:". Docs, deps, tests or tooling: rename to "## 2. Why", at most three bullets; a temporary CI change ends with "Revert when: <condition>". -->
 
-</details>
+## 3. How it was checked
 
-<details><summary><b>3. Business logic</b>: </summary>
+<!-- The hostile cases tried, one line. Never "green" or a test count: the checks and the diff show them. "Dropped findings:" each review finding not fixed, with why; security ones as a count only. A money, KYC, responsible-gambling or authz change adds "Not covered:" and "Revert leaves:". -->
 
-<!-- Trigger: 3+ new branches or a changed error outcome. Decision flowchart, exact status and reason per caller. -->
+## 4. Env
 
-</details>
+<!-- Per config field or env variable added, changed or removed: name, Lives in, Set in, Default, Copy value from, a bold "Before release:" line. "Set in" and "Copy value from" name a role or a public doc, never a host, URL or vault path. Never a value. -->
 
-<details><summary><b>4. Endpoints and permissions</b>: </summary>
+## 5. Consumer impact
 
-<!-- Trigger: a route, contract, event payload or status code changes. flowchart LR caller -> endpoint, payload on the edge, response in the node; backward compatible or not. -->
+<!-- Which exports, routes, events or config fields change for a consumer, and whether it is backward compatible. -->
 
-</details>
+## 6. Related PRs
 
-<details><summary><b>5. Queries, indexes, trace</b>: </summary>
+<!-- A paired change shares this branch name; never name, link or describe the consumer repo or operator. Otherwise the release it ships in. -->
 
-<!-- Trigger: new or changed queries on a request path, or a money path. One arrow per query with its index; the gantt from packages/testing/scripts/trace-report.ts when the integration suite exported spans, else "trace: none". Spans from a local run on test data only, no ids, emails or amounts from real data. -->
+## 7. Flow
 
-</details>
+<!-- ### Request path: one flowchart LR, caller to response status and total, every middleware and gate in order, every step with its ms, every arrow labelled with what crosses it (from the trace span, else the code, else "not labelled"). ### Event flow: producer, outbox write, "after commit +lag ms", handler, each sink. ### Pipeline for a CI change. -->
 
-<details><summary><b>6. Data</b>: </summary>
+🟩 added · 🟨 changed · 🟥 removed
 
-<!-- Trigger: a migration or schema change. erDiagram of new or changed tables, then locks, backfill, safety under traffic, config fields added or removed. -->
+## 8. Data model
 
-</details>
+<!-- One erDiagram, "direction LR" first: changed tables plus one foreign key away, keys and marked columns only. -->
 
-<details><summary><b>8. AC -> evidence</b>: </summary>
+🟩 added · 🟨 changed · 🟥 removed
 
-<!-- Trigger: the work has acceptance criteria. -->
+## 9. Migration
 
-| AC  | behaviour | test | trace | result @sha |
-| --- | --------- | ---- | ----- | ----------- |
+<!-- Per file: lock (from the SQL), time and rows (a local run on seeded test data only, no ids, emails, amounts or hosts, else "not measured"), "Data loss:" (drop, type change, removed enum value). -->
 
-</details>
+## 10. Trace
 
-<details><summary><b>9. Decisions to accept</b>: </summary>
+<!-- One #### METHOD /path per changed or added procedure: the gantt from packages/testing/scripts/trace-report.ts; A local run on seeded test data only, no ids, emails, amounts or hosts; "not traced" when missing; a removed one says "removed, nothing to trace". ### Queries and indexes when a query is new. -->
 
-<!-- Trigger: a tradeoff the issue did not settle; always on money, KYC, responsible-gambling or authz (then first). Numbered, each with an owner. Alternatives considered go here. -->
+## 11. Performance
 
-</details>
+<!-- ### Load on a hot path: players reached of 1000, p95, CPU and RAM for api and database before and after, queries per request at 1/10/100 items. ### Measurement for a benchmarked change. All numbers from a local run on seeded test data only, no ids, emails, amounts or hosts. -->
 
-<details><summary><b>10. Test quality and rollout</b>: </summary>
+## 12. Evidence
 
-<!-- Trigger: a large or risky change, any money, KYC, responsible-gambling or authz change, or a config change. Mutation and hostile cases, what is not covered, migration order, consumer impact, what a revert leaves behind, docs and ADRs to update. -->
+<!-- ### Sample output for a script, CLI or generator. ### Video (table Flow | Before | Now | AC, one row per AC, each clip the whole flow of its AC in one take, from the screen the user starts on to the outcome the AC names, never a few seconds of the end state, the AC cell naming the criterion and its verdict PASS, FAIL or UNCHECKED; test accounts only, a login restored or typed before recording starts) or ### Screenshots before | after side by side for a look-only change. -->
 
-</details>
+## 13. Business logic
 
-<details><summary><b>12. Code review guide</b>: </summary>
+<!-- A decision flowchart LR when a branch has three or more outcomes; ### State machine (stateDiagram-v2, direction LR) when a status is added, removed or moved. -->
 
-<!-- Trigger: a large change. Ordered stops: contract -> tables -> server -> writes, each named by what it does. -->
+🟩 added · 🟨 changed · 🟥 removed
 
-</details>
+## 14. Endpoints and permissions
+
+<!-- flowchart LR caller to endpoint, guard and role on the edge, response and new status codes in the node; "backward compatible" or "breaking". -->
+
+🟩 added · 🟨 changed · 🟥 removed
