@@ -164,20 +164,23 @@ export function houseEdge(realAmount: string, rtp?: string | null): string {
 
 export function moneyFloorToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
-  return fromUnitsAtScale(toMinorUnits(amount) / divisor, scale);
+  const units = toMinorUnits(amount);
+  const truncated = units / divisor;
+  return fromUnitsAtScale(units < 0n && units % divisor !== 0n ? truncated - 1n : truncated, scale);
 }
 
 export function moneyCeilToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
   const units = toMinorUnits(amount);
-  const scaledUnits = units / divisor + (units % divisor === 0n ? 0n : 1n);
-  return fromUnitsAtScale(scaledUnits, scale);
+  const truncated = units / divisor;
+  return fromUnitsAtScale(units > 0n && units % divisor !== 0n ? truncated + 1n : truncated, scale);
 }
 
 function fromUnitsAtScale(units: bigint, scale: number): string {
-  const digits = units.toString().padStart(scale + 1, '0');
-  const whole = digits.slice(0, digits.length - scale) || '0';
-  return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
+  const sign = units < 0n ? '-' : '';
+  const digits = (units < 0n ? -units : units).toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale);
+  return scale === 0 ? `${sign}${whole}` : `${sign}${whole}.${digits.slice(digits.length - scale)}`;
 }
 
 /**
