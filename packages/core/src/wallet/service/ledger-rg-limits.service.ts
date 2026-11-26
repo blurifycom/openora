@@ -63,6 +63,8 @@ function rowsOf(snapshot: RgLimitsSnapshot): LimitRow[] {
   }));
 }
 
+const projectionKey = (userId: User['id']) => `rg-limit-projection:${userId}`;
+
 const slotsOf = (snapshot: RgLimitsSnapshot) => [
   ...new Set(
     snapshot.limits.map((limit) => limitSlotKey(snapshot.userId, limit.type, limit.period)),
@@ -183,7 +185,9 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
       return { allowed: true };
     }
     const slots = [...new Set(scanned.map((row) => limitSlotKey(userId, row.type, row.period)))];
-    const limits = await withAdvisoryXactLocks(db, slots, () => this.readLimits(db, userId, type));
+    const limits = await withAdvisoryXactLocks(db, slots, () =>
+      withAdvisoryXactLocks(db, [projectionKey(userId)], () => this.readLimits(db, userId, type)),
+    );
     const now = await databaseNow(db);
     for (const row of limits) {
       const refusal = await this.refusalOf(db, row, amount, amountCurrency, now);
@@ -272,7 +276,7 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
   async writeFromRemote(snapshot: RgLimitsSnapshot, tx: unknown): Promise<void> {
     const db = tx as DrizzleTx;
     const parsed = RgLimitsSnapshotSchema.parse(snapshot);
-    await withAdvisoryXactLocks(db, slotsOf(parsed), async () => {
+    await withAdvisoryXactLocks(db, [projectionKey(parsed.userId)], async () => {
       const written = await db
         .insert(ledgerUserLimitVersion)
         .values({ userId: parsed.userId, version: parsed.version })

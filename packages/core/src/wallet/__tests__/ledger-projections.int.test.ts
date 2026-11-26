@@ -79,24 +79,42 @@ const setBeat = (projection: 'play_eligibility' | 'rg_limits', age: string) =>
 const remoteFreshness = { remoteWriter: () => true, staleMs: 60_000, alertMs: 30_000 };
 
 describe('the limits projection write path (real PG)', () => {
-  it('holds a remote limit write behind a stake that holds the limit slot', async () => {
+  it('holds a remote limit write behind a stake that already checked the limit', async () => {
+    const userId = randomUUID();
+    const ledger = new LedgerRgLimitsService(testDb.drizzle, undefined);
+    await db().transaction((tx) => ledger.write(dailyDepositLimit(userId, '100'), tx));
+
+    await db().transaction(async (stake) => {
+      await ledger.checkDeposit(stake, userId, '1', 'USD');
+      await expect(
+        db().transaction(async (tx) => {
+          await tx.execute(sql`set local lock_timeout = '200ms'`);
+          await ledger.writeFromRemote({ ...dailyDepositLimit(userId, '15'), version: 9 }, tx);
+        }),
+      ).rejects.toMatchObject({ cause: { code: '55P03' } });
+    });
+
+    expect(
+      await db().select().from(ledgerUserLimit).where(eq(ledgerUserLimit.userId, userId)),
+    ).toEqual([expect.objectContaining({ amount: expect.stringMatching(/^100(\.0+)?$/) })]);
+  });
+
+  it('does not wait on the limit slot lock its caller holds when it writes a remote limit', async () => {
     const userId = randomUUID();
     const ledger = new LedgerRgLimitsService(testDb.drizzle, undefined);
 
-    await db().transaction((stake) =>
-      withAdvisoryXactLocks(stake, [limitSlotKey(userId, 'deposit', 'daily')], async () => {
-        await expect(
-          db().transaction(async (tx) => {
-            await tx.execute(sql`set local lock_timeout = '200ms'`);
-            await ledger.writeFromRemote(dailyDepositLimit(userId, '15'), tx);
-          }),
-        ).rejects.toMatchObject({ cause: { code: '55P03' } });
-      }),
+    await db().transaction((caller) =>
+      withAdvisoryXactLocks(caller, [limitSlotKey(userId, 'deposit', 'daily')], () =>
+        db().transaction(async (tx) => {
+          await tx.execute(sql`set local lock_timeout = '200ms'`);
+          await ledger.writeFromRemote(dailyDepositLimit(userId, '15'), tx);
+        }),
+      ),
     );
 
     expect(
       await db().select().from(ledgerUserLimit).where(eq(ledgerUserLimit.userId, userId)),
-    ).toEqual([]);
+    ).toHaveLength(1);
   });
 
   it('holds a reconcile limit write behind a stake that holds the limit slot until the stake ends', async () => {

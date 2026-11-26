@@ -44,12 +44,15 @@ caller: deploy identity and compliance with their heartbeat jobs, confirm a row 
 refuses until the first beat lands. A missing row never passes: it is indistinguishable from an
 owner that never started.
 
-**Limit writes.** Every write of the limits projection that does not run inside compliance's own
-transaction (`writeFromRemote`, `reconcile`) takes the slot locks of the limits it writes before
-the version row, the same locks a deposit or wager check takes, so a lowered limit waits for an
-in-flight check and the next check reads it. A player's first limit is not serialized this way: with
-no limit rows yet, a check returns before it takes any slot lock, so an in-flight check can pass
-while the first limit commits, and only the next check reads it.
+**Limit writes.** `reconcile` takes the slot locks of the limits it writes before the version row,
+the same locks a deposit or wager check takes. `writeFromRemote` runs while compliance's own
+transaction still holds the slot lock of the limit it changes, and on the supported shared database
+the same advisory lock cannot be taken from a second connection, so it takes a per-player
+projection lock instead, which a check takes after its slot locks. A lowered limit therefore waits
+for an in-flight check and the next check reads it, and the write never waits on its caller. A
+player's first limit is not serialized this way: with no limit rows yet, a check returns before it
+takes any lock, so an in-flight check can pass while the first limit commits, and only the next
+check reads it.
 
 **Deposits.** The eligibility gate of a player deposit and of an on-ramp checkout runs inside the
 transaction that reserves it, under the player's deposit lock and after the replay lookup, reading

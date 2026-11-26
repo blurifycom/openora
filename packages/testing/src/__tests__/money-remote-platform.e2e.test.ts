@@ -222,6 +222,76 @@ describe('a platform service with money-remote', () => {
     ).toEqual([{ version: 6, amount: expect.stringMatching(/^10(\.0+)?$/) }]);
   });
 
+  it('sets and lowers a player limit through the route while the money service shares the database', async () => {
+    const player = await newPlayer(platform, 'money-remote-limit-route');
+    const limit = (amount: string) => ({
+      type: 'deposit',
+      amount,
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    moneyCalls.length = 0;
+
+    const first = await player.client.put('/compliance/limits', limit('100'));
+    const lowered = await player.client.put('/compliance/limits', limit('40'));
+
+    expect([first.status, lowered.status]).toEqual([200, 200]);
+    expect(moneyCalls.map((call) => JSON.parse(call.body).method)).toContain('write');
+    const rows = await money.container.get(DRIZZLE).db.execute<{ version: number; amount: string }>(
+      sql`select v.version, l.amount::text as amount from ledger_user_limit_version v
+          join ledger_user_limit l on l.user_id = v.user_id where v.user_id = ${player.userId}`,
+    );
+    expect(rows.rows).toEqual([{ version: 2, amount: expect.stringMatching(/^40(\.0+)?$/) }]);
+  });
+
+  it('makes a remote limit write wait for a money check that already read the limit', async () => {
+    const player = await newPlayer(platform, 'money-remote-limit-wait');
+    const put = await player.client.put('/compliance/limits', {
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      currency: 'USD',
+      period: 'daily',
+    });
+    expect(put.status).toBe(200);
+    const amountOf = async () =>
+      (
+        await money.container
+          .get(DRIZZLE)
+          .db.execute<{ amount: string }>(
+            sql`select amount::text as amount from ledger_user_limit where user_id = ${player.userId}`,
+          )
+      ).rows.map((row) => Number(row.amount));
+    const lowered = {
+      userId: player.userId,
+      version: 50,
+      limits: [
+        {
+          limitId: randomUUID(),
+          type: 'deposit' as const,
+          period: 'daily' as const,
+          amount: '10',
+          currency: 'USD',
+          changedAt: new Date().toISOString(),
+        },
+      ],
+    };
+    let write: Promise<void> = Promise.resolve();
+    let seenWhileChecking: number[] = [];
+
+    await money.container.get(DRIZZLE).db.transaction(async (tx) => {
+      await money.container.get(RG_LIMITS).checkDeposit(tx, player.userId, '1', 'USD');
+      write = platform.container.get(RG_LIMIT_LEDGER).write(lowered, undefined);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      seenWhileChecking = await amountOf();
+    });
+    await write;
+
+    expect(seenWhileChecking).toEqual([100]);
+    expect(await amountOf()).toEqual([10]);
+  });
+
   it('rethrows a typed port error on the caller as its own class', async () => {
     const spendFor = vi
       .spyOn(money.container.get(RG_LIMIT_LEDGER), 'spendFor')
