@@ -50,7 +50,7 @@ const toRepoPath = (path) =>
 
 export default {
   testRunner: 'vitest',
-  allowEmpty: true,
+  thresholds: { high: 80, low: 65, break: 55 },
   vitest: {
     configFile: 'packages/core/vitest.mutation.config.ts',
     // Plugins load through `import(path)`, which vitest's related-files graph cannot see, so
