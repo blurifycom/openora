@@ -1,7 +1,8 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { assertPositionsAffordable, RacePositionsInvalidError } from '../race-admin.service.js';
-import { maskUsername } from '../race.service.js';
+import { moneyAdd, moneyCompare } from '@openora/core/server';
+import { amountToNextPaidPosition, maskUsername } from '../race.service.js';
 
 describe('maskUsername', () => {
   it.each([
@@ -87,6 +88,63 @@ describe('assertPositionsAffordable', () => {
           expect(call).toThrow(RacePositionsInvalidError);
         }
       }),
+    );
+  });
+});
+
+describe('amountToNextPaidPosition', () => {
+  const board = (...wagered: string[]) =>
+    wagered.map((amount, index) => ({
+      userId: `${(index + 1).toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`,
+      username: `racer${index + 1}`,
+      wagered: amount,
+      position: index + 1,
+    }));
+
+  it.each([
+    ['a race that pays nobody', 0, board('50', '40', '30'), 2, null],
+    ['the first paid place', 2, board('50', '40', '30'), 0, null],
+    ['the last paid place', 2, board('50', '40', '30'), 1, null],
+    ['a player missing from the board', 2, board('50', '40', '30'), 7, null],
+    ['paid places beyond the capped board', 5, board('50', '40', '30'), 2, null],
+  ])('is null for %s', (_case, paidPositions, entries, ownIndex, expected) => {
+    expect(amountToNextPaidPosition(paidPositions, entries, ownIndex)).toBe(expected);
+  });
+
+  it.each([
+    ['right below the paid zone', 2, board('50', '40', '30'), 2, '10.000000000000000000'],
+    [
+      'far below the paid zone, measured to the last paid place',
+      1,
+      board('50', '40', '30'),
+      2,
+      '20.000000000000000000',
+    ],
+    ['with 18-decimal precision', 1, board('1.000000000000000001', '1'), 1, '0.000000000000000001'],
+    ['on an exact tie with the last paid place', 1, board('50', '50'), 1, '0'],
+  ])('measures the gap %s', (_case, paidPositions, entries, ownIndex, expected) => {
+    expect(amountToNextPaidPosition(paidPositions, entries, ownIndex)).toBe(expected);
+  });
+
+  it('closes the gap exactly when the player adds the returned amount', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 0, max: 10_000_000 }), { minLength: 2, maxLength: 20 }),
+        fc.integer({ min: 1, max: 19 }),
+        (amounts, paid) => {
+          const sorted = [...amounts].sort((a, b) => b - a).map(String);
+          const paidPositions = Math.min(paid, sorted.length - 1);
+          const ownIndex = sorted.length - 1;
+          const gap = amountToNextPaidPosition(paidPositions, board(...sorted), ownIndex);
+          const lastPaid = sorted[paidPositions - 1];
+          const own = sorted[ownIndex];
+          if (gap === null || lastPaid === undefined || own === undefined) {
+            throw new Error('expected a gap for a player outside the paid zone');
+          }
+          expect(moneyCompare(gap, '0')).toBeGreaterThanOrEqual(0);
+          expect(moneyCompare(moneyAdd(own, gap), lastPaid)).toBe(0);
+        },
+      ),
     );
   });
 });

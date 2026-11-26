@@ -347,7 +347,11 @@ export class RaceService implements WagerTrackingCommands {
             userId,
             wagered: ownEntry.wagered,
             position: ownEntry.position,
-            amountToNextPaidPosition: this.amountToNextPaidPosition(race, entries, ownIndex),
+            amountToNextPaidPosition: amountToNextPaidPosition(
+              race.positions.length,
+              entries,
+              ownIndex,
+            ),
           };
 
     return {
@@ -358,29 +362,22 @@ export class RaceService implements WagerTrackingCommands {
       participants: Number(counted?.n ?? 0),
     };
   }
+}
 
-  /**
-   * How much more the player must wager to reach the next-better paid position - the wagered
-   * amount of whoever currently holds it, minus the player's own. Null once the player already
-   * holds a paid position, or the race pays no positions at all.
-   */
-  private amountToNextPaidPosition(
-    race: Race,
-    entries: readonly RaceLeaderboardEntry[],
-    ownIndex: number,
-  ): string | null {
-    const paidPositions = race.positions.length;
-    if (paidPositions === 0 || ownIndex < paidPositions) {
-      return null;
-    }
-    const nextBetter = entries[paidPositions - 1];
-    const ownEntry = entries[ownIndex];
-    if (!nextBetter || !ownEntry) {
-      return null;
-    }
-    const own = ownEntry.wagered;
-    return moneyCompare(nextBetter.wagered, own) <= 0
-      ? '0'
-      : moneySubtract(nextBetter.wagered, own);
+export function amountToNextPaidPosition(
+  paidPositions: number,
+  entries: readonly RaceLeaderboardEntry[],
+  ownIndex: number,
+): string | null {
+  if (paidPositions === 0 || ownIndex < paidPositions) {
+    return null;
   }
+  const lastPaid = entries[paidPositions - 1];
+  const ownEntry = entries[ownIndex];
+  if (!lastPaid || !ownEntry) {
+    return null;
+  }
+  return moneyCompare(lastPaid.wagered, ownEntry.wagered) <= 0
+    ? '0'
+    : moneySubtract(lastPaid.wagered, ownEntry.wagered);
 }
