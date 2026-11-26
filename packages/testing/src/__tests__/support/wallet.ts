@@ -36,7 +36,7 @@ import {
 const pluginPath = (file: string) => fileURLToPath(new URL(file, import.meta.url));
 
 export const NETWORK = 'TESTCHAIN';
-export const MIN_DEPOSIT = '10';
+const MIN_DEPOSIT = '10';
 export const RATE = '1.5';
 
 export type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
@@ -249,7 +249,7 @@ export async function newFundedPlayer(e2e: WalletE2e, amount = '100') {
   return { ...player, destinationAddress };
 }
 
-export const withdrawalBody = (
+const withdrawalBody = (
   { currency, destinationAddress }: { currency: string; destinationAddress?: string },
   overrides: Record<string, unknown> = {},
 ) => ({

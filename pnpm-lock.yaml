@@ -348,9 +348,6 @@ importers:
       react:
         specifier: 19.2.7
         version: 19.2.7
-      react-dom:
-        specifier: 19.2.7
-        version: 19.2.7(react@19.2.7)
       redis:
         specifier: 5.12.1
         version: 5.12.1(@opentelemetry/api@1.9.1)
@@ -394,6 +391,9 @@ importers:
       jsdom:
         specifier: 29.1.1
         version: 29.1.1(@noble/hashes@2.4.0)
+      react-dom:
+        specifier: 19.2.7
+        version: 19.2.7(react@19.2.7)
       typescript:
         specifier: 6.0.3
         version: 6.0.3

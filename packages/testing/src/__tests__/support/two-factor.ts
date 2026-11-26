@@ -5,7 +5,7 @@ import { session, user } from '@openora/core/pam/schema/identity';
 import { secretFromTotpUri, totpCode, type E2e } from '../../index.js';
 import { LoginSuccessSchema, newCredentialPlayer, postJson } from './identity.js';
 
-export const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0.0.0';
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0.0.0';
 export const OTHER_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0';
 
 export const EnableSchema = z.object({ totpUri: z.string(), backupCodes: z.array(z.string()) });
@@ -26,7 +26,7 @@ export const TrustedDevicesSchema = z.array(
 
 export type Jar = Map<string, string>;
 
-export function absorbCookies(jar: Jar, res: Response) {
+function absorbCookies(jar: Jar, res: Response) {
   for (const line of res.headers.getSetCookie()) {
     const [pair = ''] = line.split(';');
     const at = pair.indexOf('=');
@@ -43,7 +43,7 @@ export function absorbCookies(jar: Jar, res: Response) {
   }
 }
 
-export const cookieHeaderOf = (jar: Jar) =>
+const cookieHeaderOf = (jar: Jar) =>
   [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
 
 export type Browser = { jar: Jar; userAgent: string; ip?: string };
@@ -99,7 +99,7 @@ export const verifyCode = (
   extras: { method?: 'totp' | 'backup_code'; trustDevice?: boolean } = {},
 ) => call(e2e, browser, 'POST', '/identity/2fa/verify', { code, ...extras });
 
-export const meStatus = (e2e: E2e, browser: Browser) => call(e2e, browser, 'GET', '/identity/me');
+const meStatus = (e2e: E2e, browser: Browser) => call(e2e, browser, 'GET', '/identity/me');
 
 export async function hasSession(e2e: E2e, browser: Browser) {
   const res = await meStatus(e2e, browser);
@@ -177,15 +177,6 @@ export async function idleSessionsFor(e2e: E2e, userId: string, minutesAgo: numb
     .db.update(session)
     .set({ lastSeenAt: new Date(Date.now() - minutesAgo * 60_000) })
     .where(eq(session.userId, userId));
-}
-
-export async function sessionExpiries(e2e: E2e, userId: string) {
-  const rows = await e2e.app.container
-    .get(DRIZZLE)
-    .db.select({ expiresAt: session.expiresAt })
-    .from(session)
-    .where(eq(session.userId, userId));
-  return rows.map((row) => row.expiresAt.getTime());
 }
 
 export async function switchToSmsMethod(e2e: E2e, userId: string) {

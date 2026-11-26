@@ -22,7 +22,7 @@ import { createInternalAccountsRouter } from '../pam/identity/router/internal-ac
 import { createInternalSessionRouter } from '../pam/identity/router/internal-sessions.router.js';
 import { createTestDb, type TestDb } from './real-infra.js';
 
-export const REMOTE_CALLER = 'chat';
+const REMOTE_CALLER = 'chat';
 const AUDIENCE = 'identity';
 
 const grantsEnrolment: AdminSecurityPolicy = {

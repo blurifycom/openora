@@ -24,7 +24,7 @@ import {
 } from './wallet.js';
 import { directiveSegment, type KycDirective } from './test-kyc-plugin.js';
 
-export const KYC_WEBHOOK_SECRET = 'e2e-kyc-webhook-secret';
+const KYC_WEBHOOK_SECRET = 'e2e-kyc-webhook-secret';
 
 const kycPlugin = {
   id: 'testing-kyc',
@@ -55,7 +55,7 @@ export async function closeKycE2e(e2e: WalletE2e | undefined) {
   delete process.env['KYC_WEBHOOK_SECRET'];
 }
 
-export const documentsFor = (directive: KycDirective = {}) => [
+const documentsFor = (directive: KycDirective = {}) => [
   { type: 'passport', frontUrl: `https://e2e.test/${directiveSegment(directive)}` },
 ];
 

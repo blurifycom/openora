@@ -23,8 +23,6 @@ import {
 } from '../wallet/schema/index.js';
 import { migrate as migrateAudit } from '../audit/migrate.js';
 import { AuditService } from '../audit/service/audit.service.js';
-import { auditLog } from '../audit/schema/index.js';
-import { drainAuditOutbox } from '../audit/service/audit-shipper.service.js';
 import { createTestDb, type TestDb } from './real-infra.js';
 import { seedPlayerWithUser } from './seed-player.js';
 import { migrate as migrateBetting } from '../sportsbook/betting/migrate.js';
@@ -147,8 +145,6 @@ export async function seedBettor(testDb: TestDb, amount: string) {
   return { userId, walletId: owned.id, sessionId: session.id };
 }
 
-export type Bettor = Awaited<ReturnType<typeof seedBettor>>;
-
 export function reserveArgs(
   sessionId: string,
   overrides: Partial<SportsbookReserveArgs> = {},
@@ -195,10 +191,5 @@ export const sportsbookWalletRows = (testDb: TestDb, walletId: string) =>
         like(walletTransaction.providerName, 'sportsbook:%'),
       ),
     );
-
-export async function auditRows(testDb: TestDb, action: string) {
-  await drainAuditOutbox(testDb.drizzle.db);
-  return testDb.drizzle.db.select().from(auditLog).where(eq(auditLog.action, action));
-}
 
 export { ledgerPlayEligibility, walletBalance };

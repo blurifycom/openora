@@ -124,7 +124,7 @@ export async function fundedBettor(e2e: WalletE2e, amount = '50') {
 
 export type Bettor = Awaited<ReturnType<typeof fundedBettor>>;
 
-export const startRoundAs = (
+const startRoundAs = (
   client: TestClient,
   body: { gameId: string; currency: string; betAmount: string },
   ip = ALLOWED_IP,

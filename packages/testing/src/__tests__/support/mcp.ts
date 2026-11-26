@@ -10,7 +10,7 @@ import { MCP_TEST_HOST } from './test-mcp-plugin.js';
 
 export const MCP_PASSWORD = 'password1234';
 
-export const mcpPlugin = {
+const mcpPlugin = {
   id: 'testing-mcp',
   path: fileURLToPath(new URL('./test-mcp-plugin.ts', import.meta.url)),
 };
@@ -88,7 +88,7 @@ export async function issueToken(
   return IssuedTokenSchema.parse(body);
 }
 
-export const freshIp = () => `10.${randomInt(1, 255)}.${randomInt(1, 255)}.${randomInt(1, 255)}`;
+const freshIp = () => `10.${randomInt(1, 255)}.${randomInt(1, 255)}.${randomInt(1, 255)}`;
 
 export type McpCallOptions = {
   token?: string;

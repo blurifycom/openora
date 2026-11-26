@@ -34,7 +34,7 @@ import {
 
 export const LI_IP = '203.0.113.40';
 export const DE_IP = '203.0.113.10';
-export const BET_PROVIDER = 'bonus-e2e-provider';
+const BET_PROVIDER = 'bonus-e2e-provider';
 
 export const bootBonusE2e = () =>
   bootWalletE2e([

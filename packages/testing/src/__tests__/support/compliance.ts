@@ -14,7 +14,7 @@ import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { newStaff, type TestClient } from '../../index.js';
 import { deliverWebhook, newDepositScenario, type WalletE2e } from './wallet.js';
 
-export const limitBody = (
+const limitBody = (
   currency: string,
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
@@ -26,7 +26,7 @@ export const limitBody = (
   ...overrides,
 });
 
-export const adminLimitBody = (
+const adminLimitBody = (
   userId: string,
   currency: string,
   overrides: Record<string, unknown> = {},
