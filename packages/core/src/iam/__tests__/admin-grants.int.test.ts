@@ -58,7 +58,7 @@ const bySlot = (grants: { resource: string; action: string }[]) =>
   grants.map(({ resource, action }) => `${resource}:${action}`).sort();
 
 const everyGrant = Object.entries(statement).flatMap(([resource, actions]) =>
-  (actions as readonly string[]).map((action) => `${resource}:${action}`),
+  Array.from(actions, (action: string) => `${resource}:${action}`),
 );
 
 describe('loadAdminGrants', () => {

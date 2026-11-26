@@ -233,7 +233,7 @@ describe('admin user update', () => {
     expect((await root.client.get('/backoffice/users')).status).toBe(200);
   });
 
-  it('an admin cannot edit a user above their own level', async () => {
+  it('only a super admin may edit another staff account', async () => {
     const admin = await directoryAdmin();
     const peer = await directoryAdmin();
     const player = await newPlayer(e2e.app, 'console-level');

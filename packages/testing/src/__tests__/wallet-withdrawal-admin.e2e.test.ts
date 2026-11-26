@@ -57,7 +57,10 @@ const db = () => e2e.app.container.get(DRIZZLE).db;
 const QueuePageSchema = z.object({ items: z.array(WithdrawalQueueItemSchema), total: z.number() });
 const ReleaseHeaders = { 'content-type': 'application/json' };
 
-const send = async (res: Response) => ({ status: res.status, body: (await res.json()) as unknown });
+const send = async (res: Response) => {
+  const body: unknown = await res.json();
+  return { status: res.status, body };
+};
 const approve = (client: TestClient, id: string) =>
   client.post(`/wallet/withdrawals/${id}/approve`).then(send);
 const reject = (client: TestClient, id: string, reason = 'e2e rejection') =>

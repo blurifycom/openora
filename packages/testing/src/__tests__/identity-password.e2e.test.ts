@@ -321,9 +321,9 @@ describe('admin initiated reset', () => {
 
   it('an admin without the permission is refused with forbidden', async () => {
     const player = await newCredentialPlayer(e2e, 'admin-reset-denied');
-    const bystander = await newCredentialPlayer(e2e, 'admin-reset-bystander');
+    const readOnlyStaff = await newStaff(e2e.app, 'admin-reset-read-only', 'affiliate-manager');
 
-    const res = await bystander.client.post('/identity/admin/password-reset', {
+    const res = await readOnlyStaff.client.post('/identity/admin/password-reset', {
       userId: player.userId,
     });
 
