@@ -59,8 +59,10 @@ is `SPORTSBOOK_LEDGER` unchanged.
 - **One transaction per keyed op.** `bet`, `win` and `reverse` each lock their key, move the money,
   add it to the round, write the outbox events and store their answer in `ledger_api_request`, all
   in one transaction. A refusal undoes its moves but is stored as the key's answer, so a retry
-  gets the same refusal even after a deposit; only `fingerprint_mismatch` and `invalid_amount`
-  store nothing.
+  gets the same refusal even after a deposit; only `fingerprint_mismatch`, `invalid_amount`,
+  `unknown_game`, `unknown_product`, `round_mismatch` and `ledger_unavailable` store nothing.
+  `ledger_unavailable` is a stale projection heartbeat (ADR-0066): the player was not blocked, the
+  ledger could not tell, so a provider retries the same key after recovery and it is decided then.
 - **The key is (`providerName`, `providerRefId`) plus a fingerprint.** The fingerprint is a hash of
   the whole request with amounts canonicalised, so `10` and `10.00` are one request. The same key
   and fingerprint answers `replayed` with the stored answer, balance included, even after the

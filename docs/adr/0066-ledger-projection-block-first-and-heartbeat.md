@@ -28,8 +28,9 @@ stakes once the beat is stale.
 The ledger stores it in `ledger_projection_heartbeat` at its own clock. When another service may write the
 projections, which the money service reads from its own `MONEY_PORTS_CALLERS` being set (ADR-0067),
 a stake (eligibility) and a deposit or wager (limits) refuse with `LedgerProjectionStaleError`
-(`ledger_projection_stale`: 503 on the deposit and casino start-round routes, a `player_blocked`
-refusal on the Ledger API and the sportsbook ledger) once the last beat is older than
+(`ledger_projection_stale`: 503 on the deposit and casino start-round routes, a `ledger_unavailable`
+refusal on the Ledger API, which is not stored on the idempotency key so a retry after recovery is
+decided again, and a `player_blocked` refusal on the sportsbook ledger) once the last beat is older than
 `LEDGER_PROJECTION_STALE_MS` (default 60000), or missing. Without `MONEY_PORTS_CALLERS` nothing is checked;
 with it set the check runs even for a writer in the same process. The age is read at the database
 clock, and so are a cooling-off end and a limit window, so a replica clock that drifts never moves a
