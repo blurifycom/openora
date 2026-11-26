@@ -22,7 +22,10 @@ export const RaceClosedError = makeConflictError(
   'a closed race cannot be edited - standings are already frozen',
 );
 
-function assertPositionsAffordable(prizePool: string, positions: readonly { prize: string }[]) {
+export function assertPositionsAffordable(
+  prizePool: string,
+  positions: readonly { prize: string }[],
+) {
   const sum = positions.reduce((total, entry) => moneyAdd(total, entry.prize), '0');
   if (moneyCompare(sum, prizePool) > 0) {
     throw new RacePositionsInvalidError('the prizes sum to more than the prize pool');

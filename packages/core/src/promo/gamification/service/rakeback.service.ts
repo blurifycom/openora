@@ -109,7 +109,7 @@ export function rankedRakeback({
 }
 
 /** A player with no rank earns `ratePercent` of the bet's theoretical GGR, its house edge; zero without a usable rtp. */
-function unrankedRakeback({
+export function unrankedRakeback({
   realAmount,
   rtp,
   ratePercent,
@@ -459,7 +459,7 @@ export class RakebackService implements WagerTrackingCommands {
   }
 }
 
-function streakRecord(
+export function streakRecord(
   rate: RakebackRate,
 ):
   | { streakMode: StreakRakebackMode; streakPercent: string }

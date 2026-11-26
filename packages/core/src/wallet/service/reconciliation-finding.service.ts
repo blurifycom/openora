@@ -304,7 +304,7 @@ async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFin
   return row;
 }
 
-function findingValues(input: ReconciliationFindingInput) {
+export function findingValues(input: ReconciliationFindingInput) {
   return {
     runId: input.runId,
     providerName: input.providerName,

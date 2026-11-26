@@ -39,7 +39,7 @@ const LADDER_LOCK_KEY = 'promo_rank_challenge_ladder';
  * The ladder has no row of its own to carry a version counter, so its version is a digest of
  * every tier's stored config: any edit, insert or removal changes it, a claim does not.
  */
-const ladderVersion = (rows: readonly object[]) =>
+export const ladderVersion = (rows: readonly object[]) =>
   createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 
 type UnnamedLadder = Omit<RankChallengeAdminLadder, 'tiers'> & {

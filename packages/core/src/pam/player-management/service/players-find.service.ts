@@ -19,7 +19,7 @@ const SORT_COLUMNS: Record<PlayersFindSortBy, SQL> = {
 };
 
 /** A KYC status filter that also matches the legacy `verified` rows an `approved` one means. */
-function kycStatusesMatching(statuses: readonly KycStatus[]): KycStatus[] {
+export function kycStatusesMatching(statuses: readonly KycStatus[]): KycStatus[] {
   const normalized = new Set(statuses.map(normalizeKycStatus));
   return normalized.has('approved') ? [...normalized, 'verified'] : [...normalized];
 }

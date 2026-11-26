@@ -16,7 +16,7 @@ export function isUniqueViolation(error: unknown, constraint: string): boolean {
   );
 }
 
-const generatedAdminUsername = () => `admin_${randomBytes(6).toString('hex')}`;
+export const generatedAdminUsername = () => `admin_${randomBytes(6).toString('hex')}`;
 
 /** Identity owns the `user` table, so sibling modules mutate it through this port. */
 export class DrizzleUserCommands implements UserCommands {

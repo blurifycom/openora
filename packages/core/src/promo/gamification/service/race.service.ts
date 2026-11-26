@@ -60,7 +60,7 @@ const INCOGNITO = 'Incognito';
  * response reflects masking itself rather than leaving it to be applied client-side. A fixed
  * suffix, so the mask never tells how long the hidden part is.
  */
-function maskUsername(name: string): string {
+export function maskUsername(name: string): string {
   return `${name.slice(0, Math.min(3, name.length - 1))}****`;
 }
 

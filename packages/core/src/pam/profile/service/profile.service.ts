@@ -80,7 +80,7 @@ const USERNAME_CHANGE_RATE_LIMIT = {
  * Dates go in as ISO strings: the audit hash is computed over this value but verified
  * against the jsonb read-back, where a raw `Date` would hash as `{}` and break the chain.
  */
-function pickFields<T extends object>(row: T, keys: readonly (keyof T)[]) {
+export function pickFields<T extends object>(row: T, keys: readonly (keyof T)[]) {
   return Object.fromEntries(
     keys.map((key) => {
       const value = row[key];
@@ -89,7 +89,7 @@ function pickFields<T extends object>(row: T, keys: readonly (keyof T)[]) {
   );
 }
 
-function pickChanged<T extends object>(row: T, candidate: Partial<T>): Partial<T> {
+export function pickChanged<T extends object>(row: T, candidate: Partial<T>): Partial<T> {
   const keys = Object.keys(candidate) as (keyof T)[];
   // Library boundary: `Object.fromEntries` widens the keys back to `string`.
   return Object.fromEntries(
@@ -99,7 +99,7 @@ function pickChanged<T extends object>(row: T, candidate: Partial<T>): Partial<T
   ) as Partial<T>;
 }
 
-function moderateBio(bio: string) {
+export function moderateBio(bio: string) {
   const result = moderateContent(bio);
   if (!result.ok) {
     throw new BioBlockedError();

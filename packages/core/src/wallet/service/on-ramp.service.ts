@@ -750,7 +750,7 @@ export class OnRampService {
   }
 }
 
-function webhookMismatch(
+export function webhookMismatch(
   order: WalletOnRampOrder,
   event: OnRampWebhookEvent,
 ): 'customer' | 'wallet' | null {
@@ -766,7 +766,7 @@ function webhookMismatch(
   return null;
 }
 
-function fillsDeliveryDetails(
+export function fillsDeliveryDetails(
   order: WalletOnRampOrder,
   next: Pick<OnRampWebhookEvent, (typeof DELIVERY_DETAILS)[number]>,
 ): boolean {
