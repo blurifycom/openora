@@ -101,6 +101,22 @@ async function bet(
   return { id: outcome.transactionId, round, refId };
 }
 
+const closeRound = (userId: string, round: string) =>
+  drizzle().transaction((tx) =>
+    commands().debit(tx, {
+      userId,
+      amount: '0',
+      type: 'loss',
+      currency: 'USD',
+      context: { provider: 'aggregator', product: 'casino' },
+      providerRef: {
+        providerName: 'aggregator',
+        providerRefId: `loss-${round}`,
+        externalRoundId: round,
+      },
+    }),
+  );
+
 const reverse = (
   userId: string,
   amount: string,
@@ -398,12 +414,14 @@ describe('a stake funded partly by a bonus', () => {
     const progressBefore = await progressOf(player.client);
 
     const bonusOnly = await bet(player.userId, '30');
+    await closeRound(player.userId, bonusOnly.round);
 
     expect(await ledgerRow(bonusOnly.id)).toMatchObject({ turnoverContribution: null });
     expectMoney(await progressOf(player.client), progressBefore, 'bonus-only stake');
     expectMoney(await grantProgress(), '30', 'grant progress after the bonus-only stake');
 
     const mixed = await bet(player.userId, '40');
+    await closeRound(player.userId, mixed.round);
 
     expectMoney(await grantProgress(), '70', 'grant progress after the mixed stake');
     expect(await ledgerRow(mixed.id)).toMatchObject({ turnoverState: 'counted' });

@@ -53,6 +53,22 @@ const stake = (
     }),
   );
 
+const closeRound = (userId: string, round: string) =>
+  drizzle().transaction((tx) =>
+    commands().debit(tx, {
+      userId,
+      amount: '0',
+      type: 'loss',
+      currency: 'USD',
+      context: { provider: 'aggregator', product: 'casino' },
+      providerRef: {
+        providerName: 'aggregator',
+        providerRefId: `loss-${round}`,
+        externalRoundId: round,
+      },
+    }),
+  );
+
 const reverse = (userId: string, amount: string, round: string, of: string, refId = randomUUID()) =>
   drizzle().transaction((tx) =>
     commands().credit(tx, {
@@ -565,8 +581,10 @@ describe('overlap with a bonus lock', () => {
     const grantId = await grant(userId, { amount: '50', linked: '50', multiplier: '5' });
     const before = await grantRow(grantId);
 
-    const outcome = await stake(userId, '20');
+    const round = randomUUID();
+    const outcome = await stake(userId, '20', { round });
     expect(outcome.ok).toBe(true);
+    await closeRound(userId, round);
 
     const after = await grantRow(grantId);
     const wagering = moneySubtractStr(after.wageringProgress, before.wageringProgress);
