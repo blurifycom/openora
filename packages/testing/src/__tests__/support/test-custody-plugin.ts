@@ -8,6 +8,7 @@ import {
   type PaymentAdapter,
   type PaymentWebhookEvent,
 } from '@openora/core/contracts';
+import { parseTestWebhook } from './payment-webhook-event.js';
 
 type SweepCall = { balance: CustodyBalance; idempotencyKey: string };
 
@@ -82,7 +83,7 @@ export default {
             return { address: `addr-${userId}-${currency}` };
           },
           parseWebhook(rawBody) {
-            return JSON.parse(rawBody) as PaymentWebhookEvent;
+            return parseTestWebhook(rawBody);
           },
           async listTransactions() {
             return vendor.transactions;

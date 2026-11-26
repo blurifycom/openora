@@ -301,22 +301,22 @@ describe('backlog', () => {
         eventId: randomUUID(),
         topic: 't',
         payload: {},
-        occurredAt: sql`now() - interval '5 minutes'` as unknown as Date,
+        occurredAt: sql`now() - interval '5 minutes'`,
       },
       {
         eventId: randomUUID(),
         topic: 't',
         payload: {},
-        occurredAt: sql`now() - interval '1 minute'` as unknown as Date,
-        claimedAt: sql`now()` as unknown as Date,
+        occurredAt: sql`now() - interval '1 minute'`,
+        claimedAt: sql`now()`,
       },
       {
         eventId: randomUUID(),
         topic: 't',
         payload: {},
-        occurredAt: sql`now() - interval '1 hour'` as unknown as Date,
-        claimedAt: sql`now()` as unknown as Date,
-        publishedAt: sql`now()` as unknown as Date,
+        occurredAt: sql`now() - interval '1 hour'`,
+        claimedAt: sql`now()`,
+        publishedAt: sql`now()`,
       },
     ]);
     const backlog = await eventOutboxBacklog(db);

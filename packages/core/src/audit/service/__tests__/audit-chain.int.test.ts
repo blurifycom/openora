@@ -53,8 +53,11 @@ const chainRows = (db: Db) => db.select().from(auditLog).orderBy(asc(auditLog.se
 
 const withTriggersOff = async (db: Db, fn: () => Promise<unknown>) => {
   await db.execute(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`);
-  await fn();
-  await db.execute(sql`ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_append_only`);
+  try {
+    await fn();
+  } finally {
+    await db.execute(sql`ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_append_only`);
+  }
 };
 
 const hashOf = (row: typeof auditLog.$inferSelect) =>

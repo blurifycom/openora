@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import {
-  PAYMENT_ADAPTER,
-  type PaymentAdapter,
-  type PaymentWebhookEvent,
-} from '@openora/core/contracts';
+import { PAYMENT_ADAPTER, type PaymentAdapter } from '@openora/core/contracts';
+import { parseTestWebhook } from './payment-webhook-event.js';
+
+type PayoutCall = { amount: string; currency: string; transactionId: string };
+
+const PAYOUT_STORE = Symbol.for('openora.testing.withdrawal-payouts');
+const holder = globalThis as typeof globalThis & { [PAYOUT_STORE]?: PayoutCall[] };
+const payouts = (holder[PAYOUT_STORE] ??= []);
+
+export const payoutsFor = (transactionId: string) =>
+  payouts.filter((call) => call.transactionId === transactionId);
 
 export const UNSUPPORTED_NETWORK = 'NOSUPPORT';
 export const PAYOUT_DECIMALS = 2;
@@ -20,7 +26,11 @@ export default {
           async processDeposit() {
             return { externalId: `test-${randomUUID()}`, status: 'completed' };
           },
-          async processWithdrawal() {
+          async processWithdrawal(amount, currency, metadata) {
+            const transactionId = metadata['transactionId'];
+            if (typeof transactionId === 'string') {
+              payouts.push({ amount, currency, transactionId });
+            }
             return { externalId: `test-${randomUUID()}`, status: 'completed' };
           },
           async issueDepositAddress(userId, currency) {
@@ -36,7 +46,7 @@ export default {
             return network !== UNSUPPORTED_NETWORK;
           },
           parseWebhook(rawBody) {
-            return JSON.parse(rawBody) as PaymentWebhookEvent;
+            return parseTestWebhook(rawBody);
           },
         }) satisfies PaymentAdapter,
     );

@@ -1,69 +1,79 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WalletCurrencyTotal, WalletReader } from '@openora/core/contracts';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDb, type TestDb } from '../../../testing/real-infra.js';
+import { seedCompletedDeposit } from '../../../testing/seed-wallet.js';
+import { WalletReaderService } from '@openora/core/wallet/seed';
+import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { KycWithdrawalGate } from '../../adapters/kyc-withdrawal-gate.js';
 import { migrate } from '../../migrate.js';
 import { globalKycConfig } from '../../schema/index.js';
 
 let testDb: TestDb;
+let walletlessDb: TestDb;
 
 beforeAll(async () => {
-  testDb = await createTestDb([migrate]);
+  testDb = await createTestDb([migrate, migrateWallet]);
+  walletlessDb = await createTestDb([migrate]);
 }, 120_000);
 
 beforeEach(async () => {
   await testDb.drizzle.db.delete(globalKycConfig);
 });
 
-afterAll(() => testDb.drop());
+afterAll(async () => {
+  await testDb.drop();
+  await walletlessDb.drop();
+});
 
-function walletReaderWith(deposits: () => Promise<WalletCurrencyTotal[]>) {
-  const getDepositsByCurrency = vi.fn(deposits);
-  const reader: Pick<WalletReader, 'getDepositsByCurrency'> = { getDepositsByCurrency };
-  return { reader: reader as WalletReader, getDepositsByCurrency };
-}
-
-function gateWith(deposits: () => Promise<WalletCurrencyTotal[]>) {
-  const wallet = walletReaderWith(deposits);
-  return { gate: new KycWithdrawalGate(testDb.drizzle, undefined, wallet.reader), wallet };
+function gateOver(source: TestDb) {
+  const reader = new WalletReaderService({ drizzle: source.drizzle, pivotCurrency: 'USD' });
+  return new KycWithdrawalGate(testDb.drizzle, undefined, reader);
 }
 
 describe('withdrawal policy evaluation', () => {
   it('requires KYC when the pivot amount is unknown', async () => {
-    const { gate, wallet } = gateWith(async () => []);
+    const userId = randomUUID();
+    await seedCompletedDeposit(testDb, userId, '1');
 
-    const required = await gate.requiresKycForWithdrawal({
-      userId: randomUUID(),
+    const required = await gateOver(testDb).requiresKycForWithdrawal({
+      userId,
       pivotAmount: null,
       pivotCurrency: 'USD',
     });
 
     expect(required).toBe(true);
-    expect(wallet.getDepositsByCurrency).not.toHaveBeenCalled();
   });
 
   it('uses the default threshold when no configuration row exists', async () => {
-    const userId = randomUUID();
-    const atThreshold = gateWith(async () => [{ currency: 'USD', total: '10000' }]);
-    const aboveThreshold = gateWith(async () => [{ currency: 'USD', total: '10000.01' }]);
-    const input = { userId, pivotAmount: '5000000', pivotCurrency: 'USD' };
+    const atThreshold = randomUUID();
+    const aboveThreshold = randomUUID();
+    await seedCompletedDeposit(testDb, atThreshold, '10000');
+    await seedCompletedDeposit(testDb, aboveThreshold, '10000.01');
+    const gate = gateOver(testDb);
 
-    expect(await atThreshold.gate.requiresKycForWithdrawal(input)).toBe(false);
-    expect(await aboveThreshold.gate.requiresKycForWithdrawal(input)).toBe(true);
+    expect(
+      await gate.requiresKycForWithdrawal({
+        userId: atThreshold,
+        pivotAmount: '5000000',
+        pivotCurrency: 'USD',
+      }),
+    ).toBe(false);
+    expect(
+      await gate.requiresKycForWithdrawal({
+        userId: aboveThreshold,
+        pivotAmount: '5000000',
+        pivotCurrency: 'USD',
+      }),
+    ).toBe(true);
   });
 
   it('rejects when the deposits read fails so the request is refused', async () => {
-    const { gate } = gateWith(async () => {
-      throw new Error('wallet read unavailable');
-    });
-
     await expect(
-      gate.requiresKycForWithdrawal({
+      gateOver(walletlessDb).requiresKycForWithdrawal({
         userId: randomUUID(),
         pivotAmount: '10',
         pivotCurrency: 'USD',
       }),
-    ).rejects.toThrow('wallet read unavailable');
+    ).rejects.toThrow();
   });
 });

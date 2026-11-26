@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, inArray } from 'drizzle-orm';
 import * as z from 'zod';
@@ -26,11 +27,18 @@ import {
   waitForCompleted,
   type WalletE2e,
 } from './support/wallet.js';
+import { payoutsFor } from './support/test-withdrawal-adapter-plugin.js';
 
 let e2e: WalletE2e;
 
 beforeAll(async () => {
-  e2e = await bootWalletE2e([autoWithdrawalPlugin]);
+  e2e = await bootWalletE2e([
+    autoWithdrawalPlugin,
+    {
+      id: 'testing-withdrawal-adapter',
+      path: fileURLToPath(new URL('./support/test-withdrawal-adapter-plugin.ts', import.meta.url)),
+    },
+  ]);
   const seeded = await e2e.admin.put('/wallet/auto-withdrawal-config', {
     fiatThreshold: '0',
     cryptoThreshold: '0',
@@ -222,9 +230,11 @@ describe('admin withdrawal queue decisions', () => {
     expect(second.status).toBe(409);
     expect(second.body).toEqual(expect.objectContaining({ code: 'CONFLICT' }));
     const after = await transactionById(e2e, id);
+    expect(paid?.providerRefId).toEqual(expect.stringMatching(/^test-/));
     expect(after).toEqual(
-      expect.objectContaining({ status: 'completed', providerRefId: paid!.providerRefId }),
+      expect.objectContaining({ status: 'completed', providerRefId: paid?.providerRefId }),
     );
+    expect(payoutsFor(id)).toHaveLength(1);
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(amountOf('90'));
   });
 
@@ -294,6 +304,7 @@ describe('admin withdrawal queue decisions', () => {
 
     expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
     expect((await transactionById(e2e, id))?.status).toBe('completed');
+    expect(payoutsFor(id)).toHaveLength(1);
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(amountOf('90'));
   });
 

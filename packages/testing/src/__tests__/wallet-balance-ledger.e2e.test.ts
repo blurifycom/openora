@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
+import * as z from 'zod';
 import { DRIZZLE } from '@openora/core/server';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import { ActiveCurrencySchema, WalletBalancesSchema } from '@openora/core/wallet/contract';
+import {
+  ActiveCurrencySchema,
+  AdminWalletTransactionSchema,
+  WalletBalancesSchema,
+  WalletTransactionSchema,
+} from '@openora/core/wallet/contract';
 import {
   balanceOf,
   bootWalletE2e,
@@ -21,6 +27,20 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(() => closeWalletE2e(e2e));
+
+const PlayerPageSchema = z.object({
+  items: z.array(WalletTransactionSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+});
+
+const AdminPageSchema = z.object({
+  items: z.array(AdminWalletTransactionSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+});
 
 const amountOf = (value: string) => `${value}.000000000000000000`;
 
@@ -56,13 +76,60 @@ describe('player balances and transaction history', () => {
   });
 
   it.todo('a player setting an active currency the operator does not offer is refused');
-  it.todo(
-    'a player listing transactions sees their own rows with the status and reference conversion and none of another player',
-  );
 
-  it.todo(
-    "an admin listing a player's transactions sees rows filtered by type, status and currency and paged with a matching total",
-  );
+  it('a player listing transactions sees their own rows with their status and none of another player', async () => {
+    const mine = await newFundedPlayer(e2e, '100');
+    const theirs = await newFundedPlayer(e2e, '40');
+    const withdrawalId = await requestWithdrawalId(mine.client, mine, { amount: '10' });
+
+    const res = await mine.client.get('/wallet/transactions?page=1&limit=50');
+
+    expect(res.status).toBe(200);
+    const page = PlayerPageSchema.parse(await res.json());
+    const ownRows = await ledgerOf(mine.userId);
+    const foreignIds = new Set((await ledgerOf(theirs.userId)).map((row) => row.id));
+    expect(page.items.map((item) => item.id).sort()).toEqual(ownRows.map((row) => row.id).sort());
+    expect(page.items.some((item) => foreignIds.has(item.id))).toBe(false);
+    expect(page.total).toBe(ownRows.length);
+    for (const item of page.items) {
+      expect(item.status).toBe(ownRows.find((row) => row.id === item.id)?.status);
+    }
+    expect(page.items.find((item) => item.id === withdrawalId)).toEqual(
+      expect.objectContaining({ type: 'withdrawal', amount: amountOf('10') }),
+    );
+  });
+
+  it("an admin listing a player's transactions sees rows filtered by type, status and currency and paged with a matching total", async () => {
+    const player = await newFundedPlayer(e2e, '100');
+    await requestWithdrawalId(player.client, player, { amount: '10' });
+    await requestWithdrawalId(player.client, player, { amount: '20' });
+    const base = `/wallet/transactions/${player.userId}`;
+    const list = async (query: string) => {
+      const res = await e2e.admin.get(`${base}?${query}`);
+      expect(res.status).toBe(200);
+      return AdminPageSchema.parse(await res.json());
+    };
+
+    const withdrawals = await list('types[0]=withdrawal');
+    const deposits = await list('types[0]=deposit&statuses[0]=completed');
+    const otherCurrency = await list('currencies[0]=NOPE');
+    const sameCurrency = await list(`currencies[0]=${player.currency}`);
+    const firstPage = await list('page=1&limit=2');
+    const secondPage = await list('page=2&limit=2');
+
+    expect(withdrawals.total).toBe(2);
+    expect(withdrawals.items.map((item) => item.type)).toEqual(['withdrawal', 'withdrawal']);
+    expect(deposits.total).toBe(1);
+    expect(deposits.items).toEqual([
+      expect.objectContaining({ type: 'deposit', status: 'completed', amount: amountOf('100') }),
+    ]);
+    expect(otherCurrency).toEqual(expect.objectContaining({ total: 0, items: [] }));
+    expect(sameCurrency.total).toBe(3);
+    expect([firstPage.total, secondPage.total]).toEqual([3, 3]);
+    expect([firstPage.items.length, secondPage.items.length]).toEqual([2, 1]);
+    const paged = [...firstPage.items, ...secondPage.items].map((item) => item.id);
+    expect(new Set(paged).size).toBe(3);
+  });
 
   it('an unauthenticated caller reading balances or transactions is refused with 401', async () => {
     const player = await newFundedPlayer(e2e, '100');

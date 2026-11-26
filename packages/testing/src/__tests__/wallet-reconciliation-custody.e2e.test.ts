@@ -253,7 +253,11 @@ describe('reconciliation and stuck withdrawals', () => {
       expect(parseFinding(first.body).status).toBe('resolved');
       const audit = await resolutionAudit(finding.id);
       expect(audit).toHaveLength(1);
-      expect(audit[0]!.after).toEqual(expect.objectContaining({ outcome: body.outcome }));
+      expect(audit).toEqual([
+        expect.objectContaining({
+          after: expect.objectContaining({ outcome: body.outcome }),
+        }),
+      ]);
     }
     expect(await balanceOf(e2e, credit.player.userId, credit.player.currency)).toBe(
       '5.000000000000000000',
@@ -264,8 +268,6 @@ describe('reconciliation and stuck withdrawals', () => {
     expect(await balanceOf(e2e, refund.player.userId, refund.player.currency)).toBe('0');
     expect(await balanceOf(e2e, dismiss.player.userId, dismiss.player.currency)).toBe('0');
   });
-
-  it.todo('resolving an already resolved finding is refused');
 
   it('a withdrawal stuck without a vendor result is detected and flagged for an admin', async () => {
     const player = await newFundedPlayer(e2e, '100');

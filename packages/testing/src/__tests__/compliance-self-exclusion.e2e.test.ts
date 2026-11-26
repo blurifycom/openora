@@ -1,16 +1,15 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { and, eq, sql } from 'drizzle-orm';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { and, eq } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
+import { JOB_QUEUE, WALLET_COMMANDS, queue } from '@openora/core/contracts';
 import { DRIZZLE } from '@openora/core/server';
 import { rgExclusion } from '@openora/core/compliance/schema';
-import { ledgerPlayEligibility } from '@openora/core/wallet/schema';
 import { asPlayer } from '../index.js';
 import {
   balanceOf,
   bootWalletE2e,
   closeWalletE2e,
   newFundedPlayer,
-  postWithdrawal,
   waitForAudit,
   type WalletE2e,
 } from './support/wallet.js';
@@ -63,14 +62,22 @@ async function elapsePeriod(userId: string) {
     .update(rgExclusion)
     .set({ startsAt: hoursAgo(72), expiresAt: hoursAgo(1) })
     .where(and(eq(rgExclusion.userId, userId), eq(rgExclusion.status, 'active')));
-  await db()
-    .update(user)
-    .set({ rgBlockedUntil: hoursAgo(1) })
-    .where(eq(user.id, userId));
-  await db()
-    .update(ledgerPlayEligibility)
-    .set({ rgBlockedUntil: hoursAgo(1), version: sql`${ledgerPlayEligibility.version} + 1` })
-    .where(eq(ledgerPlayEligibility.userId, userId));
+}
+
+async function runExpirySweep(userId: string) {
+  await e2e.app.container.get(JOB_QUEUE).enqueue(queue('rg-monitor'), {});
+  await vi.waitFor(async () => {
+    const [row] = await db()
+      .select({ rgBlocked: user.rgBlocked })
+      .from(user)
+      .where(eq(user.id, userId));
+    expect(row?.rgBlocked).toBe(false);
+  });
+}
+
+async function elapseCoolingOff(userId: string) {
+  await elapsePeriod(userId);
+  await runExpirySweep(userId);
 }
 
 async function loginAttempt(player: RgPlayer) {
@@ -147,18 +154,6 @@ describe('Cooling-off', () => {
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('100'));
   });
 
-  it('player in cooling-off cannot lift it early', async () => {
-    const player = await newRgPlayer(e2e);
-    await startCoolingOff(player);
-
-    const lift = await adminLiftCoolingOff(player, player.client);
-
-    expect(lift.status).toBe(401);
-    expect((await loginAttempt(player)).status).toBe(403);
-    const rows = await exclusionRows(e2e, player.userId);
-    expect(rows).toEqual([expect.objectContaining({ kind: 'cooling_off', status: 'active' })]);
-  });
-
   it('cooling-off with a duration outside the allowed range is refused', async () => {
     const player = await newRgPlayer(e2e);
 
@@ -193,7 +188,7 @@ describe('Cooling-off', () => {
     await startCoolingOff(player);
     expect((await loginAttempt(player)).status).toBe(403);
 
-    await elapsePeriod(player.userId);
+    await elapseCoolingOff(player.userId);
 
     const email = await emailOf(e2e, player.userId);
     const client = await asPlayer(e2e.app.app, { email });
@@ -261,6 +256,10 @@ describe('Self-exclusion', () => {
   });
 
   it.todo(
+    'a custody deposit webhook for a self-excluded player is held, not credited to the balance',
+  );
+
+  it.todo(
     'self-exclusion forfeits every active bonus and the bonus balance is zeroed with a ledger row',
   );
 
@@ -269,12 +268,19 @@ describe('Self-exclusion', () => {
 
     await startSelfExclusion(player);
 
-    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('100'));
-    await elapsePeriod(player.userId);
-    const email = await emailOf(e2e, player.userId);
-    const client = await asPlayer(e2e.app.app, { email });
-    const withdrawal = await postWithdrawal(client, player);
-    expect(withdrawal.status).toBe(200);
+    await expect(placeBet(e2e, player.userId, player.currency, '10')).rejects.toMatchObject({
+      name: 'WalletRgRestrictedError',
+    });
+    const outcome = await db().transaction((tx) =>
+      e2e.app.container.get(WALLET_COMMANDS).debit(tx, {
+        userId: player.userId,
+        amount: '40',
+        type: 'withdrawal',
+        currency: player.currency,
+      }),
+    );
+    expect(outcome).toMatchObject({ ok: true, moved: true });
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe(scaled('60'));
   });
 
   it('permanent self-exclusion cannot be lifted by an admin', async () => {

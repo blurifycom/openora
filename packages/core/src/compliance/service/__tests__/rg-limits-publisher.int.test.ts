@@ -10,14 +10,15 @@ import { RgLimitsPublisher, backfillRgLimits } from '../rg-limits-publisher.serv
 
 type Executor = { execute(query: SQL): Promise<{ rows: unknown[] }> };
 
+function isExecutor(tx: unknown): tx is Executor {
+  return (
+    typeof tx === 'object' && tx !== null && 'execute' in tx && typeof tx.execute === 'function'
+  );
+}
+
 function executorOf(tx: unknown): Executor {
-  if (
-    typeof tx === 'object' &&
-    tx !== null &&
-    'execute' in tx &&
-    typeof tx.execute === 'function'
-  ) {
-    return tx as Executor;
+  if (isExecutor(tx)) {
+    return tx;
   }
   throw new Error('not a transaction');
 }

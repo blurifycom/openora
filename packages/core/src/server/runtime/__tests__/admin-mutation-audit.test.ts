@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { os } from '@orpc/server';
 import { describe, expect, it } from 'vitest';
 import type { AuditWritePort } from '@openora/core/contracts';
 import { setErrorReporter } from '../../kernel/error-reporter.js';
@@ -26,9 +27,13 @@ function recordingWriter(options: { failing?: boolean } = {}) {
   return { writer, entries };
 }
 
+const approveProcedure = os
+  .route({ method: 'POST', path: '/wallet/approve-withdrawal' })
+  .handler(() => 'approved');
+
 function adminCall(output: unknown): Call {
   return {
-    procedure: { '~orpc': { route: { method: 'POST' } } } as unknown as Call['procedure'],
+    procedure: approveProcedure,
     path: ['wallet', 'approveWithdrawal'],
     input: { id: randomUUID() },
     next: async () => output,
