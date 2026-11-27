@@ -355,7 +355,11 @@ export class RakebackClaimService {
       paid.push({ currency, amount, transactionId: credited.transactionId });
     }
     await this.deps.audit.recordInTransaction(tx, {
-      actorId: outcome === 'claimed' ? userId : null,
+      // No player profile: keep the user id so a player entry always has an actor.
+      actorId:
+        outcome === 'claimed'
+          ? ((await this.deps.identity.getPlayerIdByUserId(userId, tx)) ?? userId)
+          : null,
       actorType: outcome === 'claimed' ? 'player' : 'system',
       action: outcome === 'claimed' ? 'promo.rakeback.claimed' : 'promo.rakeback.auto_paid',
       resourceType: 'promo_rakeback_claim',
