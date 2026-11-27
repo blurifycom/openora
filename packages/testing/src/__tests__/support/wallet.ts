@@ -37,9 +37,9 @@ import {
 
 const pluginPath = (file: string) => fileURLToPath(new URL(file, import.meta.url));
 
-export const NETWORK = 'TESTCHAIN';
+const NETWORK = 'TESTCHAIN';
 const MIN_DEPOSIT = '10';
-export const RATE = '1.5';
+const RATE = '1.5';
 
 export type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
 export type DepositStatusEvent = Extract<PaymentWebhookEvent, { kind: 'deposit_status' }>;
@@ -106,7 +106,7 @@ export const walletFindingsOfRun = ({ app }: WalletE2e, runId: string) =>
 const uniqueCurrency = () =>
   Array.from(randomBytes(8), (byte) => String.fromCharCode(65 + (byte % 26))).join('');
 
-export async function addAsset(
+async function addAsset(
   admin: TestClient,
   currency: string,
   network: string,
@@ -223,20 +223,6 @@ export async function balanceOf({ app }: WalletE2e, userId: string, currency: st
   return row?.amount ?? '0';
 }
 
-export const ledgerRows = ({ app }: WalletE2e, externalId: string) =>
-  app.container
-    .get(DRIZZLE)
-    .db.select()
-    .from(walletTransaction)
-    .where(eq(walletTransaction.providerRefId, externalId));
-
-export const findingsFor = ({ app }: WalletE2e, externalId: string) =>
-  app.container
-    .get(DRIZZLE)
-    .db.select()
-    .from(walletReconciliationFinding)
-    .where(eq(walletReconciliationFinding.externalId, externalId));
-
 export async function resolveFinding(
   client: TestClient,
   findingId: string,
@@ -248,7 +234,7 @@ export async function resolveFinding(
 
 export const parseFinding = (body: unknown) => WalletReconciliationFindingSchema.parse(body);
 
-export async function saveMaturedWithdrawalAddress(
+async function saveMaturedWithdrawalAddress(
   { app }: WalletE2e,
   player: { client: TestClient; userId: string },
   currency: string,
