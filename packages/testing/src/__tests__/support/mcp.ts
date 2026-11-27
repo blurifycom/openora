@@ -6,7 +6,7 @@ import { bootE2e, closeE2e, newStaff, type E2e, type NamedAccount } from '../../
 
 import { MCP_TEST_HOST } from './test-mcp-plugin.js';
 
-export const MCP_PASSWORD = 'password1234';
+const MCP_PASSWORD = 'password1234';
 
 const mcpPlugin = {
   id: 'testing-mcp',
@@ -18,14 +18,14 @@ export const bootMcpE2e = async () =>
 
 export { closeE2e };
 
-export const IssuedTokenSchema = z.object({
+const IssuedTokenSchema = z.object({
   id: z.string(),
   token: z.string(),
   tokenPrefix: z.string(),
   adminUserId: z.string(),
   status: z.string(),
-  createdAt: z.string(),
-  expiresAt: z.string(),
+  createdAt: z.coerce.date(),
+  expiresAt: z.coerce.date(),
 });
 
 export const JsonRpcSchema = z.object({
@@ -102,7 +102,7 @@ export async function mcpCall(e2e: E2e, options: McpCallOptions = {}) {
   return { res, status: res.status, body: parsed };
 }
 
-export const toolsList = () => ({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+const toolsList = () => ({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
 
 export const toolsCall = (name: string, args: Record<string, unknown> = {}) => ({
   jsonrpc: '2.0',
