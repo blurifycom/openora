@@ -202,7 +202,7 @@ const changedAtOf = (after: Record<string, unknown> | null) => {
 const emailOf = (side: Record<string, unknown> | null) =>
   typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
 
-export const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
+const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
   const changedAt = changedAtOf(after);
   return {
     before: emailOf(before),

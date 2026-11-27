@@ -77,7 +77,11 @@ describe('toDateKey', () => {
   it('is the UTC calendar day for any instant in the supported years', () => {
     fc.assert(
       fc.property(
-        fc.date({ min: new Date('1970-01-01T00:00:00Z'), max: new Date('9999-12-31T23:59:59Z') }),
+        fc.date({
+          noInvalidDate: true,
+          min: new Date('1970-01-01T00:00:00Z'),
+          max: new Date('9999-12-31T23:59:59Z'),
+        }),
         (date) => {
           const key = toDateKey(date);
           expect(key).toMatch(/^\d{4}-\d{2}-\d{2}$/);

@@ -38,7 +38,7 @@ function byCurrency(rows: readonly MoneyByCurrency[]): Map<string, string> {
 }
 
 /** One row per currency of a financial summary, rails folded together. */
-export function totalsPerCurrency(summary: FinancialSummary): FinancialCurrencyTotals[] {
+function totalsPerCurrency(summary: FinancialSummary): FinancialCurrencyTotals[] {
   const deposits = sumByCurrency(summary.deposits);
   const withdrawals = sumByCurrency(summary.withdrawals);
   const netDeposits = byCurrency(summary.netDeposits);

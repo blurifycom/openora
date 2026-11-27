@@ -141,10 +141,7 @@ const countryRuleDeniesAccess = and(
   ),
 );
 
-export function hasCountryRuleChanges(
-  before: typeof countryRule.$inferSelect,
-  next: CountryRuleSettings,
-) {
+function hasCountryRuleChanges(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
   return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== next[field]);
 }
 
@@ -179,11 +176,11 @@ function countryRuleFieldValue(
   return field === 'blacklisted' ? row.action === 'block' : row[field];
 }
 
-export function moneyEqualsOrBothNull(a: string | null, b: string | null) {
+function moneyEqualsOrBothNull(a: string | null, b: string | null) {
   return a === null || b === null ? a === b : moneyEquals(a, b);
 }
 
-export function hasExpectedVersion(actual: Date | null, expected: string | null) {
+function hasExpectedVersion(actual: Date | null, expected: string | null) {
   return (actual ? actual.toISOString() : null) === expected;
 }
 
