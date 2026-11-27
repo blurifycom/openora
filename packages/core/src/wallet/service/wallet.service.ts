@@ -1524,10 +1524,33 @@ export class WalletService {
 
   // `kyc.gateWithdrawals` is the operator's master switch; once on, the compliance policy
   // decides per withdrawal. Runs before any debit, so a refused withdrawal moves no funds.
-  private async assertKycForWithdrawal(userId: User['id'], amount: string, currency: string) {
-    if (await this.kycBlocksWithdrawal(userId, amount, currency)) {
-      throw new KycRequiredError();
+  private async assertKycForWithdrawal(
+    userId: User['id'],
+    { amount, currency }: Pick<WalletTransaction, 'amount' | 'currency'>,
+    meta: ClientMeta,
+  ) {
+    if (!(await this.kycBlocksWithdrawal(userId, amount, currency))) {
+      return;
     }
+
+    // Best-effort on purpose: the refusal is already decided and moves no funds, so a failed
+    // audit write must not turn the player's 409 into a 5xx. The error log keeps the trail.
+    try {
+      const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+      await this.audit.record({
+        actorType: 'player',
+        actorId: userId,
+        action: 'wallet.withdrawal.kyc_required',
+        resourceType: playerId ? 'player' : 'user',
+        resourceId: playerId ?? userId,
+        result: 'failure',
+        after: { amount, currency },
+        ...meta,
+      });
+    } catch (err) {
+      logger.error({ err, userId }, 'KYC withdrawal refusal audit write failed');
+    }
+    throw new KycRequiredError();
   }
 
   private async kycBlocksWithdrawal(
@@ -2359,7 +2382,7 @@ export class WalletService {
     // client cannot probe the PIN through the errors of a request that was never going to pass.
     await this.assertWithdrawalPin(userId, withdrawalPin, { ip, userAgent });
     await this.assertWithdrawalsNotLocked(userId);
-    await this.assertKycForWithdrawal(userId, amount, currency);
+    await this.assertKycForWithdrawal(userId, { amount, currency }, { ip, userAgent });
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
