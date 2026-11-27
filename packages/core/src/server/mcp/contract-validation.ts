@@ -199,7 +199,7 @@ function distinctByRejection(contract: ActionTypeContract): Rejection | null {
   return null;
 }
 
-function idRejection(id: unknown, pattern: RegExp, example: string): Rejection | null {
+export function idRejection(id: unknown, pattern: RegExp, example: string): Rejection | null {
   if (typeof id === 'string' && id.length <= MAX_ID_LENGTH && pattern.test(id)) {
     return null;
   }
@@ -238,7 +238,7 @@ function modelNameRejection(id: string, tools: McpRegistrations['tools']): Rejec
   };
 }
 
-function isText(value: unknown, maxLength: number): boolean {
+export function isText(value: unknown, maxLength: number): boolean {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength;
 }
 
@@ -278,7 +278,7 @@ function toolClassRejection(toolClass: unknown): Rejection | null {
   };
 }
 
-function reversibleRejection(reversible: unknown): Rejection | null {
+export function reversibleRejection(reversible: unknown): Rejection | null {
   if (typeof reversible === 'boolean') {
     return null;
   }

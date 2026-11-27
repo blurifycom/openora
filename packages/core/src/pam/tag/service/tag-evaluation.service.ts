@@ -37,7 +37,7 @@ const logger = createLogger('pam-tag-evaluation');
 type TagHolder = Awaited<ReturnType<TagService['listActiveHoldersByTagKey']>>[number];
 type LastDepositAts = NonNullable<WalletReader['getLastDepositAts']>;
 
-function isPendingKycStatus(status: KycStatus): boolean {
+export function isPendingKycStatus(status: KycStatus): boolean {
   return status === 'pending' || status === 'resubmission_requested';
 }
 

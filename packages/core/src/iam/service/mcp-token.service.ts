@@ -170,7 +170,7 @@ function toMcpTokenDto(row: McpToken, now: Date) {
   return { ...serializeRow(token, { dateFields: DATE_FIELDS }), status: mcpTokenStatus(row, now) };
 }
 
-function reauthenticationRefusal(
+export function reauthenticationRefusal(
   verdict: Exclude<FreshReauthenticationVerdict, { status: 'ok' }>,
 ): Error {
   switch (verdict.status) {
@@ -198,7 +198,7 @@ function sqlState(err: unknown) {
 }
 
 /** What a failed issuance may log: a query error's message and cause carry the token hash. */
-function failureSignature(err: unknown) {
+export function failureSignature(err: unknown) {
   if (!(err instanceof Error)) {
     return { name: typeof err, code: null };
   }

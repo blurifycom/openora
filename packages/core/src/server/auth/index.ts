@@ -22,6 +22,8 @@ export {
   PERMISSION_LEVELS,
   SUPPORTED_LEVELS,
   readActions,
+  readActionsOf,
+  actionsOf,
   levelRank,
   isLevelSufficient,
   levelToActions,

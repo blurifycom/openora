@@ -1,4 +1,4 @@
-import { moneyCompare } from '@openora/core/server';
+import { moneyMax } from '@openora/core/server';
 import type { StreakRakebackMilestone } from '../contract/index.js';
 
 export const DAY_MS = 86_400_000;
@@ -12,8 +12,7 @@ export const yesterdayOf = (now: Date) => isoDate(new Date(now.getTime() - DAY_M
  * resets a broken one, but it runs after midnight, so a reader must not wait for it.
  */
 export const isStreakLive = (lastQualifyingDay: string | null, now: Date) =>
-  lastQualifyingDay !== null &&
-  (lastQualifyingDay === isoDate(now) || lastQualifyingDay === yesterdayOf(now));
+  lastQualifyingDay === isoDate(now) || lastQualifyingDay === yesterdayOf(now);
 
 export type StreakRate = Pick<
   StreakRakebackMilestone,
@@ -39,14 +38,14 @@ export function activeRakebackRate(
               rankedUpliftPercent: milestone.rankedUpliftPercent,
             }
           : {
-              unrankedRatePercent:
-                moneyCompare(milestone.unrankedRatePercent, best.unrankedRatePercent) > 0
-                  ? milestone.unrankedRatePercent
-                  : best.unrankedRatePercent,
-              rankedUpliftPercent:
-                moneyCompare(milestone.rankedUpliftPercent, best.rankedUpliftPercent) > 0
-                  ? milestone.rankedUpliftPercent
-                  : best.rankedUpliftPercent,
+              unrankedRatePercent: moneyMax(
+                best.unrankedRatePercent,
+                milestone.unrankedRatePercent,
+              ),
+              rankedUpliftPercent: moneyMax(
+                best.rankedUpliftPercent,
+                milestone.rankedUpliftPercent,
+              ),
             },
       null,
     );

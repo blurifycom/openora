@@ -21,7 +21,7 @@ import {
 // only the browser. Cookie value is `<identifier>.<signature>`.
 const PENDING_2FA_IDENTIFIER_PREFIX = '2fa-';
 
-function pendingIdentifier(cookieValue: string | undefined): string | undefined {
+export function pendingIdentifier(cookieValue: string | undefined): string | undefined {
   if (!cookieValue) {
     return undefined;
   }

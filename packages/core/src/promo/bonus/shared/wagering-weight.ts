@@ -42,9 +42,6 @@ export function resolveContributionPercent(
   }
   for (const level of resolutionOrder) {
     const ref = level.scope === 'default' ? null : level.ref(context);
-    if (level.scope !== 'default' && ref === undefined) {
-      continue;
-    }
     const match = rows.find((r) => r.scope === level.scope && r.scopeRef === ref);
     if (match) {
       return match.contributionPercent;

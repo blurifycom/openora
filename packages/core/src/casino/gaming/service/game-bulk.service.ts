@@ -47,11 +47,11 @@ class ScopeChangedDuringLockError extends Error {}
 const MAX_SCOPE_ATTEMPTS = 5;
 
 // Postgres returns uuids lowercase; an uppercase input id would never match its row.
-function dedupe(ids: readonly string[] | undefined): string[] {
+export function dedupe(ids: readonly string[] | undefined): string[] {
   return ids ? [...new Set(ids.map((id) => id.toLowerCase()))] : [];
 }
 
-function sortIds(ids: readonly string[]): string[] {
+export function sortIds(ids: readonly string[]): string[] {
   return [...ids].sort();
 }
 
@@ -625,7 +625,7 @@ async function unplayableAmong(tx: DrizzleTx, condition: SQL | undefined) {
   return sortIds(rows.map((row) => row.id));
 }
 
-function groupIdsByStatus(
+export function groupIdsByStatus(
   rows: readonly { id: string; reviewStatus: GameReviewStatus }[],
   keep: ReadonlySet<string>,
 ) {
@@ -640,7 +640,7 @@ function groupIdsByStatus(
   return [...grouped].map(([status, ids]) => [status, sortIds(ids)] as const);
 }
 
-function groupAddedLinks<K extends string>(
+export function groupAddedLinks<K extends string>(
   rows: Array<{ game_id: string } & Record<string, string>>,
   linkColumn: string,
   linkKey: K,

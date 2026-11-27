@@ -76,7 +76,7 @@ const CONFIG_COLUMNS = {
 
 const dedupe = <T>(list: readonly T[] | undefined) => (list ? [...new Set(list)] : undefined);
 
-function assertKnownTiers(known: ReadonlySet<string>, tiers: readonly SubmittedRankTier[]) {
+export function assertKnownTiers(known: ReadonlySet<string>, tiers: readonly SubmittedRankTier[]) {
   const unknown = tiers.flatMap((tier) =>
     tier.id !== undefined && !known.has(tier.id) ? [tier.id] : [],
   );
@@ -85,7 +85,7 @@ function assertKnownTiers(known: ReadonlySet<string>, tiers: readonly SubmittedR
   }
 }
 
-function assertLadderHolds(tiers: readonly { wagerThreshold: string }[]) {
+export function assertLadderHolds(tiers: readonly { wagerThreshold: string }[]) {
   const [lowest, ...rest] = tiers;
   if (!lowest) {
     throw new RankLadderInvalidError('a ladder holds at least one tier');

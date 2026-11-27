@@ -8,13 +8,13 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
 
 - **A new or changed route** -> one E2E in `packages/testing/src/__tests__/<flow>.e2e.test.ts` through `bootTestApp`: the real Hono + oRPC app against real Postgres, vendors doubled at the port. Cover the happy path and one hostile path (unauthorized, wrong owner, repeated call on a money path). This is the acceptance artifact for the route; the review's request trace reads it as proof.
 - **A service or query that touches the database** -> `<name>.int.test.ts` against `createTestDb`. Only when the behaviour is not reachable through a route.
-- **A pure function** - parser, resolver, mapper, money calculation -> co-located `<name>.test.ts`. Small and complete: every branch.
+- **A pure function** - parser, resolver, mapper, money calculation -> co-located `<name>.unit.test.ts`. Small and complete: every branch.
 - **Never** an in-process test that mocks the database, a repository, or a sibling service. It proves a call order, not a result, and it is the test class a reviewer deletes.
 
 ## Tiers
 
-- **Co-locate as `__tests__/<name>.test.ts` (Vitest).**
-- **A file that calls `createTestDb`/`createTestRedis` is named `<name>.int.test.ts`** and runs in `test:integration` (needs docker Postgres + Redis); `test:unit` is the infra-free suite and stays a ~4s loop. Lint-enforced by `oss-module-shape/int-test-file-naming`.
+- **Co-locate as `__tests__/<name>.<tier>.test.ts` (Vitest)**, tier one of `unit`, `int`, `e2e`. Each tier's Vitest config picks up only its own suffix, and `oss-module-shape/layer-file-naming` refuses a `__tests__/` file without one.
+- **A file that calls `createTestDb`/`createTestRedis` is named `<name>.int.test.ts`** (or `.e2e.test.ts` in `@openora/testing`) and runs in `test:integration` (needs docker Postgres + Redis); `test:unit` is the infra-free suite and stays a ~4s loop. Lint-enforced by `oss-module-shape/int-test-file-naming`.
 - **Name a test for the behaviour it verifies, never a client ticket id.** openora is public; a downstream client's Jira key does not belong in a file name, comment, or `describe()`/`it()` title. Enforced by `pnpm check:hygiene` (`tools/lint/verify-oss-hygiene.ts`).
 - The end-to-end tier lives in `@openora/testing` (`bootTestApp` against a shared test db). Recreate that db with `pnpm db:setup:test:fresh` if a migration was edited after it was applied locally - drizzle hashes each migration file's bytes, so a stale hash re-runs an applied migration.
 - Integration Vitest configs using `@openora/testing` run with `poolOptions.threads.singleThread = true`: the harness shares one test database. Build before `pnpm test:integration`, because extension loading resolves compiled plugins.

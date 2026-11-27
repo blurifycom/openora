@@ -33,7 +33,7 @@
     "build": "tsc",
     "check:types": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

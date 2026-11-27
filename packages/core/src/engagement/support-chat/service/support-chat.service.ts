@@ -65,7 +65,10 @@ type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'sy
 
 // A self-exclusion does not move `player.status`, so it is folded in here; a suspended or
 // closed account keeps its own status.
-function accountStatusOf({ playerStatus, isSelfExcluded }: SupportCustomerReading): PlayerStatus {
+export function accountStatusOf({
+  playerStatus,
+  isSelfExcluded,
+}: SupportCustomerReading): PlayerStatus {
   if (playerStatus === 'suspended' || playerStatus === 'closed') {
     return playerStatus;
   }

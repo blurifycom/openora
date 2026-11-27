@@ -9,14 +9,14 @@ import type { User, UserCommands } from '@openora/core/contracts';
 import { account, user } from '../schema/index.js';
 import type { PlayEligibilityPublisher } from './play-eligibility.service.js';
 
-function isUniqueViolation(error: unknown, constraint: string): boolean {
+export function isUniqueViolation(error: unknown, constraint: string): boolean {
   const cause = error instanceof DatabaseError ? error : (error as Error)?.cause;
   return (
     cause instanceof DatabaseError && cause.code === '23505' && cause.constraint === constraint
   );
 }
 
-const generatedAdminUsername = () => `admin_${randomBytes(6).toString('hex')}`;
+export const generatedAdminUsername = () => `admin_${randomBytes(6).toString('hex')}`;
 
 /** Identity owns the `user` table, so sibling modules mutate it through this port. */
 export class DrizzleUserCommands implements UserCommands {

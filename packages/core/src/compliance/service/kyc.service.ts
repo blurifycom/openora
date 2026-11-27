@@ -108,7 +108,7 @@ const KycReferenceTierMismatchError = createDomainError<[referenceId: string]>(
     `webhook-supplied tier and resolveDecision-supplied tier disagree for referenceId ${referenceId}`,
 );
 
-export function mapVendorStatus(vendor: KycVendorStatus) {
+function mapVendorStatus(vendor: KycVendorStatus) {
   switch (vendor) {
     case 'approved':
       return 'approved';
@@ -147,7 +147,7 @@ const HIGH_RISK_SIGNAL_KEYS = [
   'highRiskCountryDetected',
 ] as const satisfies ReadonlyArray<keyof KycRiskSignals>;
 
-export function warrantsHighRiskTag(signals: KycRiskSignals): boolean {
+function warrantsHighRiskTag(signals: KycRiskSignals): boolean {
   return HIGH_RISK_SIGNAL_KEYS.some((key) => signals[key]);
 }
 

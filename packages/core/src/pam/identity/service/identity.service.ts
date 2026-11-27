@@ -161,7 +161,7 @@ function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-function toUser(u: BetterAuthUser) {
+export function toUser(u: BetterAuthUser) {
   const base = {
     id: u.id,
     email: u.email,
@@ -177,7 +177,7 @@ function toUser(u: BetterAuthUser) {
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
-function makeLoginRateLimitKey(email: string): `login:${string}` {
+export function makeLoginRateLimitKey(email: string): `login:${string}` {
   return `login:${email.toLowerCase()}`;
 }
 
@@ -473,7 +473,7 @@ type FakeLoginShadow = {
   lastFailedLoginAt: string | null;
 };
 
-function loginShadowKey(email: string): string {
+export function loginShadowKey(email: string): string {
   return `login-shadow:${email}`;
 }
 

@@ -559,7 +559,7 @@ export class OfferService {
   }
 }
 
-function assertCoherentTerms(terms: PromoOffer['terms']) {
+export function assertCoherentTerms(terms: PromoOffer['terms']) {
   const [issue] = maxBetTermsIssues(terms);
   if (issue !== undefined) {
     throw new InvalidOfferTermsError(issue);
@@ -598,7 +598,7 @@ function toPublicOffer(row: PromoOfferRow): PublicOffer {
 }
 
 /** The wire carries timestamps as strings; the column wants dates, and null is a real value. */
-function toPatch({ validFrom, validUntil, ...rest }: Partial<CreatePromoOfferInput>) {
+export function toPatch({ validFrom, validUntil, ...rest }: Partial<CreatePromoOfferInput>) {
   return {
     ...rest,
     ...(validFrom === undefined

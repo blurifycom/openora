@@ -44,6 +44,8 @@ const BUILT_IN_RESERVED_USERNAMES = [
  */
 function toWords(value: string) {
   return value
+    .normalize('NFKD')
+    .replace(/[\p{M}\p{Cf}]/gu, '')
     .toLowerCase()
     .split(/[^\p{L}]+/u)
     .filter(Boolean)
@@ -51,7 +53,7 @@ function toWords(value: string) {
 }
 
 /** A reserved entry matches as a whole word run, so `mod` blocks `mod_7` but not `modest`. */
-function isReserved(words: string, operatorReserved: readonly string[]) {
+export function isReserved(words: string, operatorReserved: readonly string[]) {
   const padded = ` ${words} `;
   return [...BUILT_IN_RESERVED_USERNAMES, ...operatorReserved]
     .map(toWords)

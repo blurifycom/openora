@@ -7,14 +7,14 @@ const DEFAULT_TRUSTED_PROXIES: readonly string[] = ['127.0.0.0/8', '::1/128'];
 
 export type TrustedProxies = { contains(address: string): boolean };
 
-function normalizeAddress(address: string): string {
+export function normalizeAddress(address: string): string {
   // Node reports an IPv4 peer on a dual-stack socket as `::ffff:a.b.c.d`.
   return address.startsWith('::ffff:') && isIP(address.slice(7)) === 4 ? address.slice(7) : address;
 }
 
 // Throws on an entry that is neither an IP nor a CIDR, so a typo in the list fails the boot
 // instead of silently trusting nobody (or everybody behind the proxy it meant to name).
-function parseTrustedProxies(entries: readonly string[]): TrustedProxies {
+export function parseTrustedProxies(entries: readonly string[]): TrustedProxies {
   const list = new BlockList();
   for (const raw of entries) {
     // Anchored so an empty suffix (`10.0.0.1/`) cannot slip through as `Number('') === 0` - a
@@ -75,7 +75,7 @@ function forwardedAddress(value: string): string | undefined {
 // the first entry that is not itself a trusted proxy: that is the client. Anything left of it
 // was written by the client and is ignored. A malformed entry ends the walk at the last hop
 // that could still be read, so garbage never becomes the address.
-function clientFromForwardedFor(
+export function clientFromForwardedFor(
   forwardedFor: string,
   peerAddress: string,
   trustedProxies: TrustedProxies,

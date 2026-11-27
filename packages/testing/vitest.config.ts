@@ -8,7 +8,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.{test,spec}.ts'],
+    include: ['src/**/*.e2e.test.ts'],
     exclude: ['dist/**', 'node_modules/**'],
     setupFiles: ['./vitest.setup.ts'],
     globalSetup: ['./src/global-setup.ts'],

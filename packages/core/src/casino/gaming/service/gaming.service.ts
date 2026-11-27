@@ -218,7 +218,7 @@ function toGameRound(record: typeof gameRound.$inferSelect) {
   return serializeRow(record, { dateFields: ['startedAt', 'endedAt'] });
 }
 
-function withInactive<T extends { total: number; active: number }>(counts: T) {
+export function withInactive<T extends { total: number; active: number }>(counts: T) {
   return { ...counts, inactive: counts.total - counts.active };
 }
 

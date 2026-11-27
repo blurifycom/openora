@@ -37,7 +37,7 @@ export class AccountManagerIneligibleError extends Error {
   }
 }
 
-function accountIneligibility(account: {
+export function accountIneligibility(account: {
   role: string;
   isActive: boolean;
 }): AccountManagerIneligibleReason | null {

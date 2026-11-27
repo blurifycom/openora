@@ -77,7 +77,7 @@ const toTaggedPlayer = (row: Awaited<ReturnType<typeof playersWithTags>>[number]
   accountManager: row.accountManager,
 });
 
-function toDateKey(d: Date): string {
+export function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 

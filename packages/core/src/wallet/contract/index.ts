@@ -149,11 +149,13 @@ export function isWalletAddressValidForNetwork(address: string, network: string)
   if (!pattern) {
     return address.length >= 8 && address.length <= 128;
   }
-  if (!pattern.test(address)) {
+  const lowered = address.toLowerCase();
+  const hrp = BECH32_HRPS_BY_NETWORK[key]?.find((prefix) => lowered.startsWith(`${prefix}1`));
+  const candidate = hrp !== undefined && address === address.toUpperCase() ? lowered : address;
+  if (!pattern.test(candidate)) {
     return false;
   }
-  const hrp = BECH32_HRPS_BY_NETWORK[key]?.find((prefix) => address.startsWith(`${prefix}1`));
-  return hrp === undefined || hasValidBech32Checksum(address, hrp);
+  return hrp === undefined || hasValidBech32Checksum(candidate, hrp);
 }
 
 export const WalletBalanceSchema = z.object({

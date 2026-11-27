@@ -122,8 +122,9 @@ export function isSignedBy(
   const given = Buffer.from(headers.signature, 'hex');
   const signed = { ...content, service: headers.service, timestamp: headers.timestamp };
   // Every secret is tried, so the time taken does not tell which one matched.
-  const matches = secrets.map((secret) =>
-    timingSafeEqual(given, Buffer.from(signInternalRequest(signed, secret), 'hex')),
-  );
+  const matches = secrets.map((secret) => {
+    const expected = Buffer.from(signInternalRequest(signed, secret), 'hex');
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
   return matches.includes(true);
 }

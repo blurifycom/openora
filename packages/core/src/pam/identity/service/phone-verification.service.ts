@@ -35,18 +35,18 @@ const REAUTH_TTL_MS = 5 * MINUTE_MS;
 const REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS, onUnavailable: 'deny' } as const;
 const VERIFY_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 
-function phoneVerificationCooldownError(retryAfterMs: number) {
+export function phoneVerificationCooldownError(retryAfterMs: number) {
   return new ORPCError('TOO_MANY_REQUESTS', {
     message: 'A code was already sent. Please wait before requesting another.',
     data: { retryAfterMs },
   });
 }
 
-function phoneVerificationInvalidError() {
+export function phoneVerificationInvalidError() {
   return new ORPCError('UNPROCESSABLE_CONTENT', { message: 'The code is invalid or expired.' });
 }
 
-function isPhoneNumberCollision(error: unknown): boolean {
+export function isPhoneNumberCollision(error: unknown): boolean {
   const cause = error instanceof DatabaseError ? error : (error as Error)?.cause;
   return (
     cause instanceof DatabaseError &&

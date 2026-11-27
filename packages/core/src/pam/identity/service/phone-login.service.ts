@@ -59,21 +59,21 @@ const FAKE_OTP_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type FakeOtpShadow = { createdAt: number; failedAttempts: number };
 
-function phoneOtpShadowKey(phone: string): string {
+export function phoneOtpShadowKey(phone: string): string {
   return `phone-otp-shadow:${phone}`;
 }
 
 const logger = createLogger('phone-otp-shadow');
 
 /** Resend requested before the 60s cooldown elapsed. */
-function OtpCooldownError(retryAfterMs: number) {
+export function OtpCooldownError(retryAfterMs: number) {
   return new ORPCError('TOO_MANY_REQUESTS', {
     message: 'A code was already sent. Please wait before requesting another.',
     data: { retryAfterMs },
   });
 }
 
-function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtpInvalidReason) {
+export function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtpInvalidReason) {
   return new ORPCError('UNPROCESSABLE_CONTENT', {
     message: reason === 'expired' ? 'The code has expired.' : 'The code is invalid.',
     data: { attemptsRemaining, reason: PhoneLoginOtpInvalidReasonSchema.enum[reason] },
@@ -81,7 +81,7 @@ function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtpInvalid
 }
 
 /** Max wrong attempts reached; the OTP session was invalidated - restart login. */
-function OtpCancelledError() {
+export function OtpCancelledError() {
   return new ORPCError('FORBIDDEN', {
     message: 'Too many incorrect attempts. Please request a new code.',
     data: { reason: PhoneLoginErrorReasonSchema.enum.otp_cancelled },

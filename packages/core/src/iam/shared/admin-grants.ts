@@ -28,7 +28,7 @@ type AssignedGrantRow = {
   level: PermissionLevel | null;
 };
 
-function grantsOf(rows: readonly AssignedGrantRow[]): AdminGrant[] {
+export function grantsOf(rows: readonly AssignedGrantRow[]): AdminGrant[] {
   if (rows.some((r) => r.isSuperAdmin)) {
     return allGrants();
   }

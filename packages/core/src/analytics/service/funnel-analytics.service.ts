@@ -15,7 +15,7 @@ function resolveFunnelRange(dateFrom?: string, dateTo?: string): { from: Date; t
   return { from, to };
 }
 
-function dropOffRate(previous: number, current: number): number {
+export function dropOffRate(previous: number, current: number): number {
   if (previous === 0) {
     return 0;
   }

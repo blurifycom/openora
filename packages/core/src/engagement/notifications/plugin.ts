@@ -80,7 +80,7 @@ type NotificationMapEntry = {
 
 // Drops null/undefined values (eg a nullable roomId) so `data` and `params` only ever carry
 // fields the source event actually had a value for; an all-null payload becomes `null`.
-function compactData(
+export function compactData(
   fields: Record<string, string | null | undefined>,
 ): Record<string, string> | null {
   const entries = Object.entries(fields).filter(

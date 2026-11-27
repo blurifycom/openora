@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { PlayerSchema, MoneyAmountSchema } from '@openora/core/contracts';
-import { moneyToNumber } from '@openora/core/server';
+import { moneyCompare, moneyDivide, moneyFloorToScale } from '@openora/core/server';
 
 const ReKycSnapshotSchema = PlayerSchema.pick({
   currency: true,
@@ -25,15 +25,10 @@ export type ReKycTrigger = {
 export class CumulativeDepositReKycTrigger implements ReKycTrigger {
   requiresReverify(player: ReKycPlayerSnapshot, thresholds: Record<string, string> | undefined) {
     const threshold = thresholds?.[player.currency];
-    if (threshold === undefined || moneyToNumber(threshold) <= 0) {
+    if (threshold === undefined || moneyCompare(threshold, '0') <= 0) {
       return false;
     }
-    // Band-crossing check is a decision, not a ledger write - moneyToNumber is the
-    // documented single conversion point.
-    const bandSize = moneyToNumber(threshold);
-    return (
-      Math.floor(moneyToNumber(player.totalDeposits) / bandSize) >
-      Math.floor(moneyToNumber(player.lastTriggeredDeposits) / bandSize)
-    );
+    const band = (amount: string) => moneyFloorToScale(moneyDivide(amount, threshold), 0);
+    return moneyCompare(band(player.totalDeposits), band(player.lastTriggeredDeposits)) > 0;
   }
 }

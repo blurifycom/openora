@@ -16,32 +16,38 @@ import type { Wallet, WalletJobRun, WalletReconciliationFinding } from '../schem
  *   an admin settled by hand with a manual credit to the same wallet (an `unknown_at_provider`
  *   finding resolved that way), which returns nothing because the manual credit row carries the
  *   money.
- * - swap_out: -amount from the request on; `failed` puts it back.
+ * - swap_out: -amount from the request on; `failed` puts it back, except one an admin settled by
+ *   hand with a manual credit (a `stuck_swap` finding resolved that way), for the same reason.
  * - anything else: only when `completed`, signed by `direction`, by `real_share` when set (a
  *   bonus-split bet, win or reversal moves the real balance by that part only) else `amount`.
  */
 const TERMINAL_STATUSES = sql.raw(`('completed', 'failed', 'rejected', 'cancelled', 'refunded')`);
 
+/** The provider a swap leg is filed under when the desk gave it none. */
+export const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
+
 /** Findings the platform files about its own ledger, not about a vendor's report. */
 export const LEDGER_FINDING_LABEL = 'ledger';
 
-// The finding of an `unknown_at_provider` withdrawal is filed under the withdrawal's provider and
-// reference, or its id when it had none yet (a reference may land after); resolving it overwrites
-// the finding's transaction id with the manual credit, so the key is the only link back to the
-// withdrawal.
-const settledByHand = sql`exists (
+// The finding of an `unknown_at_provider` withdrawal or a `stuck_swap` is filed under the held
+// row's provider and reference, or its id when it had none yet (a reference may land after);
+// resolving it overwrites the finding's transaction id with the manual credit, so the key is the
+// only link back to the held row.
+const settledByHand = (kind: 'unknown_at_provider' | 'stuck_swap', defaultProvider: string) =>
+  sql`exists (
   select 1 from wallet_reconciliation_finding f
   join wallet_transaction m on m.id = f.transaction_id
-  where f.kind = 'unknown_at_provider' and f.status = 'resolved' and m.type = 'manual_credit'
+  where f.kind = ${kind} and f.status = 'resolved' and m.type = 'manual_credit'
     and m.wallet_id = t.wallet_id
-    and f.provider_name = coalesce(t.provider_name, ${DEFAULT_PAYMENT_PROVIDER})
+    and f.provider_name = coalesce(t.provider_name, ${defaultProvider})
     and f.external_id in (t.provider_ref_id, t.id::text))`;
 
 const moves = sql`case
   when t.type = 'deposit' then t.status = 'completed'
   when t.type = 'withdrawal' then t.status not in ('failed', 'rejected', 'cancelled', 'refunded')
-    or ${settledByHand}
+    or ${settledByHand('unknown_at_provider', DEFAULT_PAYMENT_PROVIDER)}
   when t.type = 'swap_out' then t.status <> 'failed'
+    or ${settledByHand('stuck_swap', SWAP_DESK_PROVIDER_LABEL)}
   else t.status = 'completed'
 end`;
 
