@@ -36,6 +36,13 @@
       "when": 1789729729948,
       "tag": "0004_milky_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795783270715,
+      "tag": "0005_jazzy_proudstar",
+      "breakpoints": true
     }
   ]
 }

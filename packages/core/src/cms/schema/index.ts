@@ -62,6 +62,8 @@ export const bannerImage = pgTable(
     desktopImageUrl: text().notNull(),
     mobileImageUrl: text().notNull(),
     linkUrl: text(),
+    desktopImageSizeBytes: integer(),
+    mobileImageSizeBytes: integer(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
