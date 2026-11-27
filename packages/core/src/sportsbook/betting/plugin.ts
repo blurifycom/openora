@@ -147,7 +147,7 @@ export default {
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts,
     // and the services above need the wallet's and the provider's ports.
     ctx.mcp.tool(turnoverExposureTool, (c) => {
-      const turnover = new SportsbookTurnoverService(c.get(DRIZZLE));
+      const turnover = new SportsbookTurnoverService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => turnover.turnoverExposure(input);
     });
     ctx.mcp.tool(promotionReportTool, (c) => {
@@ -155,11 +155,11 @@ export default {
       return (input) => promotionReport(drizzle, input);
     });
     ctx.mcp.tool(debtsTool, (c) => {
-      const debts = new SportsbookDebtsSummaryService(c.get(DRIZZLE));
+      const debts = new SportsbookDebtsSummaryService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => debts.summary(input);
     });
     ctx.mcp.tool(betsFindTool, (c) => {
-      const bets = new BetsFindService(c.get(DRIZZLE));
+      const bets = new BetsFindService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => bets.find(input);
     });
 
@@ -230,18 +230,20 @@ export default {
       },
     });
 
-    ctx.routers.add('sportsbook', (c) => {
+    ctx.routers.add('sportsbook', (c, options) => {
       jobs = c.get(JOB_QUEUE);
-      void jobs
-        .schedule(
-          SPORTSBOOK_RECONCILE_QUEUE,
-          'sportsbook-reconcile.cron',
-          {},
-          {
-            cron: SPORTSBOOK_RECONCILE_CRON,
-          },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'sportsbook reconcile schedule failed'));
+      if (options?.mounted !== false) {
+        void jobs
+          .schedule(
+            SPORTSBOOK_RECONCILE_QUEUE,
+            'sportsbook-reconcile.cron',
+            {},
+            {
+              cron: SPORTSBOOK_RECONCILE_CRON,
+            },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'sportsbook reconcile schedule failed'));
+      }
       return createSportsbookRouter({ ...services(c), adminGuard: c.get(ADMIN_GUARD) });
     });
   },

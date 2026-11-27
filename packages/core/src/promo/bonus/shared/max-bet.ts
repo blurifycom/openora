@@ -1,4 +1,4 @@
-import { moneyCompare, moneyScaleBy } from '@openora/core/server';
+import { moneyCompare, moneyMax, moneyMin, moneyScaleBy } from '@openora/core/server';
 
 type MaxBetTerms = {
   maxBet?: string | null;
@@ -12,22 +12,12 @@ export function resolveMaxBet(grantedAmount: string, terms: MaxBetTerms): string
   if (maxBetRate === null || maxBetRate === undefined) {
     return terms.maxBet ?? null;
   }
-  let resolved = moneyScaleBy(grantedAmount, maxBetRate);
-  if (
-    maxBetFloor !== null &&
-    maxBetFloor !== undefined &&
-    moneyCompare(resolved, maxBetFloor) < 0
-  ) {
-    resolved = maxBetFloor;
-  }
-  if (
-    maxBetCeiling !== null &&
-    maxBetCeiling !== undefined &&
-    moneyCompare(resolved, maxBetCeiling) > 0
-  ) {
-    resolved = maxBetCeiling;
-  }
-  return resolved;
+  const rated = moneyScaleBy(grantedAmount, maxBetRate);
+  const floored =
+    maxBetFloor === null || maxBetFloor === undefined ? rated : moneyMax(rated, maxBetFloor);
+  return maxBetCeiling === null || maxBetCeiling === undefined
+    ? floored
+    : moneyMin(floored, maxBetCeiling);
 }
 
 /** The ways a terms object contradicts itself about its max bet; empty when it is coherent. */

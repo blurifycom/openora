@@ -30,21 +30,21 @@ const catalogGameColumns = {
   customThumbnailUrl: game.customThumbnailUrl,
 };
 
-function isUuid(id: string) {
+export function isUuid(id: string) {
   return UuidSchema.safeParse(id).success;
 }
 
 // Guards the offset: Postgres rejects a negative OFFSET, and a plugin calls the port
 // directly, with no PageQuerySchema in front of it.
-function isValidPage(page: number, limit: number) {
+export function isValidPage(page: number, limit: number) {
   return page >= 1 && limit >= 1;
 }
 
-function distinctUuids(ids: readonly string[]) {
+export function distinctUuids(ids: readonly string[]) {
   return [...new Set(ids)].filter(isUuid);
 }
 
-function inIdOrder<Value>(ids: readonly string[], valuesById: ReadonlyMap<string, Value>) {
+export function inIdOrder<Value>(ids: readonly string[], valuesById: ReadonlyMap<string, Value>) {
   return new Map(
     ids.flatMap((id) => {
       const value = valuesById.get(id);
@@ -53,7 +53,7 @@ function inIdOrder<Value>(ids: readonly string[], valuesById: ReadonlyMap<string
   );
 }
 
-function mapInIdOrder<Row extends { id: string }>(ids: readonly string[], rows: Row[]) {
+export function mapInIdOrder<Row extends { id: string }>(ids: readonly string[], rows: Row[]) {
   return inIdOrder(ids, new Map(rows.map((row) => [row.id, row])));
 }
 

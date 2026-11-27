@@ -2,9 +2,23 @@ import { DatabaseError } from 'pg';
 import { ConflictError, ValidationError } from './errors.classes.js';
 import { AppError } from './errors.base.js';
 
+function databaseErrorOf(err: unknown): DatabaseError | undefined {
+  const seen = new Set<unknown>();
+  let current = err;
+  while (current instanceof Error && !seen.has(current)) {
+    if (current instanceof DatabaseError) {
+      return current;
+    }
+    seen.add(current);
+    current = current.cause;
+  }
+  return undefined;
+}
+
 export function mapDbError(err: unknown): never {
-  if (err instanceof DatabaseError) {
-    switch (err.code) {
+  const dbError = databaseErrorOf(err);
+  if (dbError) {
+    switch (dbError.code) {
       case '23505':
         throw new ConflictError('Resource already exists');
 
@@ -19,7 +33,7 @@ export function mapDbError(err: unknown): never {
 
       default:
         throw new AppError('Database error', 'DB_ERROR', {
-          code: err.code,
+          code: dbError.code,
         });
     }
   }

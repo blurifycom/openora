@@ -1,7 +1,6 @@
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import { sumMoney, type DrizzleService } from '@openora/core/server';
-import { dayRangeInstants } from '@openora/core/contracts';
-import { player } from '@openora/core/pam/schema/profile';
+import { dayRangeInstants, playerIdsOfUsers, type IdentityReader } from '@openora/core/contracts';
 import {
   OpenBetStatusSchema,
   TURNOVER_EXPOSURE_MAX_CURRENCIES,
@@ -14,7 +13,10 @@ import { betTotals, openBet } from './bet-query.service.js';
 
 /** The operator's sportsbook turnover over a range and what its open bets stand to pay now. */
 export class SportsbookTurnoverService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly identity: IdentityReader,
+  ) {}
 
   async turnoverExposure(
     { currency, largestOpen, ...dates }: TurnoverExposureInput,
@@ -30,7 +32,7 @@ export class SportsbookTurnoverService {
       .select({
         currency: bet.currency,
         betId: sql<string>`${bet.id}`.as('bet_id'),
-        playerId: sql<string | null>`${player.id}`.as('player_id'),
+        userId: sql<string>`${bet.userId}`.as('user_id'),
         status: bet.status,
         stake: bet.stake,
         potentialPayout: bet.potentialPayout,
@@ -43,7 +45,6 @@ export class SportsbookTurnoverService {
         ),
       })
       .from(bet)
-      .leftJoin(player, eq(player.userId, bet.userId))
       .where(and(openBet, inCurrency))
       .as('ranked');
     const [rows, largest] = await Promise.all([
@@ -66,6 +67,10 @@ export class SportsbookTurnoverService {
             .where(lte(ranked.rank, largestOpen))
             .orderBy(asc(ranked.currency), asc(ranked.rank)),
     ]);
+    const playerIds = await playerIdsOfUsers(
+      this.identity,
+      largest.map((open) => open.userId),
+    );
     return {
       ...range,
       currencies: rows.slice(0, TURNOVER_EXPOSURE_MAX_CURRENCIES).map((row) => ({
@@ -74,7 +79,7 @@ export class SportsbookTurnoverService {
           .filter((open) => open.currency === row.currency)
           .map((open) => ({
             betId: open.betId,
-            playerId: open.playerId,
+            playerId: playerIds.get(open.userId) ?? null,
             status: OpenBetStatusSchema.parse(open.status),
             stake: open.stake,
             potentialPayout: open.potentialPayout,

@@ -23,11 +23,16 @@ import {
   deliverWebhook,
   newDepositScenario,
   requestDepositAddress,
+  startWalletJobRun,
+  waitForWalletJobRun,
+  walletFindingsOfRun,
   type DepositScenario,
   type WalletE2e,
 } from './support/wallet.js';
 import {
   SWAP_VENDOR_RATE,
+  SWAP_VENDOR_ASYNC_AMOUNT,
+  SWAP_VENDOR_REJECTED_AMOUNT,
   SWAP_VENDOR_SIGNATURE_HEADER,
   SWAP_VENDOR_UNSUPPORTED_CURRENCY,
   signSwapWebhook,
@@ -247,48 +252,76 @@ describe('player swap', () => {
     await expect.poll(() => balanceOf(e2e, from.userId, to)).toBe(money('6'));
   });
 
-  it('a failed swap returns the held amount once with a linked hold refund row, even when the failure is reported twice', async () => {
+  it('a swap rejected by the vendor returns the held amount with a linked credit', async () => {
+    const from = await fundedScenario('10');
+    const to = await targetCurrency();
+    const response = await from.client.post(
+      '/wallet/swap',
+      swapBody(from, to, SWAP_VENDOR_REJECTED_AMOUNT),
+    );
+    expect(response.status).toBe(200);
+    const result = SwapResultSchema.parse(await response.json());
+    expect(result).toMatchObject({ status: 'failed', toAmount: null });
+    const rows = await swapLegs(from.userId, from.currency);
+    expect(rows.filter((row) => row.type === 'hold_refund')).toEqual([
+      expect.objectContaining({
+        amount: money(SWAP_VENDOR_REJECTED_AMOUNT),
+        reversedTransactionId: result.transactionId,
+      }),
+    ]);
+    expect(await balanceOf(e2e, from.userId, from.currency)).toBe(money('10'));
+    expect(await balanceOf(e2e, from.userId, to)).toBe('0');
+  });
+
+  it('a failed swap webhook returns the original currency in one linked credit even when retried', async () => {
     const from = await fundedScenario('5');
     const to = await targetCurrency();
-    const started = await from.client.post('/wallet/swap', swapBody(from, to, '3'));
+    const started = await from.client.post(
+      '/wallet/swap',
+      swapBody(from, to, SWAP_VENDOR_ASYNC_AMOUNT),
+    );
     expect(started.status).toBe(200);
     const pending = SwapResultSchema.parse(await started.json());
-    const rawBody = JSON.stringify({
+    expect(pending.status).toBe('processing');
+    const body = JSON.stringify({
       kind: 'swap',
       externalId: pending.transactionId,
       status: 'failed',
     });
-    const fail = () =>
+    const notify = () =>
       e2e.app.app.request('/wallet/swap/webhook', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          [SWAP_VENDOR_SIGNATURE_HEADER]: signSwapWebhook(rawBody),
+          [SWAP_VENDOR_SIGNATURE_HEADER]: signSwapWebhook(body),
         },
-        body: rawBody,
+        body,
       });
+    const results = await Promise.all([notify(), notify()]);
+    expect(results.map((result) => result.status)).toEqual([200, 200]);
 
-    const [first, second] = await Promise.all([fail(), fail()]);
-
-    expect(first.status).toBe(200);
-    expect(second.status).toBe(200);
     expect(await balanceOf(e2e, from.userId, from.currency)).toBe(money('5'));
     expect(await balanceOf(e2e, from.userId, to)).toBe('0');
     const rows = await swapLegs(from.userId, from.currency);
-    expect(rows.find((row) => row.id === pending.transactionId)).toMatchObject({
-      type: 'swap_out',
-      status: 'failed',
-    });
-    expect(rows.filter((row) => row.reversedTransactionId === pending.transactionId)).toEqual([
+    expect(rows.filter((row) => row.type === 'hold_refund')).toEqual([
       expect.objectContaining({
-        type: 'hold_refund',
         status: 'completed',
         direction: 'credit',
-        currency: from.currency,
-        amount: money('3'),
+        amount: money(SWAP_VENDOR_ASYNC_AMOUNT),
         balanceAfter: money('5'),
+        reversedTransactionId: pending.transactionId,
       }),
     ]);
+    expect(rows.find((row) => row.id === pending.transactionId)?.status).toBe('failed');
+
+    const runId = await startWalletJobRun(e2e, '/wallet/reconciliation/ledger-invariant', {});
+    const run = await waitForWalletJobRun(e2e, runId);
+    expect(z.object({ pairsChecked: z.number() }).parse(run.summary).pairsChecked).toBeGreaterThan(
+      0,
+    );
+    expect(
+      (await walletFindingsOfRun(e2e, runId)).filter((row) => row.currency === from.currency),
+    ).toEqual([]);
   });
 
   it('an unauthenticated caller requesting a swap is refused with 401', async () => {

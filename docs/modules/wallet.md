@@ -60,8 +60,10 @@ is `SPORTSBOOK_LEDGER` unchanged.
 - **One transaction per keyed op.** `bet`, `win` and `reverse` each lock their key, move the money,
   add it to the round, write the outbox events and store their answer in `ledger_api_request`, all
   in one transaction. A refusal undoes its moves but is stored as the key's answer, so a retry
-  gets the same refusal even after a deposit; only `fingerprint_mismatch` and `invalid_amount`
-  store nothing.
+  gets the same refusal even after a deposit. A refusal about the request itself, or one the ledger
+  could not decide because a projection heartbeat is stale (ADR-0066), stores nothing, so a retry of
+  the same key is decided again (`STORES_REFUSAL` in `ledger-api.service.ts`). A blocked player is
+  refused as blocked and stored even while the heartbeat is stale.
 - **The key is (`providerName`, `providerRefId`) plus a fingerprint.** The fingerprint is a hash of
   the whole request with amounts canonicalised, so `10` and `10.00` are one request. The same key
   and fingerprint answers `replayed` with the stored answer, balance included, even after the

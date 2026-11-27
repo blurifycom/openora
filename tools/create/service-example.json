@@ -2,15 +2,15 @@
   "name": "payments",
   "manifest": [
     "wallet",
-    "identity",
-    "audit",
-    "tag",
-    "compliance",
-    "mail",
-    "iam",
-    "player-management",
-    "gaming",
-    "exchange-rate",
-    "chat"
+    "identity:no-routes",
+    "audit:no-routes",
+    "tag:no-routes",
+    "compliance:no-routes",
+    "mail:no-routes",
+    "iam:no-routes",
+    "player-management:no-routes",
+    "exchange-rate:no-routes",
+    "chat:no-routes",
+    "gaming:no-routes"
   ]
 }

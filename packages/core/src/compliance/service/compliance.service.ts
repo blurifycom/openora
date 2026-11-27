@@ -12,7 +12,20 @@ import {
   type DrizzleTx,
   type EventBus,
 } from '@openora/core/server';
-import { and, asc, count, eq, exists, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  ne,
+  or,
+  sql,
+  type AnyColumn,
+  type SQL,
+} from 'drizzle-orm';
 import {
   countryRule,
   gameGeoRule,
@@ -52,6 +65,7 @@ import {
   type ReplaceGameGeoRulesResult,
   type MirrorTargetPolicy,
   type User,
+  type GameGeoRules,
 } from '@openora/core/contracts';
 import { game, gameProvider } from '@openora/core/casino/schema/gaming';
 
@@ -104,13 +118,13 @@ type CountryRuleSettings = Pick<
 
 // Redirection needs both the toggle and a target; either alone changes nothing. An empty
 // target (a row written outside the API) is no target, so it cannot open a blocked country.
-function mirrorTargetOf(rule: { redirectIp: boolean; mirrorUrl: string | null }) {
+export function mirrorTargetOf(rule: { redirectIp: boolean; mirrorUrl: string | null }) {
   return rule.redirectIp && rule.mirrorUrl ? rule.mirrorUrl : null;
 }
 
 // A blacklisted country that is redirected plays on the mirror, so the API lets it through
 // and keeping it off the primary domain is left to whoever serves that domain.
-function deniesAccess(rule: {
+export function deniesAccess(rule: {
   blacklisted: boolean;
   redirectIp: boolean;
   mirrorUrl: string | null;
@@ -127,10 +141,7 @@ const countryRuleDeniesAccess = and(
   ),
 );
 
-export function hasCountryRuleChanges(
-  before: typeof countryRule.$inferSelect,
-  next: CountryRuleSettings,
-) {
+function hasCountryRuleChanges(before: typeof countryRule.$inferSelect, next: CountryRuleSettings) {
   return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== next[field]);
 }
 
@@ -165,11 +176,11 @@ function countryRuleFieldValue(
   return field === 'blacklisted' ? row.action === 'block' : row[field];
 }
 
-export function moneyEqualsOrBothNull(a: string | null, b: string | null) {
+function moneyEqualsOrBothNull(a: string | null, b: string | null) {
   return a === null || b === null ? a === b : moneyEquals(a, b);
 }
 
-export function hasExpectedVersion(actual: Date | null, expected: string | null) {
+function hasExpectedVersion(actual: Date | null, expected: string | null) {
   return (actual ? actual.toISOString() : null) === expected;
 }
 
@@ -316,7 +327,7 @@ function providerGeoRuleLockKey(
   return `provider-geo-rule:${providerId}:${countryCode}`;
 }
 
-function missingCountryCodes(requested: string[], rows: { countryCode: string }[]) {
+export function missingCountryCodes(requested: string[], rows: { countryCode: string }[]) {
   const found = new Set(rows.map((row) => row.countryCode));
   return requested.filter((countryCode) => !found.has(countryCode));
 }
@@ -329,10 +340,9 @@ function serializeBulkGeoRules(rows: (typeof gameGeoRule.$inferSelect)[]) {
   return rows.map(serializeGeoRule).sort((a, b) => a.gameId.localeCompare(b.gameId));
 }
 
-function pairGeoRuleChanges<Rule extends { countryCode: string; createdAt: Date; updatedAt: Date }>(
-  before: Rule[],
-  after: Rule[],
-) {
+export function pairGeoRuleChanges<
+  Rule extends { countryCode: string; createdAt: Date; updatedAt: Date },
+>(before: Rule[], after: Rule[]) {
   const beforeByCountry = new Map(before.map((row) => [row.countryCode, serializeGeoRule(row)]));
   return after
     .map((row) => ({
@@ -350,7 +360,10 @@ const GEO_RULE_SYNC_GAMES_PER_TX = 500;
 // Postgres caps a statement at 65535 bind parameters.
 const GEO_RULE_SYNC_ROWS_PER_STATEMENT = 5000;
 
-function chunk<T>(items: readonly T[], size: number): T[][] {
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  if (!Number.isInteger(size) || size < 1) {
+    throw new RangeError(`chunk size must be a positive integer, got ${size}`);
+  }
   return Array.from({ length: Math.ceil(items.length / size) }, (_, i) =>
     items.slice(i * size, (i + 1) * size),
   );
@@ -358,11 +371,11 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
 
 type GameCountry = Pick<typeof gameGeoRule.$inferSelect, 'gameId' | 'countryCode'>;
 
-function gameCountryKey(row: GameCountry) {
+export function gameCountryKey(row: GameCountry) {
   return `${row.gameId}:${row.countryCode}`;
 }
 
-function byGameAndCountry(a: GameCountry, b: GameCountry) {
+export function byGameAndCountry(a: GameCountry, b: GameCountry) {
   return a.gameId.localeCompare(b.gameId) || a.countryCode.localeCompare(b.countryCode);
 }
 
@@ -626,6 +639,41 @@ export class ComplianceService {
       countryCode: result.countryCode,
       redirectUrl: result.redirectUrl,
     };
+  }
+
+  async listGeoRulePairs(
+    filter: { countries?: readonly string[]; gameIds?: readonly string[]; source?: string } = {},
+  ): Promise<GameGeoRules> {
+    const { countries, gameIds, source } = filter;
+    const db = this.drizzle.db;
+    const inCountries = (column: AnyColumn) =>
+      countries ? sql`${column} = ANY(${sql.param([...countries])}::text[])` : undefined;
+    const [games, providers] = await Promise.all([
+      db
+        .selectDistinct({
+          gameId: gameGeoRule.gameId,
+          countryCode: gameGeoRule.countryCode,
+          source: gameGeoRule.source,
+        })
+        .from(gameGeoRule)
+        .where(
+          and(
+            inCountries(gameGeoRule.countryCode),
+            gameIds
+              ? sql`${gameGeoRule.gameId} = ANY(${sql.param([...gameIds])}::uuid[])`
+              : undefined,
+            source === undefined ? undefined : eq(gameGeoRule.source, source),
+          ),
+        ),
+      db
+        .selectDistinct({
+          providerId: providerGeoRule.providerId,
+          countryCode: providerGeoRule.countryCode,
+        })
+        .from(providerGeoRule)
+        .where(inCountries(providerGeoRule.countryCode)),
+    ]);
+    return { games, providers };
   }
 
   async listGloballyBlockedCountries(): Promise<string[]> {

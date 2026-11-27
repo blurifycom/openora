@@ -66,7 +66,7 @@ export function parseJobWorkers(raw: string | undefined): JobWorkerSelection | n
   return { include: none ? [] : include.length > 0 ? include : null, exclude };
 }
 
-function matches(pattern: string, queue: string): boolean {
+export function matches(pattern: string, queue: string): boolean {
   return pattern.endsWith('*') ? queue.startsWith(pattern.slice(0, -1)) : queue === pattern;
 }
 
@@ -89,7 +89,8 @@ export function selectJobWorkers<T extends { queue: string }>(
     throw new Error(
       `[create-app] JOB_WORKERS names queues this process does not register: ` +
         `${unmatched.join(', ')}. Registered queues: ${queues.join(', ') || '(none)'}. ` +
-        'Fix the pattern, or load the module that registers the queue (check SERVICE_MANIFEST).',
+        'Fix the pattern, or select the module that registers the queue: SERVICE_MANIFEST ' +
+        'must name it, without ":no-routes".',
     );
   }
 

@@ -58,7 +58,7 @@ type EmailChange = {
 // A redelivered event writes its row again, wherever it lands: the same emails and the same
 // carried change time as an earlier row. The first stays in place and the repeats are dropped. A
 // row timed by its write time cannot be told from a real repeat, so it is never dropped.
-function withoutRedeliveries(changes: readonly EmailChange[]) {
+export function withoutRedeliveries(changes: readonly EmailChange[]) {
   const seen = new Set<string>();
   return changes.filter((change) => {
     if (!change.timedByChange) {
@@ -158,7 +158,7 @@ export function buildEmailWindows({
  * Either way the trail is reported broken. An incomplete result, which has no registration window,
  * is returned as it is.
  */
-function boundFirstWindow(
+export function boundFirstWindow(
   built: ReturnType<typeof buildEmailWindows>,
   registeredAt: Date,
   others: readonly Pick<EmailChange, 'before' | 'after' | 'at'>[],
@@ -202,7 +202,7 @@ const changedAtOf = (after: Record<string, unknown> | null) => {
 const emailOf = (side: Record<string, unknown> | null) =>
   typeof side?.['email'] === 'string' && side['email'] ? side['email'] : null;
 
-export const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
+const toEmailChange = ({ before, after, at }: AuditEmailChange): EmailChange => {
   const changedAt = changedAtOf(after);
   return {
     before: emailOf(before),

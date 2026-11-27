@@ -1,5 +1,5 @@
 {
-  "id": "d3a3a4dc-3460-40b5-94c9-6c2b0f3eaa7f",
+  "id": "86219799-c241-47b2-883f-e8935b3b9dea",
   "prevId": "dd633f0a-0aee-4bbe-b148-b1c5eef2695f",
   "version": "7",
   "dialect": "postgresql",
@@ -234,6 +234,32 @@
         },
         "updated_at": {
           "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ledger_projection_heartbeat": {
+      "name": "ledger_projection_heartbeat",
+      "schema": "",
+      "columns": {
+        "projection": {
+          "name": "projection",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "beat_at": {
+          "name": "beat_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -2390,33 +2416,6 @@
           "method": "btree",
           "with": {}
         },
-        "wallet_transaction_wallet_id_created_at_id_idx": {
-          "name": "wallet_transaction_wallet_id_created_at_id_idx",
-          "columns": [
-            {
-              "expression": "wallet_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "wallet_transaction_type_idx": {
           "name": "wallet_transaction_type_idx",
           "columns": [
@@ -3373,8 +3372,7 @@
         "cashback",
         "win_reversal",
         "donation",
-        "referral_reward",
-        "hold_refund"
+        "referral_reward"
       ]
     },
     "public.wallet_turnover_entry_source": {

@@ -84,7 +84,7 @@ export const FriendshipNotFoundError = makeNotFoundError('Friendship');
 
 export const FriendRequestNotFoundError = makeNotFoundError('FriendRequest');
 
-function pgErrorCode(e: unknown): string | undefined {
+export function pgErrorCode(e: unknown): string | undefined {
   if (typeof e !== 'object' || e === null) {
     return undefined;
   }
@@ -97,7 +97,7 @@ function pgErrorCode(e: unknown): string | undefined {
   return undefined;
 }
 
-function isUniqueConstraintViolation(e: unknown): boolean {
+export function isUniqueConstraintViolation(e: unknown): boolean {
   return pgErrorCode(e) === '23505';
 }
 

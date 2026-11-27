@@ -13,7 +13,8 @@ import { createBackofficeRouter } from './router/index.js';
 
 export default {
   id: 'admin-console',
-  dependsOn: ['identity', 'wallet', 'audit', 'gaming', 'iam'],
+  dependsOn: ['identity', 'audit', 'iam'],
+  requiresPorts: [ADMIN_WALLET_REPORTING, ADMIN_GAME_REPORTING],
   register(ctx) {
     ctx.routers.add('backoffice', (c) =>
       createBackofficeRouter(

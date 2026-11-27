@@ -104,6 +104,7 @@ import {
   parseBalanceAtFiling,
   parseLedgerPairKey,
   rebaselinePair,
+  SWAP_DESK_PROVIDER_LABEL,
 } from './ledger-invariant.service.js';
 
 const logger = createLogger('wallet-reconciliation');
@@ -143,6 +144,7 @@ export type ReconciliationRefusalReason =
   | 'deposit_credit_names_a_transaction'
   | 'credit_names_no_transaction'
   | 'withdrawal_not_processing'
+  | 'swap_not_processing'
   | 'refund_destination_without_note'
   | 'refund_without_vendor_id'
   | 'ledger_deposit_not_completed'
@@ -210,13 +212,28 @@ const DISMISS_ONLY_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> =
   'stuck_withdrawal_processing',
   'ledger_request_mismatch',
   'ledger_unrequested_transaction',
+  'rg_limit_breach',
+  'stuck_sweep',
+  'unconfigured_asset',
   'play_eligibility_drift',
   'rg_limits_drift',
   'outbox_relay_lag',
   'event_dead_letters',
 ]);
 
-function assertOutcomeAllowed(
+type HeldRowType = 'withdrawal' | 'swap_out';
+
+const HELD_ROW_SETTLED_BY_CREDIT: Partial<
+  Record<
+    WalletReconciliationFindingKind,
+    { type: HeldRowType; refusal: ReconciliationRefusalReason }
+  >
+> = {
+  unknown_at_provider: { type: 'withdrawal', refusal: 'withdrawal_not_processing' },
+  stuck_swap: { type: 'swap_out', refusal: 'swap_not_processing' },
+};
+
+export function assertOutcomeAllowed(
   kind: WalletReconciliationFindingKind,
   outcome: ReconciliationResolution['outcome'],
 ): void {
@@ -370,7 +387,7 @@ type LedgerMatch = Pick<WalletTransaction, 'id' | 'currency' | 'amount' | 'netwo
  * without a database. Never routes through moneyToNumber (see money.md): an exact
  * decimal compare, not a float one.
  */
-function diffDeposit(
+export function diffDeposit(
   event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   tx: LedgerMatch | undefined,
 ): 'missing_deposit' | 'currency_mismatch' | 'amount_mismatch' | null {
@@ -414,7 +431,6 @@ const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
 
 // A swap leg carries no payment provider name, but a finding needs one to be filed under.
-const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
 const PROJECTION_FINDING_LABEL = 'ledger-projection';
 const EVENT_PIPELINE_FINDING_LABEL = 'event-pipeline';
 
@@ -669,7 +685,7 @@ export class ReconciliationService {
 
       let transactionId: string | undefined;
       let resolutionNote: string | null = null;
-      let heldWithdrawalId: string | null = null;
+      let settledHeldRow: { id: string; type: HeldRowType } | null = null;
       let refundedDepositId: string | null = null;
       let creditedDeposit: CreditedDeposit | undefined;
       let releasedDeposit: CreditedDeposit | undefined;
@@ -734,33 +750,30 @@ export class ReconciliationService {
             );
           }
           transactionId = tx.id;
-          // Crediting a player for a withdrawal whose vendor outcome is unknown settles it by
-          // hand. The held row must leave `processing` with it, or the next reconciliation
-          // run (or a late webhook) can still refund or complete it on top of the credit; one
-          // that already left it was settled another way, and the credit would pay it twice.
-          if (finding.kind === 'unknown_at_provider') {
-            const [withdrawal] = finding.transactionId
+          const held = HELD_ROW_SETTLED_BY_CREDIT[finding.kind];
+          if (held) {
+            const [heldRow] = finding.transactionId
               ? await txn
                   .select()
                   .from(walletTransaction)
                   .where(eq(walletTransaction.id, finding.transactionId))
                   .for('update')
               : [];
-            if (withdrawal?.type !== 'withdrawal' || withdrawal.status !== 'processing') {
+            if (heldRow?.type !== held.type || heldRow.status !== 'processing') {
               throw new ReconciliationOutcomeNotAllowedError(
                 finding.kind,
                 'credited',
-                'withdrawal_not_processing',
+                held.refusal,
               );
             }
-            if (tx.walletId !== withdrawal.walletId) {
+            if (tx.walletId !== heldRow.walletId) {
               throw new ReconciliationCreditMismatchError();
             }
             await txn
               .update(walletTransaction)
-              .set({ reversedTransactionId: withdrawal.id })
+              .set({ reversedTransactionId: heldRow.id })
               .where(eq(walletTransaction.id, tx.id));
-            heldWithdrawalId = withdrawal.id;
+            settledHeldRow = { id: heldRow.id, type: held.type };
           }
         }
       } else if (resolution.outcome === 'released') {
@@ -847,14 +860,14 @@ export class ReconciliationService {
         throw new ReconciliationFindingNotFoundError(id);
       }
 
-      if (heldWithdrawalId) {
+      if (settledHeldRow) {
         await txn
           .update(walletTransaction)
           .set({ status: 'failed' })
           .where(
             and(
-              eq(walletTransaction.id, heldWithdrawalId),
-              eq(walletTransaction.type, 'withdrawal'),
+              eq(walletTransaction.id, settledHeldRow.id),
+              eq(walletTransaction.type, settledHeldRow.type),
               eq(walletTransaction.status, 'processing'),
             ),
           );
@@ -876,7 +889,8 @@ export class ReconciliationService {
           outcome: resolution.outcome,
           transactionId: row.transactionId,
           resolutionNote: row.resolutionNote,
-          closedWithdrawalId: heldWithdrawalId,
+          closedWithdrawalId: settledHeldRow?.type === 'withdrawal' ? settledHeldRow.id : null,
+          closedSwapId: settledHeldRow?.type === 'swap_out' ? settledHeldRow.id : null,
           releasedDepositId: releasedDeposit?.transactionId ?? null,
           creditedDeposit: creditedDeposit ?? null,
           refundedDepositId,
@@ -2451,6 +2465,12 @@ export class ReconciliationService {
         .map((snapshot) => snapshot.userId)
         .filter((userId) => reported.has(userId) && !isDrifting.has(userId));
       const fresh = drifting.filter((userId) => !reported.has(userId));
+      if (fresh.length > 0) {
+        logger.error(
+          { runId, kind: check.kind, players: fresh.length, behind: behind.length },
+          'reconciliation: a ledger projection drifted from its owner; repairing',
+        );
+      }
       if (inStep.length > 0 || fresh.length > 0) {
         const versionOf = new Map(snapshots.map((s) => [s.userId, s.version]));
         await this.drizzle.db.transaction(async (txn) => {
@@ -2634,9 +2654,9 @@ export class ReconciliationService {
     return closed;
   }
 
-  // Human resolution only, like a stuck sweep. A swap_out held `processing` past the cutoff
-  // is money debited from the player with nothing credited back, and the desk may or may not
-  // have filled it - so neither a refund nor a credit is safe without someone looking.
+  // Human resolution only: a swap_out held `processing` past the cutoff is money debited from
+  // the player with nothing credited back, and the desk may or may not have filled it - so
+  // neither a refund nor a credit is safe without someone looking.
   //
   // wallet_transaction_status_type_created_at_idx covers the WHERE, but the ORDER BY leads
   // with the correlated EXISTS, which no index serves: every cycle sorts the whole matching

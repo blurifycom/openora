@@ -50,18 +50,19 @@ export type DepositCompareDeps = {
 };
 
 /** `change` as a percentage of `depositsA` to one decimal; null when there is nothing to compare to. */
-function changePercent({ depositsA, change }: PricedPlayer): number | null {
+export function changePercent({ depositsA, change }: PricedPlayer): number | null {
   if (moneyCompare(depositsA, '0') === 0) {
     return null;
   }
-  return Math.round(Number(moneyDivide(moneyScaleBy(change, '100'), depositsA)) * 10) / 10;
+  const percent = Number(moneyDivide(moneyScaleBy(change, '100'), depositsA));
+  return (Math.sign(percent) * Math.round(Math.abs(percent) * 10)) / 10;
 }
 
 /**
  * The players whose deposits moved the way `order` asks, largest change first and ties by
  * player id, at most `limit` of them.
  */
-function rankDepositChanges(
+export function rankDepositChanges(
   players: readonly PricedPlayer[],
   order: DepositCompareOrder,
   limit: number,
@@ -82,7 +83,7 @@ function rankDepositChanges(
   };
 }
 
-function groupByUser(rows: readonly DepositRow[]): Map<User['id'], DepositRow[]> {
+export function groupByUser(rows: readonly DepositRow[]): Map<User['id'], DepositRow[]> {
   const byUser = new Map<User['id'], DepositRow[]>();
   for (const row of rows) {
     byUser.set(row.userId, [...(byUser.get(row.userId) ?? []), row]);

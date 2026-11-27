@@ -14,6 +14,7 @@ import {
 
 export const SWAP_VENDOR_RATE = '2';
 export const SWAP_VENDOR_ASYNC_AMOUNT = '3';
+export const SWAP_VENDOR_REJECTED_AMOUNT = '7';
 export const SWAP_VENDOR_UNSUPPORTED_CURRENCY = 'NOPAIR';
 export const SWAP_VENDOR_SIGNATURE_HEADER = 'x-test-swap-signature';
 
@@ -73,6 +74,9 @@ export default {
             };
           },
           async execute({ fromAmount, idempotencyKey }) {
+            if (moneyCompare(fromAmount, SWAP_VENDOR_REJECTED_AMOUNT) === 0) {
+              return { externalId: idempotencyKey, status: 'failed' };
+            }
             if (moneyCompare(fromAmount, SWAP_VENDOR_ASYNC_AMOUNT) === 0) {
               return { externalId: idempotencyKey, status: 'processing' };
             }

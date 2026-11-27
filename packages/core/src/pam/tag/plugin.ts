@@ -55,7 +55,7 @@ function preconditionOutcome(refusal: string | null) {
 
 // send_to_manual_review declares no tag_not_found: a catalog without withdrawal_review is an
 // operator misconfiguration, which the kernel reports as internal_error.
-function manualReviewRefusal(refusal: TagAssignmentRefusal | null) {
+export function manualReviewRefusal(refusal: TagAssignmentRefusal | null) {
   return refusal === 'tag_already_active' ? 'already_in_manual_review' : refusal;
 }
 
@@ -88,7 +88,8 @@ async function assignForProposal(
 
 export default {
   id: 'tag',
-  dependsOn: ['wallet', 'identity', 'audit'],
+  dependsOn: ['identity', 'audit'],
+  requiresPorts: [WALLET_READER],
   register(ctx) {
     // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;
@@ -173,21 +174,23 @@ export default {
       },
     });
 
-    ctx.routers.add('tag', (c) => {
+    ctx.routers.add('tag', (c, options) => {
       const tagSvc = tagService(c);
       const ruleSvcForRouter = ruleService(c);
       tagEvaluationService(c); // ensure evalSvc is constructed for the event handlers/job worker above
 
       // Idempotent daily schedule (keyed by scheduleId). In-process driver runs it
       // manually; a durable overlay (BullMQ) fires at cron time.
-      void c
-        .get(JOB_QUEUE)
-        .schedule(
-          queue('tag.daily-evaluation'),
-          'tag.daily-evaluation.daily',
-          {},
-          { cron: '0 2 * * *' },
-        );
+      if (options?.mounted !== false) {
+        void c
+          .get(JOB_QUEUE)
+          .schedule(
+            queue('tag.daily-evaluation'),
+            'tag.daily-evaluation.daily',
+            {},
+            { cron: '0 2 * * *' },
+          );
+      }
 
       return createTagRouter(tagSvc, ruleSvcForRouter, c.get(ADMIN_GUARD));
     });

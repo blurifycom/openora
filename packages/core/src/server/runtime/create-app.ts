@@ -15,6 +15,7 @@ import {
   RedisCache,
   RedisRateLimiter,
   RedisStreamsBroker,
+  streamStartIdFromEnv,
   RedisPubSubRealtimeTransport,
   SseClientAuthorizer,
   createEventBus,
@@ -73,6 +74,7 @@ import {
 } from '../auth/index.js';
 import { loadPlugins, parseServiceManifest, type PluginEntry } from '../plugin-host/index.js';
 import { importPlugin } from '../plugin-host/load-plugins.js';
+import { withoutRemoteModules } from '../plugin-host/remote-modules.js';
 import {
   assertServiceComplete,
   selectServiceEntries,
@@ -609,7 +611,13 @@ async function bootApp(
     container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
     container.register(CACHE, () => new RedisCache(redis));
     container.register(MESSAGE_BROKER, () => {
-      const broker = new RedisStreamsBroker(redis, { serviceName });
+      const broker = new RedisStreamsBroker(redis, {
+        serviceName,
+        startId: streamStartIdFromEnv(
+          process.env['EVENT_BUS_START_ID'],
+          parseServiceManifest(process.env['SERVICE_MANIFEST']) !== null,
+        ),
+      });
       container.onDispose(() => broker.close());
       return broker;
     });
@@ -680,20 +688,28 @@ async function bootApp(
   const corsOrigins = resolveCorsOrigins(config.cors);
 
   const bootLogger = createLogger('create-app');
+  const { entries: registryEntries, dropped: droppedForRemote } = await withoutRemoteModules(
+    config.plugins,
+    importPlugin<CoreTokenCatalog>,
+  );
+  for (const { env, modules } of droppedForRemote) {
+    bootLogger.info({ modules }, `${env} is set: not loading these modules here`);
+  }
   const manifestCheck: ServiceManifestCheck<CoreTokenCatalog> | null =
     manifest === null
       ? null
       : {
-          entries: config.plugins,
+          entries: registryEntries,
           manifest,
           readPlugin: (entry) => importPlugin(entry),
           hostControls: ADMIN_GUARD_CONTROLS,
           isBound: (port) => container.has(port),
         };
-  const plugins = manifestCheck ? await selectServiceEntries(manifestCheck) : config.plugins;
+  const plugins = manifestCheck ? await selectServiceEntries(manifestCheck) : registryEntries;
   if (manifestCheck) {
+    // Logged before loading, so a boot that fails in a plugin still shows what was selected.
     bootLogger.info(
-      { modules: plugins.map((e) => (e.noRoutes ? `${e.id} (no routes)` : e.id)) },
+      { modules: plugins.map((e) => (e.noRoutes ? `${e.id} (required only)` : e.id)) },
       'SERVICE_MANIFEST active',
     );
   }
@@ -701,6 +717,22 @@ async function bootApp(
   const registry = await loadPlugins(plugins, container, {
     requiredPorts: manifestCheck ? 'defer' : 'assert',
   });
+  if (manifestCheck) {
+    // A `:no-routes` module is loaded for its ports only: what it would consume is left to the
+    // service that selects it (ADR-0050).
+    const notConsumed: Record<string, Record<string, number>> = {};
+    for (const { owner, kind } of registry.withheld()) {
+      const counts = (notConsumed[owner] ??= {});
+      counts[kind] = (counts[kind] ?? 0) + 1;
+    }
+    if (Object.keys(notConsumed).length > 0) {
+      // Warn, not info: a module no process selects runs none of these, audit and RG included.
+      bootLogger.warn(
+        { notConsumed },
+        'SERVICE_MANIFEST: these handlers run only where another process selects their module',
+      );
+    }
+  }
   await configure?.(container);
 
   assertDurableSeamsBound(container);

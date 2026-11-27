@@ -1,5 +1,4 @@
-import { asc, eq, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
+import { eq } from 'drizzle-orm';
 import {
   createDomainError,
   createLogger,
@@ -22,17 +21,15 @@ import {
   type SupportChatProvider,
   type SupportCustomerContext,
   type SupportTicketRequest,
+  type PlayerRankReader,
   type WalletReader,
 } from '@openora/core/contracts';
 import { user, type User } from '@openora/core/pam/schema/identity';
 import { player, type Player } from '@openora/core/pam/schema/profile';
-import { promoPlayerRank, promoRankTier } from '@openora/core/promo/schema/gamification';
 import { supportChatCustomer, type SupportChatCustomer } from '../schema/index.js';
 import { reasonOf, type ProviderFailureReason } from './provider-reason.service.js';
 
 const logger = createLogger('support-chat');
-
-const lowestTier = alias(promoRankTier, 'lowest_tier');
 
 export const SupportChatPlayerNotFoundError = makeNotFoundError('Player');
 
@@ -68,7 +65,10 @@ type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'sy
 
 // A self-exclusion does not move `player.status`, so it is folded in here; a suspended or
 // closed account keeps its own status.
-function accountStatusOf({ playerStatus, isSelfExcluded }: SupportCustomerReading): PlayerStatus {
+export function accountStatusOf({
+  playerStatus,
+  isSelfExcluded,
+}: SupportCustomerReading): PlayerStatus {
   if (playerStatus === 'suspended' || playerStatus === 'closed') {
     return playerStatus;
   }
@@ -164,6 +164,7 @@ type SupportChatDeps = {
   events: EventBus;
   identityReader: IdentityReader;
   walletReader: WalletReader;
+  rankReader: PlayerRankReader;
   rgExclusionReader: RgExclusionReader;
   accountManagerReader: PlayerAccountManagerReader | null;
   provider: SupportChatProvider;
@@ -315,28 +316,21 @@ export class SupportChatService {
         email: user.email,
         playerStatus: player.status,
         kycStatus: player.kycStatus,
-        // A player with no tier yet sits on the ladder's bottom rung, as the rank read shows it.
-        rankName: sql<string | null>`coalesce(${promoRankTier.name}, (${this.deps.drizzle.db
-          .select({ name: lowestTier.name })
-          .from(lowestTier)
-          .orderBy(asc(lowestTier.position))
-          .limit(1)}))`,
       })
       .from(supportChatCustomer)
       .innerJoin(player, eq(player.id, supportChatCustomer.playerId))
       .innerJoin(user, eq(user.id, player.userId))
-      .leftJoin(promoPlayerRank, eq(promoPlayerRank.userId, player.userId))
-      .leftJoin(promoRankTier, eq(promoRankTier.id, promoPlayerRank.tierId))
       .where(eq(player.userId, userId))
       .limit(1);
     if (!row) {
       return null;
     }
     const { customerId, ...reading } = row;
-    const [exclusions, { activeCurrency }, accountManager] = await Promise.all([
+    const [exclusions, { activeCurrency }, accountManager, rankName] = await Promise.all([
       this.deps.rgExclusionReader.getExclusionState(userId),
       this.deps.walletReader.getBalances(userId),
       this.deps.accountManagerReader?.getByPlayerUserId(userId) ?? null,
+      this.deps.rankReader.getRankName(userId),
     ]);
     return {
       customerId,
@@ -344,6 +338,7 @@ export class SupportChatService {
         {
           ...reading,
           ...exclusions,
+          rankName,
           activeCurrency,
           accountManagerName: accountManager?.name ?? null,
         },

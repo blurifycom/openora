@@ -17,7 +17,10 @@ const logger = createLogger('gaming');
  * slot, a slot past the end clamps to the tail (several such overflowing pins stack
  * there in ascending slot order), and a pin whose game isn't in `order` is ignored.
  */
-function mergePinnedOrder(order: readonly string[], pins: ReadonlyMap<string, number>): string[] {
+export function mergePinnedOrder(
+  order: readonly string[],
+  pins: ReadonlyMap<string, number>,
+): string[] {
   const rest = order.filter((id) => !pins.has(id));
   const pinned = order
     .filter((id) => pins.has(id))

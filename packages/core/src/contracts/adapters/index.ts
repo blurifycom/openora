@@ -203,8 +203,21 @@ export type {
 export { WALLET_READER } from './wallet-reader.js';
 
 export type { UserCommands } from './identity.js';
-export type { IdentityReader } from './identity-reader.js';
-export { userIdOfPlayer, userIdsOfPlayers } from './identity-reader.js';
+export type {
+  IdentityReader,
+  LeaderboardName,
+  PlayerFacts,
+  UserContact,
+} from './identity-reader.js';
+export {
+  leaderboardNamesOf,
+  playerFactsOf,
+  playerIdsOfUsers,
+  userContactsOf,
+  userIdOfPlayer,
+  userIdsOfPlayers,
+  withPlayerIds,
+} from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 export type {
   Account,
@@ -434,6 +447,7 @@ export type { GeoCheckCommands } from './geo-check-commands.js';
 export { GEO_CHECK_COMMANDS } from './geo-check-commands.js';
 export type {
   GameGeoCheckPort,
+  GameGeoRules,
   GameGeoCheckInput,
   GameGeoDecision,
   GameGeoDenialReason,
@@ -591,14 +605,18 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
 export type {
+  LedgerPlayEligibilityPort,
   PlayEligibilityPort,
   PlayEligibilityProjectionPort,
   PlayEligibilitySourcePort,
   PlayEligibilityState,
   PlayRefusal,
+  LedgerProjection,
 } from './play-eligibility.js';
 export {
   LEDGER_PLAY_ELIGIBILITY,
+  LEDGER_PROJECTIONS,
+  LedgerProjectionStaleError,
   PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY_PROJECTION,
   PLAY_ELIGIBILITY_SOURCE,
@@ -779,3 +797,18 @@ export type {
   SportsbookProviderSessionArgs,
 } from './sportsbook-provider.js';
 export { SPORTSBOOK_PROVIDER, SportsbookProviderSessionSchema } from './sportsbook-provider.js';
+export * from './money-reporting.js';
+export type { MoneyMethodSpec, MoneyRemotePortName } from './money-remote.js';
+export {
+  MONEY_MODULE_IDS,
+  MONEY_PORTS_ROUTE,
+  MONEY_REMOTE_PORTS,
+  MONEY_TX_BOUND_PORTS,
+  MoneyPortCallWire,
+  MoneyPortErrorWire,
+  decodeMoneyWire,
+  encodeMoneyWire,
+  isMoneyRemotePortName,
+  moneyPortErrorFromWire,
+  moneyPortErrorWireOf,
+} from './money-remote.js';

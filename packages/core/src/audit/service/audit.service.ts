@@ -111,7 +111,7 @@ type CanonicalHashInput = Pick<
 // Postgres jsonb reorders object keys (length-then-lex) on read-back, so before/after
 // must have their nested key order canonicalized before hashing - otherwise record()
 // and verifyChain() disagree on the exact same data. Arrays keep their original order.
-function sortKeysDeep(value: unknown): unknown {
+export function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortKeysDeep);
   }
@@ -146,12 +146,12 @@ export function computeHash(fields: CanonicalHashInput): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
 }
 
-export function startOfDayUtc(dateStr: string): Date {
+function startOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
 }
 
-export function endOfDayUtc(dateStr: string): Date {
+function endOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
 }

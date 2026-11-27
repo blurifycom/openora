@@ -29,7 +29,8 @@ const makeProfileService = (c: TypedContainer<CoreTokenCatalog>) =>
 
 export default {
   id: 'profile',
-  dependsOn: ['wallet', 'exchange-rate', 'audit', 'identity'],
+  dependsOn: ['audit', 'identity'],
+  requiresPorts: [WALLET_READER, EXCHANGE_RATE_READER],
   register(ctx) {
     ctx.provide(PLAYER_PROVISIONING, makeProfileService);
     ctx.routers.add('profile', (c) => createProfileRouter(makeProfileService(c)));

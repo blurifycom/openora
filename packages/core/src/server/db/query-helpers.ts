@@ -23,10 +23,16 @@ export function pageToOffset(page: number, limit: number) {
 // services pre-check for slug clashes to return a typed 409, and translate a 23505
 // from the unique index into the same error to close the concurrent-insert race.
 export function isUniqueConstraintViolation(e: unknown): boolean {
-  if (typeof e !== 'object' || e === null || !('code' in e)) {
-    return false;
+  let current = e;
+  const seen = new Set<unknown>();
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if ('code' in current && current.code === '23505') {
+      return true;
+    }
+    current = 'cause' in current ? current.cause : null;
   }
-  return e.code === '23505';
+  return false;
 }
 
 // The violated unique index for a 23505 (pg exposes it as `constraint`), so a
@@ -116,6 +122,14 @@ export function moneyCompare(a: string, b: string): -1 | 0 | 1 {
   return diff < 0n ? -1 : diff > 0n ? 1 : 0;
 }
 
+export function moneyMin(a: string, b: string): string {
+  return moneyCompare(a, b) <= 0 ? a : b;
+}
+
+export function moneyMax(a: string, b: string): string {
+  return moneyCompare(a, b) >= 0 ? a : b;
+}
+
 // Exact decimal multiplication of two money amounts (`amount * factor`), via the same
 // bigint minor-units path as moneyEquals/moneyCompare - never JS float. Both operands are
 // non-negative decimal strings; the result is truncated (not rounded) to MONEY_SCALE.
@@ -164,20 +178,23 @@ export function houseEdge(realAmount: string, rtp?: string | null): string {
 
 export function moneyFloorToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
-  return fromUnitsAtScale(toMinorUnits(amount) / divisor, scale);
+  const units = toMinorUnits(amount);
+  const truncated = units / divisor;
+  return fromUnitsAtScale(units < 0n && units % divisor !== 0n ? truncated - 1n : truncated, scale);
 }
 
 export function moneyCeilToScale(amount: string, scale: number): string {
   const divisor = 10n ** BigInt(MONEY_SCALE - scale);
   const units = toMinorUnits(amount);
-  const scaledUnits = units / divisor + (units % divisor === 0n ? 0n : 1n);
-  return fromUnitsAtScale(scaledUnits, scale);
+  const truncated = units / divisor;
+  return fromUnitsAtScale(units > 0n && units % divisor !== 0n ? truncated + 1n : truncated, scale);
 }
 
 function fromUnitsAtScale(units: bigint, scale: number): string {
-  const digits = units.toString().padStart(scale + 1, '0');
-  const whole = digits.slice(0, digits.length - scale) || '0';
-  return scale === 0 ? whole : `${whole}.${digits.slice(digits.length - scale)}`;
+  const sign = units < 0n ? '-' : '';
+  const digits = (units < 0n ? -units : units).toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale);
+  return scale === 0 ? `${sign}${whole}` : `${sign}${whole}.${digits.slice(digits.length - scale)}`;
 }
 
 /**

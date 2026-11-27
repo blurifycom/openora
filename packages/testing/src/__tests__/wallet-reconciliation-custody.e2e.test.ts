@@ -7,7 +7,7 @@ import { DRIZZLE } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
 import { paginated } from '@openora/core/contracts/kit';
 import {
-  JobRunResultSchema,
+  TransactionResultSchema,
   WalletReconciliationFindingSchema,
 } from '@openora/core/wallet/contract';
 import {
@@ -29,6 +29,9 @@ import {
   parseFinding,
   requestWithdrawalId,
   resolveFinding,
+  startWalletJobRun,
+  waitForWalletJobRun,
+  walletFindingsOfRun,
   transactionById,
   type WalletE2e,
 } from './support/wallet.js';
@@ -61,36 +64,24 @@ const scenario = () => newDepositScenario(e2e);
 
 const FindingPageSchema = paginated(WalletReconciliationFindingSchema);
 
-async function startRun(path: string, body?: Record<string, unknown>) {
-  const res = await e2e.admin.post(path, body);
-  expect(res.status).toBe(200);
-  return JobRunResultSchema.parse(await res.json()).runId;
-}
-
-async function waitForRun(runId: string) {
-  return vi.waitFor(
-    async () => {
-      const [row] = await db().select().from(walletJobRun).where(eq(walletJobRun.runId, runId));
-      if (!row?.finishedAt) {
-        throw new Error(`run ${runId} has not finished`);
-      }
-      return row;
-    },
-    { timeout: 15_000, interval: 100 },
-  );
-}
-
 async function reconcile() {
-  const runId = await startRun('/wallet/reconciliation/run');
-  await waitForRun(runId);
+  const runId = await startWalletJobRun(e2e, '/wallet/reconciliation/run');
+  await waitForWalletJobRun(e2e, runId);
   return runId;
 }
 
-const findingsOfRun = (runId: string) =>
-  db()
-    .select()
-    .from(walletReconciliationFinding)
-    .where(eq(walletReconciliationFinding.runId, runId));
+async function processingWithdrawal() {
+  const player = await newFundedPlayer(e2e, '100');
+  const id = await requestWithdrawalId(player.client, player);
+  const approved = await e2e.admin.post(`/wallet/withdrawals/${id}/approve`);
+  expect(approved.status).toBe(200);
+  const row = await transactionById(e2e, id);
+  expect(row).toEqual(expect.objectContaining({ status: 'processing' }));
+  if (!row?.providerRefId) {
+    throw new Error('processing payout has no provider reference');
+  }
+  return { player, id, providerRefId: row.providerRefId };
+}
 
 async function listFindings(query: Record<string, string | number>) {
   const params = new URLSearchParams(
@@ -156,8 +147,8 @@ async function breachedWallet() {
         ),
       ),
     );
-  const runId = await startRun('/wallet/reconciliation/ledger-invariant', {});
-  await waitForRun(runId);
+  const runId = await startWalletJobRun(e2e, '/wallet/reconciliation/ledger-invariant', {});
+  await waitForWalletJobRun(e2e, runId);
   const [finding] = await db()
     .select()
     .from(walletReconciliationFinding)
@@ -178,7 +169,7 @@ describe('reconciliation and stuck withdrawals', () => {
 
     const runId = await reconcile();
 
-    const findings = await findingsOfRun(runId);
+    const findings = await walletFindingsOfRun(e2e, runId);
     expect(findings).toEqual([
       expect.objectContaining({
         kind: 'missing_deposit',
@@ -270,15 +261,7 @@ describe('reconciliation and stuck withdrawals', () => {
   });
 
   it('a withdrawal stuck without a vendor result is detected and flagged for an admin', async () => {
-    const player = await newFundedPlayer(e2e, '100');
-    const id = await requestWithdrawalId(player.client, player);
-    const approved = await e2e.admin.post(`/wallet/withdrawals/${id}/approve`);
-    expect(approved.status).toBe(200);
-    const [handed] = await db()
-      .select()
-      .from(walletTransaction)
-      .where(eq(walletTransaction.id, id));
-    expect(handed).toEqual(expect.objectContaining({ status: 'processing' }));
+    const { player, id } = await processingWithdrawal();
     await db()
       .update(walletTransaction)
       .set({ reviewedAt: new Date(Date.now() - 3 * 60 * 60 * 1000) })
@@ -286,7 +269,7 @@ describe('reconciliation and stuck withdrawals', () => {
 
     const runId = await reconcile();
 
-    const findings = await findingsOfRun(runId);
+    const findings = await walletFindingsOfRun(e2e, runId);
     expect(findings).toEqual([
       expect.objectContaining({
         kind: 'unknown_at_provider',
@@ -298,41 +281,65 @@ describe('reconciliation and stuck withdrawals', () => {
     ]);
     expect((await transactionById(e2e, id))?.status).toBe('processing');
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe('90.000000000000000000');
-  });
 
-  it('crediting a stuck withdrawal by hand links the credit to the held withdrawal and closes it', async () => {
-    const player = await newFundedPlayer(e2e, '100');
-    const id = await requestWithdrawalId(player.client, player);
-    expect((await e2e.admin.post(`/wallet/withdrawals/${id}/approve`)).status).toBe(200);
-    await db()
-      .update(walletTransaction)
-      .set({ reviewedAt: new Date(Date.now() - 3 * 60 * 60 * 1000) })
-      .where(eq(walletTransaction.id, id));
-    const [finding] = await findingsOfRun(await reconcile());
-    const credited = await e2e.admin.post('/wallet/manual-adjustments', {
+    const adjustment = await e2e.admin.post('/wallet/manual-adjustments', {
       userId: player.userId,
       direction: 'credit',
       currency: player.currency,
       amount: '10',
-      reason: 'withdrawal never left the vendor',
+      reason: 'return the stuck payout',
       idempotencyKey: randomUUID(),
     });
-    expect(credited.status).toBe(200);
-    const { transactionId } = z.object({ transactionId: z.string() }).parse(await credited.json());
-
-    const resolved = await resolveFinding(e2e.admin, finding!.id, {
+    expect(adjustment.status).toBe(200);
+    const { transactionId } = TransactionResultSchema.parse(await adjustment.json());
+    const finding = findings[0];
+    if (!finding) {
+      throw new Error('stuck payout finding is missing');
+    }
+    const resolution = await resolveFinding(e2e.admin, finding.id, {
       outcome: 'credited',
       transactionId,
     });
-
-    expect(resolved.status).toBe(200);
+    expect(resolution.status).toBe(200);
+    expect(await transactionById(e2e, transactionId)).toMatchObject({
+      type: 'manual_credit',
+      reversedTransactionId: id,
+    });
     expect((await transactionById(e2e, id))?.status).toBe('failed');
-    const linked = await db()
+    expect(await balanceOf(e2e, player.userId, player.currency)).toBe('100.000000000000000000');
+  });
+
+  it('repeated payout failures produce one linked credit and leave the ledger balanced', async () => {
+    const { player, id, providerRefId } = await processingWithdrawal();
+    const failure = { kind: 'withdrawal', externalId: providerRefId, status: 'failed' };
+    const results = await Promise.all([deliverWebhook(e2e, failure), deliverWebhook(e2e, failure)]);
+    expect(results.map((result) => result.status)).toEqual([200, 200]);
+    await expect.poll(async () => (await transactionById(e2e, id))?.status).toBe('failed');
+
+    const credits = await db()
       .select()
       .from(walletTransaction)
       .where(eq(walletTransaction.reversedTransactionId, id));
-    expect(linked).toEqual([expect.objectContaining({ id: transactionId, type: 'manual_credit' })]);
+    expect(credits).toEqual([
+      expect.objectContaining({
+        type: 'hold_refund',
+        status: 'completed',
+        direction: 'credit',
+        currency: player.currency,
+        amount: '10.000000000000000000',
+        balanceAfter: '100.000000000000000000',
+      }),
+    ]);
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe('100.000000000000000000');
+
+    const runId = await startWalletJobRun(e2e, '/wallet/reconciliation/ledger-invariant', {});
+    const run = await waitForWalletJobRun(e2e, runId);
+    expect(z.object({ pairsChecked: z.number() }).parse(run.summary).pairsChecked).toBeGreaterThan(
+      0,
+    );
+    expect(
+      (await walletFindingsOfRun(e2e, runId)).filter((row) => row.currency === player.currency),
+    ).toEqual([]);
   });
 
   it('the ledger invariant check reports a wallet whose balance differs from the sum of its ledger rows', async () => {
@@ -347,22 +354,6 @@ describe('reconciliation and stuck withdrawals', () => {
       }),
     );
     expect(finding.detail).toContain('over by 79');
-  });
-
-  it('the ledger invariant check finds no breach in a wallet whose rejected withdrawal was returned by a hold refund', async () => {
-    const player = await newFundedPlayer(e2e, '100');
-    const id = await requestWithdrawalId(player.client, player);
-    const rejected = await e2e.admin.post(`/wallet/withdrawals/${id}/reject`, {
-      reason: 'e2e rejection',
-    });
-    expect(rejected.status).toBe(200);
-    expect(await balanceOf(e2e, player.userId, player.currency)).toBe('100.000000000000000000');
-
-    const runId = await startRun('/wallet/reconciliation/ledger-invariant', {});
-    await waitForRun(runId);
-
-    const breaches = await findingsOfRun(runId);
-    expect(breaches.filter((row) => row.currency === player.currency)).toEqual([]);
   });
 
   it('a non-admin running or resolving reconciliation is refused with 403', async () => {
@@ -397,8 +388,8 @@ describe('custody sweep', () => {
   }
 
   async function runSweep() {
-    const runId = await startRun('/wallet/custody/sweep/run');
-    await waitForRun(runId);
+    const runId = await startWalletJobRun(e2e, '/wallet/custody/sweep/run');
+    await waitForWalletJobRun(e2e, runId);
     return runId;
   }
 
@@ -480,8 +471,8 @@ describe('custody sweep', () => {
     const release = holdSweepListing();
 
     const [first, second] = await Promise.all([
-      startRun('/wallet/custody/sweep/run'),
-      startRun('/wallet/custody/sweep/run'),
+      startWalletJobRun(e2e, '/wallet/custody/sweep/run'),
+      startWalletJobRun(e2e, '/wallet/custody/sweep/run'),
     ]);
     release();
     await vi.waitFor(

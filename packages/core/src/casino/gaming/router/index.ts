@@ -69,6 +69,7 @@ import {
   GamingUnknownGameError,
   MaxBetExceededError,
   RgLimitExceededError,
+  LedgerProjectionStaleError,
   type CacheAdapter,
 } from '@openora/core/contracts';
 
@@ -167,6 +168,7 @@ export function createGamingRouter({
           NOT_FOUND: [GameNotFoundError, GamingUnknownGameError],
           CONFLICT: [RgRestrictedError, RgLimitExceededError, GameGeoRestrictedError],
           BAD_REQUEST: [InsufficientBalanceError, MaxBetExceededError],
+          SERVICE_UNAVAILABLE: LedgerProjectionStaleError,
         },
         () =>
           gaming.startRound(

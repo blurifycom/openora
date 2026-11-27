@@ -33,7 +33,7 @@ import { nodeHeadersToHeaders } from '../../shared/headers-mapper.js';
 const logger = createLogger('withdrawal-pin');
 
 // Constant-time, though both sides are HMACs under a server secret.
-const pinMatches = (candidate: string, stored: string): boolean =>
+export const pinMatches = (candidate: string, stored: string): boolean =>
   candidate.length === stored.length &&
   timingSafeEqual(Buffer.from(candidate), Buffer.from(stored));
 

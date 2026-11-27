@@ -49,7 +49,7 @@ type LimitRow = Awaited<ReturnType<typeof readLimits>>[number];
  * with no currency, which refuses every move it gates, so the snapshot always validates and no
  * bad row can block the write of a player lowering a limit.
  */
-function projectedLimit(row: LimitRow): ProjectedLimit {
+export function projectedLimit(row: LimitRow): ProjectedLimit {
   const limit = {
     limitId: row.limitId,
     type: row.type,
@@ -75,7 +75,7 @@ function snapshotOf(userId: User['id'], version: number, rows: readonly LimitRow
 
 export class RgLimitsPublisher {
   constructor(
-    private readonly ledger: Pick<RgLimitLedgerPort, 'write'>,
+    private readonly ledger: Pick<RgLimitLedgerPort, 'write' | 'remote'>,
     private readonly events: Pick<EventBus, 'emitInTransaction'> | null,
   ) {}
 
@@ -84,7 +84,11 @@ export class RgLimitsPublisher {
    * comes first: it locks the version row, so a concurrent writer of the same user waits here and
    * reads the limits only after this one commits. A failed write fails the caller's change.
    */
-  async publish(tx: DrizzleTx, userId: User['id']): Promise<void> {
+  async publish(
+    tx: DrizzleTx,
+    userId: User['id'],
+    { loosening = false }: { loosening?: boolean } = {},
+  ): Promise<void> {
     const [bumped] = await tx
       .insert(rgLimitVersion)
       .values({ userId, version: 1 })
@@ -97,7 +101,9 @@ export class RgLimitsPublisher {
       throw new Error(`rg_limit_version upsert returned no row for ${userId}`);
     }
     const snapshot = snapshotOf(userId, bumped.version, await readLimits(tx, [userId]));
-    await this.ledger.write(snapshot, tx);
+    if (!loosening || !this.ledger.remote) {
+      await this.ledger.write(snapshot, tx);
+    }
     await this.events?.emitInTransaction(tx, 'compliance.rg_limits.changed', snapshot);
   }
 }

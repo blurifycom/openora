@@ -14,7 +14,7 @@ export function toMessage(record: typeof chatMessage.$inferSelect) {
 
 const COMMAND_METADATA_MONEY_KEYS = ['amount', 'perRecipient'] as const;
 
-function canonicalizeMoneyString(value: string): string {
+export function canonicalizeMoneyString(value: string): string {
   if (!/^\d+\.\d+$/.test(value)) {
     return value;
   }
@@ -26,7 +26,7 @@ function canonicalizeMoneyString(value: string): string {
   return trimmed ? `${whole}.${trimmed}` : whole;
 }
 
-function sanitizeCommandMetadata(metadata: unknown): unknown {
+export function sanitizeCommandMetadata(metadata: unknown): unknown {
   if (!metadata || typeof metadata !== 'object') {
     return metadata;
   }

@@ -195,6 +195,9 @@ export class OnRampService {
     );
     const purchaseId = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, depositSlotKey(userId), async () => {
+        if (await isPlayRefused(this.playEligibility, userId, tx)) {
+          throw new OnRampRestrictedError();
+        }
         await this.wallet.assertWithinRgDepositLimit(
           tx,
           userId,
@@ -747,7 +750,7 @@ export class OnRampService {
   }
 }
 
-function webhookMismatch(
+export function webhookMismatch(
   order: WalletOnRampOrder,
   event: OnRampWebhookEvent,
 ): 'customer' | 'wallet' | null {
@@ -763,7 +766,7 @@ function webhookMismatch(
   return null;
 }
 
-function fillsDeliveryDetails(
+export function fillsDeliveryDetails(
   order: WalletOnRampOrder,
   next: Pick<OnRampWebhookEvent, (typeof DELIVERY_DETAILS)[number]>,
 ): boolean {

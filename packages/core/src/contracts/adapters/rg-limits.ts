@@ -143,6 +143,8 @@ export type RgLimitLedgerPort = {
    * one through `write` under a fresh version, never by an equal-version overwrite.
    */
   drifted(snapshots: readonly RgLimitsSnapshot[]): Promise<string[]>;
+  heartbeat(): Promise<void>;
+  readonly remote?: boolean;
   /**
    * Spend counted against one money limit since `from`, converted into `limitCurrency`, from the
    * wallet ledger. Throws `RgRateUnavailableError` when a source currency has no rate.

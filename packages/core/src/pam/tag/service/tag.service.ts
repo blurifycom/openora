@@ -9,7 +9,7 @@ import {
   pageToOffset,
   alreadyInUseError,
 } from '@openora/core/server';
-import { and, asc, count, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
 import {
   AssignPlayerTagInput,
@@ -44,7 +44,7 @@ type AssignPlayerTagArgs = AssignPlayerTagInput & {
   assignMetadata?: PlayerTagAssignMetadata | null;
 };
 
-function pgErrorCode(e: unknown): string | undefined {
+export function pgErrorCode(e: unknown): string | undefined {
   if (e instanceof DatabaseError) {
     return e.code;
   }
@@ -95,12 +95,12 @@ type AssignablePlayer = Pick<typeof player.$inferSelect, 'id' | 'userId' | 'stat
 
 const DEFAULT_MANUAL_REMOVAL_REASON = 'manual tag removal';
 
-function resolveRemovalReason(reason: string | undefined, isSticky: boolean) {
+export function resolveRemovalReason(reason: string | undefined, isSticky: boolean) {
   const normalized = reason?.trim();
   if (isSticky && !normalized) {
     throw new TagRemovalReasonRequiredError();
   }
-  return normalized ?? DEFAULT_MANUAL_REMOVAL_REASON;
+  return normalized || DEFAULT_MANUAL_REMOVAL_REASON;
 }
 
 // "First evidence wins per breach dimension, but a dimension that was never recorded gets
@@ -108,7 +108,7 @@ function resolveRemovalReason(reason: string | undefined, isSticky: boolean) {
 // fresher numbers - once a dimension has ever been recorded, the resweep treats it as sticky.
 // Returns the SAME `existing` reference when nothing new was merged in, so the caller can
 // detect a no-op write via reference equality.
-function mergeAssignMetadata(
+export function mergeAssignMetadata(
   existing: PlayerTagAssignMetadata | null,
   incoming: PlayerTagAssignMetadata | null | undefined,
 ): PlayerTagAssignMetadata | null {
@@ -130,7 +130,7 @@ function mergeAssignMetadata(
 type TagPlayerChange = DomainEventPayload<'tag.player.assigned'>;
 
 // The same row the audit plugin's tag.player.* subscriber would write for this change.
-function tagChangeAuditEntry(
+export function tagChangeAuditEntry(
   action: 'tag.player.assigned' | 'tag.player.removed',
   change: TagPlayerChange,
 ) {
@@ -169,17 +169,17 @@ export class TagService implements PlayerTags {
   }
 
   // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
-  public async getActiveTagKeys(userIds: readonly string[]) {
+  public async getActiveTagKeys(userIds: readonly string[], tx?: DrizzleTx) {
     const result = new Map<string, TagKey[]>();
     if (userIds.length === 0) {
       return result;
     }
-    const rows = await this.drizzle.db
+    const rows = await (tx ?? this.drizzle.db)
       .select({ userId: player.userId, key: tag.key })
       .from(player)
       .innerJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
       .innerJoin(tag, eq(tag.id, playerTag.tagId))
-      .where(inArray(player.userId, [...userIds]));
+      .where(sql`${player.userId} = ANY(${sql.param([...userIds])}::uuid[])`);
     for (const row of rows) {
       const keys = result.get(row.userId) ?? [];
       keys.push(row.key);

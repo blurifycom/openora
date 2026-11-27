@@ -29,12 +29,12 @@ import {
   ilike,
   inArray,
   ne,
+  not,
   notExists,
   or,
   sql,
 } from 'drizzle-orm';
-import { type PgColumn, type PgTable, union } from 'drizzle-orm/pg-core';
-import { gameGeoRule, providerGeoRule } from '@openora/core/compliance/schema';
+import { type PgColumn, type PgTable } from 'drizzle-orm/pg-core';
 import {
   MoneyAmountSchema,
   RgLimitExceededError,
@@ -43,6 +43,7 @@ import {
   type GameAdapter,
   type GameGeoCheckPort,
   type GameGeoDecision,
+  type GameGeoRules,
   type GamingAccumulateExternalRoundArgs,
   type GamingAccumulateExternalRoundOutcome,
   GamingInvalidRtpError,
@@ -180,6 +181,10 @@ const WinAmountInvalidError = createDomainError<[roundId: string, winAmount: str
     `round ${roundId} won ${JSON.stringify(winAmount)}, which is not a decimal with at most 18 places`,
 );
 
+function ruledBy(gameIds: readonly string[], providerIds: readonly string[]): SQL {
+  return sql`(${game.id} = ANY(${sql.param([...new Set(gameIds)])}::uuid[]) or ${game.providerId} = ANY(${sql.param([...new Set(providerIds)])}::uuid[]))`;
+}
+
 // Reads the links through the caller's transaction so the snapshot matches the
 // locked row; ordered so identical link sets always serialize identically.
 async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
@@ -213,7 +218,7 @@ function toGameRound(record: typeof gameRound.$inferSelect) {
   return serializeRow(record, { dateFields: ['startedAt', 'endedAt'] });
 }
 
-function withInactive<T extends { total: number; active: number }>(counts: T) {
+export function withInactive<T extends { total: number; active: number }>(counts: T) {
   return { ...counts, inactive: counts.total - counts.active };
 }
 
@@ -260,41 +265,27 @@ export class GamingService {
     matchingGameIds,
     ...input
   }: ListAdminGamesInput & { matchingGameIds?: readonly string[] }) {
+    const wantsGeo = geoBlocked !== undefined || geoBlockedCountries || geoAvailableCountries;
     const gameGeoCheck = this.gameGeoCheck;
-    if (
-      !gameGeoCheck &&
-      (geoBlocked !== undefined || geoBlockedCountries || geoAvailableCountries)
-    ) {
+    if (wantsGeo && !gameGeoCheck?.listGeoRulePairs) {
       throw new GameGeoFiltersUnavailableError();
     }
     const db = this.drizzle.db;
+    const geo =
+      wantsGeo && gameGeoCheck
+        ? await this.loadGeoRules(gameGeoCheck, geoBlocked, [
+            ...(geoBlockedCountries ?? []),
+            ...(geoAvailableCountries ?? []),
+          ])
+        : undefined;
     const geoAvailableFilter =
-      geoAvailableCountries && gameGeoCheck
-        ? await this.buildGeoAvailableFilter(geoAvailableCountries, gameGeoCheck)
+      geoAvailableCountries && gameGeoCheck && geo
+        ? await this.buildGeoAvailableFilter(geoAvailableCountries, gameGeoCheck, geo)
         : undefined;
     const anyCategory = this.rowsWhere({
       table: gameCategoryGame,
       column: gameCategoryGame.gameId,
       equals: game.id,
-    });
-    // A game counts as geo-blocked by its own rule or its provider's, matching the play gate's check.
-    // Grouped by game id so the planner hashes distinct games, not one entry per rule row.
-    const geoBlockedGameIds = db
-      .select({ gameId: gameGeoRule.gameId })
-      .from(gameGeoRule)
-      .groupBy(gameGeoRule.gameId);
-    const geoBlockedProviderIds = db
-      .select({ providerId: providerGeoRule.providerId })
-      .from(providerGeoRule);
-    const anyGameGeoRule = this.rowsWhere({
-      table: gameGeoRule,
-      column: gameGeoRule.gameId,
-      equals: game.id,
-    });
-    const anyProviderGeoRule = this.rowsWhere({
-      table: providerGeoRule,
-      column: providerGeoRule.providerId,
-      equals: game.providerId,
     });
     return this.listGames({
       ...input,
@@ -328,30 +319,30 @@ export class GamingService {
           : undefined,
         gameTypes ? inArray(game.gameType, gameTypes) : undefined,
         reviewStatuses ? inArray(game.reviewStatus, reviewStatuses) : undefined,
-        geoBlocked === undefined
+        geoBlocked === undefined || !geo
           ? undefined
           : geoBlocked
-            ? or(
-                inArray(game.id, geoBlockedGameIds),
-                inArray(game.providerId, geoBlockedProviderIds),
+            ? ruledBy(
+                geo.games.map((r) => r.gameId),
+                geo.providers.map((r) => r.providerId),
               )
-            : // NOT EXISTS, not NOT IN: the anti join keeps scaling with the rule table.
-              and(notExists(anyGameGeoRule), notExists(anyProviderGeoRule)),
-        geoBlockedCountries
-          ? this.linkedToAll({
-              values: geoBlockedCountries,
-              pairs: union(
-                db
-                  .select({ gameId: gameGeoRule.gameId, value: gameGeoRule.countryCode })
-                  .from(gameGeoRule)
-                  .where(inArray(gameGeoRule.countryCode, geoBlockedCountries)),
-                db
-                  .select({ gameId: game.id, value: providerGeoRule.countryCode })
-                  .from(providerGeoRule)
-                  .innerJoin(game, eq(game.providerId, providerGeoRule.providerId))
-                  .where(inArray(providerGeoRule.countryCode, geoBlockedCountries)),
+            : not(
+                ruledBy(
+                  geo.games.map((r) => r.gameId),
+                  geo.providers.map((r) => r.providerId),
+                ),
               ),
-            })
+        geoBlockedCountries && geo
+          ? and(
+              ...geoBlockedCountries.map((countryCode) =>
+                ruledBy(
+                  geo.games.filter((r) => r.countryCode === countryCode).map((r) => r.gameId),
+                  geo.providers
+                    .filter((r) => r.countryCode === countryCode)
+                    .map((r) => r.providerId),
+                ),
+              ),
+            )
           : undefined,
         geoAvailableFilter,
         matchingGameIds
@@ -361,32 +352,35 @@ export class GamingService {
     });
   }
 
+  private async loadGeoRules(
+    gameGeoCheck: GameGeoCheckPort,
+    geoBlocked: boolean | undefined,
+    countries: string[],
+  ): Promise<GameGeoRules> {
+    const listGeoRulePairs = gameGeoCheck.listGeoRulePairs;
+    if (!listGeoRulePairs) {
+      throw new GameGeoFiltersUnavailableError();
+    }
+    return listGeoRulePairs.call(
+      gameGeoCheck,
+      geoBlocked === undefined ? { countries: [...new Set(countries)] } : undefined,
+    );
+  }
+
   private async buildGeoAvailableFilter(
     countries: string[],
     gameGeoCheck: GameGeoCheckPort,
+    geo: GameGeoRules,
   ): Promise<SQL | undefined> {
     const globallyBlocked = new Set(await gameGeoCheck.listGloballyBlockedCountries());
     if (countries.some((countryCode) => globallyBlocked.has(countryCode))) {
       return sql`false`;
     }
-    const db = this.drizzle.db;
-    return and(
-      notExists(
-        db
-          .select({ one: sql`1` })
-          .from(gameGeoRule)
-          .where(and(eq(gameGeoRule.gameId, game.id), inArray(gameGeoRule.countryCode, countries))),
-      ),
-      notExists(
-        db
-          .select({ one: sql`1` })
-          .from(providerGeoRule)
-          .where(
-            and(
-              eq(providerGeoRule.providerId, game.providerId),
-              inArray(providerGeoRule.countryCode, countries),
-            ),
-          ),
+    const wanted = new Set(countries);
+    return not(
+      ruledBy(
+        geo.games.filter((r) => wanted.has(r.countryCode)).map((r) => r.gameId),
+        geo.providers.filter((r) => wanted.has(r.countryCode)).map((r) => r.providerId),
       ),
     );
   }

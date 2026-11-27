@@ -8,12 +8,14 @@ import { DRIZZLE, loadExtensions } from '@openora/core/server';
 import { exchangeRateQuote } from '@openora/core/fx/schema/exchange-rate';
 import {
   DepositAddressSchema,
+  JobRunResultSchema,
   TransactionResultSchema,
   WalletReconciliationFindingSchema,
 } from '@openora/core/wallet/contract';
 import {
   wallet,
   walletBalance,
+  walletJobRun,
   walletReconciliationFinding,
   walletTransaction,
   walletWithdrawalAddress,
@@ -64,6 +66,42 @@ export async function bootWalletE2e(
 }
 
 export const closeWalletE2e = (e2e: WalletE2e | undefined) => closeE2e(e2e ?? {});
+
+export async function startWalletJobRun(
+  { admin }: WalletE2e,
+  path: string,
+  body?: Record<string, unknown>,
+) {
+  const response = await admin.post(path, body);
+  if (response.status !== 200) {
+    throw new Error(`wallet job failed to start (${response.status}): ${await response.text()}`);
+  }
+  return JobRunResultSchema.parse(await response.json()).runId;
+}
+
+export async function waitForWalletJobRun({ app }: WalletE2e, runId: string) {
+  return vi.waitFor(
+    async () => {
+      const [row] = await app.container
+        .get(DRIZZLE)
+        .db.select()
+        .from(walletJobRun)
+        .where(eq(walletJobRun.runId, runId));
+      if (!row?.finishedAt) {
+        throw new Error(`run ${runId} has not finished`);
+      }
+      return row;
+    },
+    { timeout: 15_000, interval: 100 },
+  );
+}
+
+export const walletFindingsOfRun = ({ app }: WalletE2e, runId: string) =>
+  app.container
+    .get(DRIZZLE)
+    .db.select()
+    .from(walletReconciliationFinding)
+    .where(eq(walletReconciliationFinding.runId, runId));
 
 const uniqueCurrency = () =>
   Array.from(randomBytes(8), (byte) => String.fromCharCode(65 + (byte % 26))).join('');

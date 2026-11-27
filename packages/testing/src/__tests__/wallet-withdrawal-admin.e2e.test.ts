@@ -7,6 +7,7 @@ import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
+  AdminWalletTransactionSchema,
   AutoWithdrawalRuleSchema,
   TransactionResultSchema,
   WalletAutoWithdrawalConfigSchema,
@@ -66,11 +67,6 @@ const approve = (client: TestClient, id: string) =>
 const reject = (client: TestClient, id: string, reason = 'e2e rejection') =>
   client.post(`/wallet/withdrawals/${id}/reject`, { reason }).then(send);
 const funded = (amount?: string) => newFundedPlayer(e2e, amount);
-const refundsOf = (transactionId: string) =>
-  db()
-    .select()
-    .from(walletTransaction)
-    .where(eq(walletTransaction.reversedTransactionId, transactionId));
 const amountOf = (value: string) => `${value}.000000000000000000`;
 
 async function adminUserId() {
@@ -269,16 +265,6 @@ describe('admin withdrawal queue decisions', () => {
       }),
     );
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(amountOf('100'));
-    expect(await refundsOf(id)).toEqual([
-      expect.objectContaining({
-        type: 'hold_refund',
-        status: 'completed',
-        direction: 'credit',
-        currency: player.currency,
-        amount: amountOf('10'),
-        balanceAfter: amountOf('100'),
-      }),
-    ]);
     const audited = (await waitForAudit(e2e, 'wallet.withdrawal.rejected', player.playerId)).filter(
       (row) => row.after?.['transactionId'] === id,
     );
@@ -302,7 +288,34 @@ describe('admin withdrawal queue decisions', () => {
     expect(second.status).toBe(409);
     expect(second.body).toEqual(expect.objectContaining({ code: 'CONFLICT' }));
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(amountOf('100'));
-    expect(await refundsOf(id)).toHaveLength(1);
+
+    const history = await e2e.admin.get(`/wallet/transactions/${player.userId}`);
+    expect(history.status).toBe(200);
+    const { items } = z
+      .object({ items: z.array(AdminWalletTransactionSchema) })
+      .parse(await history.json());
+    expect(items).toHaveLength(3);
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id,
+          type: 'withdrawal',
+          status: 'rejected',
+          direction: 'debit',
+          balanceAfter: amountOf('90'),
+        }),
+        expect.objectContaining({
+          type: 'hold_refund',
+          status: 'completed',
+          direction: 'credit',
+          currency: player.currency,
+          amount: amountOf('10'),
+          balanceAfter: amountOf('100'),
+        }),
+      ]),
+    );
+    const credit = items.find((item) => item.type === 'hold_refund');
+    expect(credit && (await transactionById(e2e, credit.id))?.reversedTransactionId).toBe(id);
   });
 
   it('rejecting a withdrawal after it was approved is refused and refunds nothing', async () => {
@@ -313,7 +326,6 @@ describe('admin withdrawal queue decisions', () => {
     const rejected = await reject(e2e.admin, id);
 
     expect(rejected.status).toBe(409);
-    expect(await refundsOf(id)).toEqual([]);
     expect(await balanceOf(e2e, player.userId, player.currency)).toBe(amountOf('90'));
     expect((await transactionById(e2e, id))?.status).toBe('completed');
   });

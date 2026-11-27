@@ -274,7 +274,7 @@ export default {
 
     // createApp runs this factory in every process, a `:no-routes` or worker-only one included
     // (module-registry.ts), synchronously before any event is delivered.
-    ctx.routers.add('gaming', (c) => {
+    ctx.routers.add('gaming', (c, options) => {
       drizzleRef = c.get(DRIZZLE);
       // Fails closed until it lands: a stake on a game not yet projected is refused, never played.
       const bootBackfill = new AbortController();
@@ -290,25 +290,31 @@ export default {
         }
       });
       const jobQueue = c.get(JOB_QUEUE);
-      // The boot run alone misses a game an old process imports after it during a rolling deploy.
-      void jobQueue
-        .schedule(
-          LEDGER_GAME_RECONCILE_QUEUE,
-          'gaming-ledger-game-reconcile',
-          {},
-          { everyMs: LEDGER_GAME_RECONCILE_INTERVAL_MS },
-        )
-        .catch((err: unknown) => {
-          logger.error({ err }, 'gaming: ledger_game reconcile schedule failed');
-        });
+      // A required-only process leaves the schedules to the service that selects gaming (ADR-0050).
+      const schedules = options?.mounted !== false;
+      if (schedules) {
+        // The boot run alone misses a game an old process imports after it during a rolling deploy.
+        void jobQueue
+          .schedule(
+            LEDGER_GAME_RECONCILE_QUEUE,
+            'gaming-ledger-game-reconcile',
+            {},
+            { everyMs: LEDGER_GAME_RECONCILE_INTERVAL_MS },
+          )
+          .catch((err: unknown) => {
+            logger.error({ err }, 'gaming: ledger_game reconcile schedule failed');
+          });
+      }
       catalogCacheRef = c.get(CACHE);
       const sortCatalog = c.get(GAME_SORT_CATALOG);
       const sorts = new GameSortService(sortCatalog);
       rankingRef = new GameSortRankingService(c.get(DRIZZLE), sorts);
       triggersRef = new GameSortTriggerService(c.get(DRIZZLE), jobQueue, sortCatalog);
-      triggersRef.scheduleSweep();
       const { rules, membership, triggers } = membershipServices(c);
-      triggers.scheduleSweep();
+      if (schedules) {
+        triggersRef.scheduleSweep();
+        triggers.scheduleSweep();
+      }
       return createGamingRouter({
         gaming: gamingService(c),
         providers: new GameProviderService(

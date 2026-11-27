@@ -5,6 +5,9 @@ import {
   EXCHANGE_RATE_READER,
   JOB_QUEUE,
   PLATFORM_CONFIG,
+  IDENTITY_READER,
+  PLAYER_RANK_READER,
+  LEDGER_PLAY_ELIGIBILITY,
   PLAY_ELIGIBILITY,
   RATE_LIMITER,
   RG_EXCLUSION_READER,
@@ -36,6 +39,7 @@ import {
   type TypedContainer,
 } from '@openora/core/server';
 import { RakebackService } from './service/rakeback.service.js';
+import { PlayerRankReaderService } from './service/player-rank-reader.service.js';
 import {
   RakebackClaimConflictError,
   RakebackClaimService,
@@ -169,10 +173,11 @@ const streakService = (c: TypedContainer<CoreTokenCatalog>) =>
     rates: c.get(EXCHANGE_RATE_READER),
     logger,
     audit: c.get(AUDIT_WRITER),
+    identity: c.get(IDENTITY_READER),
   });
 
 const raceService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+  new RaceService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger, c.get(IDENTITY_READER));
 
 const promoConfig = (c: TypedContainer<CoreTokenCatalog>) =>
   resolvePromoConfig(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined);
@@ -187,17 +192,25 @@ const rakebackService = (c: TypedContainer<CoreTokenCatalog>) =>
   );
 
 const rankChallengeService = (c: TypedContainer<CoreTokenCatalog>) =>
-  new RankChallengeService(c.get(DRIZZLE), c.get(EXCHANGE_RATE_READER), logger);
+  new RankChallengeService(
+    c.get(DRIZZLE),
+    c.get(EXCHANGE_RATE_READER),
+    logger,
+    c.get(IDENTITY_READER),
+  );
 
 export default {
   id: 'gamification',
   dependsOn: ['exchange-rate', 'audit'],
+  requiresPorts: [IDENTITY_READER],
   register(ctx) {
     // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(rakebackLiabilityTool, (c) => {
       const liability = new RakebackLiabilityService(c.get(DRIZZLE));
       return (input) => liability.report(input);
     });
+
+    ctx.provide(PLAYER_RANK_READER, (c) => new PlayerRankReaderService(c.get(DRIZZLE)));
 
     ctx.provide(
       WAGER_TRACKING,
@@ -499,7 +512,7 @@ export default {
       },
     });
 
-    ctx.routers.add('promo-gamification', (c) => {
+    ctx.routers.add('promo-gamification', (c, options) => {
       // A cash prize/cashback credit lands here when its own source (a race, a rank challenge
       // tier) is priced in something else - see `priceForPayout`.
       const payoutCurrency = resolveWalletDefaultCurrency(
@@ -508,7 +521,7 @@ export default {
       rankPayouts = new RankPayoutService(
         c.get(DRIZZLE),
         c.has(BONUS_GRANTS) ? c.get(BONUS_GRANTS) : undefined,
-        c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        c.has(LEDGER_PLAY_ELIGIBILITY) ? c.get(LEDGER_PLAY_ELIGIBILITY) : undefined,
         c.get(EXCHANGE_RATE_READER),
         c.get(WALLET_READER),
         c.get(EVENT_BUS),
@@ -534,6 +547,7 @@ export default {
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         logger,
+        identity: c.get(IDENTITY_READER),
       });
       rankChallengePayouts = new RankChallengePayoutService(
         c.get(DRIZZLE),
@@ -544,6 +558,7 @@ export default {
         c.get(AUDIT_WRITER),
         c.get(EVENT_BUS),
         logger,
+        c.get(IDENTITY_READER),
       );
       streaks = streakService(c);
       events = c.get(EVENT_BUS);
@@ -554,7 +569,7 @@ export default {
       rakebackClaims = new RakebackClaimService({
         drizzle: c.get(DRIZZLE),
         wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
-        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        eligibility: c.has(LEDGER_PLAY_ELIGIBILITY) ? c.get(LEDGER_PLAY_ELIGIBILITY) : undefined,
         exclusions: c.has(RG_EXCLUSION_READER) ? c.get(RG_EXCLUSION_READER) : undefined,
         rates: c.get(EXCHANGE_RATE_READER),
         referenceCurrency,
@@ -562,91 +577,105 @@ export default {
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         logger,
+        identity: c.get(IDENTITY_READER),
       });
       rankRewardClaims = new RankRewardClaimService({
         drizzle: c.get(DRIZZLE),
         wallet: c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined,
-        eligibility: c.has(PLAY_ELIGIBILITY) ? c.get(PLAY_ELIGIBILITY) : undefined,
+        eligibility: c.has(LEDGER_PLAY_ELIGIBILITY) ? c.get(LEDGER_PLAY_ELIGIBILITY) : undefined,
         exclusions: c.has(RG_EXCLUSION_READER) ? c.get(RG_EXCLUSION_READER) : undefined,
         audit: c.get(AUDIT_WRITER),
         events: c.get(EVENT_BUS),
         logger,
+        identity: c.get(IDENTITY_READER),
       });
       const jobQueue = c.get(JOB_QUEUE);
       jobs = jobQueue;
-      // The periodic kinds share one tick: each run pays only a period that has closed since
-      // the last, so when a player is actually paid is the anchor in the ladder's settings.
-      for (const [kind, cron] of [
-        ['levelUp', schedule.ranks.payoutCron],
-        ['daily', schedule.ranks.periodicCron],
-        ['weekly', schedule.ranks.periodicCron],
-        ['monthly', schedule.ranks.periodicCron],
-      ] as const) {
+      if (options?.mounted !== false) {
+        // The periodic kinds share one tick: each run pays only a period that has closed since
+        // the last, so when a player is actually paid is the anchor in the ladder's settings.
+        for (const [kind, cron] of [
+          ['levelUp', schedule.ranks.payoutCron],
+          ['daily', schedule.ranks.periodicCron],
+          ['weekly', schedule.ranks.periodicCron],
+          ['monthly', schedule.ranks.periodicCron],
+        ] as const) {
+          void jobQueue
+            .schedule(RANK_PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
+            .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));
+        }
+        // Milestone rewards are claimed by the player now; drop the schedule that used to pay them.
         void jobQueue
-          .schedule(RANK_PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
-          .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));
+          .unschedule(STREAK_PAYOUT_QUEUE, 'promo-streak-payout.cron')
+          .catch((err: unknown) => logger.error({ err }, 'streak payout unschedule failed'));
+        void jobQueue
+          .schedule(
+            STREAK_ANNOUNCE_QUEUE,
+            'promo-streak-announce.cron',
+            {},
+            { cron: STREAK_ANNOUNCE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'streak announcement schedule failed'));
+        void jobQueue
+          .schedule(
+            STREAK_CLOSE_QUEUE,
+            'promo-streak-close.cron',
+            {},
+            { cron: schedule.streaks.closeCron },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'streak close schedule failed'));
+        void jobQueue
+          .schedule(
+            STREAK_EXPIRE_QUEUE,
+            'promo-streak-expire.cron',
+            {},
+            { cron: STREAK_EXPIRE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'streak expiry schedule failed'));
+        void jobQueue
+          .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
+          .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
+        void jobQueue
+          .schedule(
+            RANK_CHALLENGE_PAYOUT_QUEUE,
+            'promo-rank-challenge-payout.cron',
+            {},
+            { cron: RANK_CHALLENGE_PAYOUT_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rank challenge payout schedule failed'));
+        void jobQueue
+          .schedule(
+            RANK_ANNOUNCE_QUEUE,
+            'promo-rank-announce.cron',
+            {},
+            { cron: RANK_ANNOUNCE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rank announcement schedule failed'));
+        void jobQueue
+          .schedule(
+            RANK_PERIOD_PRUNE_QUEUE,
+            'promo-rank-period-prune.cron',
+            {},
+            { cron: RANK_PERIOD_PRUNE_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rank period prune schedule failed'));
+        void jobQueue
+          .schedule(
+            RAKEBACK_SWEEP_QUEUE,
+            'promo-rakeback-sweep.cron',
+            {},
+            { cron: RAKEBACK_SWEEP_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rakeback sweep schedule failed'));
+        void jobQueue
+          .schedule(
+            RAKEBACK_NOTIFY_QUEUE,
+            'promo-rakeback-notify.cron',
+            {},
+            { cron: RAKEBACK_NOTIFY_CRON },
+          )
+          .catch((err: unknown) => logger.error({ err }, 'rakeback reminder schedule failed'));
       }
-      // Milestone rewards are claimed by the player now; drop the schedule that used to pay them.
-      void jobQueue
-        .unschedule(STREAK_PAYOUT_QUEUE, 'promo-streak-payout.cron')
-        .catch((err: unknown) => logger.error({ err }, 'streak payout unschedule failed'));
-      void jobQueue
-        .schedule(
-          STREAK_ANNOUNCE_QUEUE,
-          'promo-streak-announce.cron',
-          {},
-          { cron: STREAK_ANNOUNCE_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'streak announcement schedule failed'));
-      void jobQueue
-        .schedule(
-          STREAK_CLOSE_QUEUE,
-          'promo-streak-close.cron',
-          {},
-          { cron: schedule.streaks.closeCron },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'streak close schedule failed'));
-      void jobQueue
-        .schedule(STREAK_EXPIRE_QUEUE, 'promo-streak-expire.cron', {}, { cron: STREAK_EXPIRE_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'streak expiry schedule failed'));
-      void jobQueue
-        .schedule(RACE_PAYOUT_QUEUE, 'promo-race-payout.cron', {}, { cron: RACE_PAYOUT_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'race payout schedule failed'));
-      void jobQueue
-        .schedule(
-          RANK_CHALLENGE_PAYOUT_QUEUE,
-          'promo-rank-challenge-payout.cron',
-          {},
-          { cron: RANK_CHALLENGE_PAYOUT_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rank challenge payout schedule failed'));
-      void jobQueue
-        .schedule(RANK_ANNOUNCE_QUEUE, 'promo-rank-announce.cron', {}, { cron: RANK_ANNOUNCE_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'rank announcement schedule failed'));
-      void jobQueue
-        .schedule(
-          RANK_PERIOD_PRUNE_QUEUE,
-          'promo-rank-period-prune.cron',
-          {},
-          { cron: RANK_PERIOD_PRUNE_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rank period prune schedule failed'));
-      void jobQueue
-        .schedule(
-          RAKEBACK_SWEEP_QUEUE,
-          'promo-rakeback-sweep.cron',
-          {},
-          { cron: RAKEBACK_SWEEP_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rakeback sweep schedule failed'));
-      void jobQueue
-        .schedule(
-          RAKEBACK_NOTIFY_QUEUE,
-          'promo-rakeback-notify.cron',
-          {},
-          { cron: RAKEBACK_NOTIFY_CRON },
-        )
-        .catch((err: unknown) => logger.error({ err }, 'rakeback reminder schedule failed'));
 
       return createGamificationRouter({
         ranks: rankService(c),
@@ -661,7 +690,11 @@ export default {
         races: raceService(c),
         raceAdmin: new RaceAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         rankChallenge: rankChallengeService(c),
-        rankChallengeAdmin: new RankChallengeAdminService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        rankChallengeAdmin: new RankChallengeAdminService(
+          c.get(DRIZZLE),
+          c.get(AUDIT_WRITER),
+          c.get(IDENTITY_READER),
+        ),
         rakebackClaims,
         rakebackAdmin: new RakebackAdminService({
           drizzle: c.get(DRIZZLE),

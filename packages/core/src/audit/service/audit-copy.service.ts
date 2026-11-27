@@ -102,7 +102,7 @@ async function withDb<T>(
 
 // The target is reached as migrate reaches it: the main database's owner credentials on the audit
 // database's name, because the owner alone may setval the sequence and create the fence trigger.
-function targetUrlOf(adminUrl: string, auditUrl: string): string {
+export function targetUrlOf(adminUrl: string, auditUrl: string): string {
   const database = databaseOf(auditUrl);
   if (database === databaseOf(adminUrl)) {
     throw new CopyError('AUDIT_DATABASE_URL must name a database other than the main one');
@@ -529,7 +529,7 @@ async function drainOutboxToLegacy(
   });
 }
 
-function required(env: Record<string, string | undefined>, key: string): string {
+export function required(env: Record<string, string | undefined>, key: string): string {
   const value = env[key];
   if (!value) {
     throw new CopyError(`${key} is required`);
@@ -540,7 +540,7 @@ function required(env: Record<string, string | undefined>, key: string): string 
 type Flags = { apply: boolean; fence: boolean; drain: boolean };
 
 // A parse error's own message can echo an argument, which may be a URL with a password.
-function parseFlags(argv: readonly string[]): Flags {
+export function parseFlags(argv: readonly string[]): Flags {
   try {
     const { values } = parseArgs({
       args: [...argv],

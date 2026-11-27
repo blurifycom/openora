@@ -27,6 +27,13 @@ import {
 } from '@openora/core/contracts';
 import { and, asc, desc, eq, gte, inArray, lt, lte, notInArray, sql } from 'drizzle-orm';
 import {
+  assertFresh,
+  beat,
+  databaseNow,
+  lateAlertClock,
+  type ProjectionFreshness,
+} from './ledger-projection-heartbeat.service.js';
+import {
   LOSS_LEGS,
   WAGER_LEGS,
   ledgerUserLimit,
@@ -55,6 +62,14 @@ function rowsOf(snapshot: RgLimitsSnapshot): LimitRow[] {
     changedAt: new Date(limit.changedAt),
   }));
 }
+
+const projectionKey = (userId: User['id']) => `rg-limit-projection:${userId}`;
+
+const slotsOf = (snapshot: RgLimitsSnapshot) => [
+  ...new Set(
+    snapshot.limits.map((limit) => limitSlotKey(snapshot.userId, limit.type, limit.period)),
+  ),
+];
 
 function sameRows(held: readonly LimitRow[], wanted: readonly LimitRow[]): boolean {
   const heldById = new Map(held.map((row) => [row.limitId, row]));
@@ -112,7 +127,14 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
   constructor(
     private readonly drizzle: Pick<DrizzleService, 'db'>,
     private readonly rates: ExchangeRateReader | undefined,
+    private readonly freshness?: ProjectionFreshness,
   ) {}
+
+  private readonly lateAlert = lateAlertClock();
+
+  heartbeat(): Promise<void> {
+    return beat(this.drizzle.db, 'rg_limits');
+  }
 
   checkDeposit(
     tx: unknown,
@@ -157,16 +179,16 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     amount: string,
     amountCurrency: string,
   ): Promise<RgLimitDecision> {
+    await assertFresh(db, 'rg_limits', this.freshness, this.lateAlert);
     const scanned = await this.readLimits(db, userId, type);
     if (scanned.length === 0) {
       return { allowed: true };
     }
-    // Re-read under the slot locks: the scan is unlocked, so a lower limit can commit between the
-    // two. Its writer holds the same slot lock, so once the lock is ours the projection row is the
-    // committed truth for the rest of the caller's transaction.
     const slots = [...new Set(scanned.map((row) => limitSlotKey(userId, row.type, row.period)))];
-    const limits = await withAdvisoryXactLocks(db, slots, () => this.readLimits(db, userId, type));
-    const now = new Date();
+    const limits = await withAdvisoryXactLocks(db, slots, () =>
+      withAdvisoryXactLocks(db, [projectionKey(userId)], () => this.readLimits(db, userId, type)),
+    );
+    const now = await databaseNow(db);
     for (const row of limits) {
       const refusal = await this.refusalOf(db, row, amount, amountCurrency, now);
       if (refusal) {
@@ -251,6 +273,25 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     await replaceRows(db, parsed.userId, rowsOf(parsed));
   }
 
+  async writeFromRemote(snapshot: RgLimitsSnapshot, tx: unknown): Promise<void> {
+    const db = tx as DrizzleTx;
+    const parsed = RgLimitsSnapshotSchema.parse(snapshot);
+    await withAdvisoryXactLocks(db, [projectionKey(parsed.userId)], async () => {
+      const written = await db
+        .insert(ledgerUserLimitVersion)
+        .values({ userId: parsed.userId, version: parsed.version })
+        .onConflictDoUpdate({
+          target: ledgerUserLimitVersion.userId,
+          set: { version: sql`excluded.version`, updatedAt: sql`now()` },
+          setWhere: sql`${ledgerUserLimitVersion.version} <= excluded.version`,
+        })
+        .returning({ version: ledgerUserLimitVersion.version });
+      if (written.length > 0) {
+        await replaceRows(db, parsed.userId, rowsOf(parsed));
+      }
+    });
+  }
+
   /** The newest valid snapshot per user; a snapshot the contract rejects is logged and skipped. */
   private newestPerUser(snapshots: readonly RgLimitsSnapshot[]): Map<User['id'], RgLimitsSnapshot> {
     const newest = new Map<User['id'], RgLimitsSnapshot>();
@@ -302,30 +343,32 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
 
     let written = 0;
     for (const snapshot of newer) {
-      const wrote = await this.drizzle.db.transaction(async (tx) => {
-        const inserted = await tx
-          .insert(ledgerUserLimitVersion)
-          .values({ userId: snapshot.userId, version: snapshot.version })
-          .onConflictDoNothing()
-          .returning({ userId: ledgerUserLimitVersion.userId });
-        if (inserted.length === 0) {
-          const updated = await tx
-            .update(ledgerUserLimitVersion)
-            .set({ version: snapshot.version, updatedAt: sql`now()` })
-            .where(
-              and(
-                eq(ledgerUserLimitVersion.userId, snapshot.userId),
-                lt(ledgerUserLimitVersion.version, snapshot.version),
-              ),
-            )
+      const wrote = await this.drizzle.db.transaction((tx) =>
+        withAdvisoryXactLocks(tx, slotsOf(snapshot), async () => {
+          const inserted = await tx
+            .insert(ledgerUserLimitVersion)
+            .values({ userId: snapshot.userId, version: snapshot.version })
+            .onConflictDoNothing()
             .returning({ userId: ledgerUserLimitVersion.userId });
-          if (updated.length === 0) {
-            return false;
+          if (inserted.length === 0) {
+            const updated = await tx
+              .update(ledgerUserLimitVersion)
+              .set({ version: snapshot.version, updatedAt: sql`now()` })
+              .where(
+                and(
+                  eq(ledgerUserLimitVersion.userId, snapshot.userId),
+                  lt(ledgerUserLimitVersion.version, snapshot.version),
+                ),
+              )
+              .returning({ userId: ledgerUserLimitVersion.userId });
+            if (updated.length === 0) {
+              return false;
+            }
           }
-        }
-        await replaceRows(tx, snapshot.userId, rowsOf(snapshot));
-        return true;
-      });
+          await replaceRows(tx, snapshot.userId, rowsOf(snapshot));
+          return true;
+        }),
+      );
       written += wrote ? 1 : 0;
     }
     return written;

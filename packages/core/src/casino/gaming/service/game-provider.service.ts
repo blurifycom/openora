@@ -95,7 +95,7 @@ function toProviderDetail(
   };
 }
 
-function isMappingConstraint(name: string | null) {
+export function isMappingConstraint(name: string | null) {
   return (
     name === 'game_provider_aggregator_mapping_provider_aggregator_key' ||
     name === 'game_provider_aggregator_mapping_aggregator_vendor_id_key'

@@ -79,14 +79,14 @@ export async function readExclusionFacts(
   };
 }
 
-function isInForce(row: ExclusionRow, now: Date): boolean {
+export function isInForce(row: ExclusionRow, now: Date): boolean {
   if (row.status !== 'active') {
     return false;
   }
   return row.kind === 'self_exclusion' || (row.expiresAt !== null && row.expiresAt > now);
 }
 
-function endedAt(row: ExclusionRow, now: Date): Date | null {
+export function endedAt(row: ExclusionRow, now: Date): Date | null {
   if (row.status === 'lifted') {
     return ranOutBeforeLift(row) ? row.expiresAt : row.liftedAt;
   }
@@ -99,7 +99,7 @@ function endedAt(row: ExclusionRow, now: Date): Date | null {
   return null;
 }
 
-function ranOutBeforeLift(row: ExclusionRow): boolean {
+export function ranOutBeforeLift(row: ExclusionRow): boolean {
   return (
     row.kind === 'cooling_off' &&
     row.liftedAt !== null &&
@@ -108,7 +108,7 @@ function ranOutBeforeLift(row: ExclusionRow): boolean {
   );
 }
 
-function latestEnd(rows: readonly ExclusionRow[], kind: ExclusionRow['kind'], now: Date) {
+export function latestEnd(rows: readonly ExclusionRow[], kind: ExclusionRow['kind'], now: Date) {
   let latest: Date | null = null;
   for (const row of rows) {
     const end = row.kind === kind ? endedAt(row, now) : null;

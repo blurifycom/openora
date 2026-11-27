@@ -1,8 +1,10 @@
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import {
+  userContactsOf,
   MONEY_PRECISION,
   MONEY_SCALE,
   type BonusGrantLedgerReader,
+  type IdentityReader,
   type PageQuery,
   type Paginated,
   type Uuid,
@@ -13,7 +15,6 @@ import {
   serializeRow,
   type DrizzleService,
 } from '@openora/core/server';
-import { user } from '@openora/core/pam/schema/identity';
 import {
   promoGrant,
   promoGrantEntry,
@@ -95,8 +96,6 @@ const ADMIN_COLUMNS = {
   userId: promoGrant.userId,
   forfeitNote: promoGrant.forfeitNote,
   forfeitedById: promoGrant.forfeitedBy,
-  forfeitedByName: user.name,
-  forfeitedByEmail: user.email,
   closedAmount: sql<string | null>`case when ${promoGrant.status} in ('forfeited', 'expired') then (
     select abs(sum(${promoGrantEntry.bonusAmount}))::text
     from ${promoGrantEntry}
@@ -104,8 +103,6 @@ const ADMIN_COLUMNS = {
       and ${promoGrantEntry.type} in ('forfeit', 'expire')
   ) end`,
 };
-
-const withForfeitActor = eq(user.id, promoGrant.forfeitedBy);
 
 /**
  * A grant is a credit the player received, so every grant that was ever funded reads as a
@@ -137,7 +134,25 @@ export const bonusGrantLedger: BonusGrantLedgerReader = {
 
 /** What a player is allowed to see of their own bonuses. The terms snapshot stays internal. */
 export class GrantReaderService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly identity: IdentityReader,
+  ) {}
+
+  private async withForfeitActors(rows: readonly UnnamedAdminGrantRow[]): Promise<AdminGrant[]> {
+    const contacts = await userContactsOf(
+      this.identity,
+      rows.flatMap((row) => (row.forfeitedById === null ? [] : [row.forfeitedById])),
+    );
+    return rows.map((row) => {
+      const contact = row.forfeitedById === null ? undefined : contacts.get(row.forfeitedById);
+      return toAdminGrant({
+        ...row,
+        forfeitedByName: contact?.name ?? null,
+        forfeitedByEmail: contact?.email ?? null,
+      });
+    });
+  }
 
   async list(
     userId: Uuid,
@@ -247,12 +262,11 @@ export class GrantReaderService {
       .select(ADMIN_COLUMNS)
       .from(promoGrant)
       .leftJoin(promoOffer, withOffer)
-      .leftJoin(user, withForfeitActor)
       .where(eq(promoGrant.userId, userId))
       .orderBy(desc(promoGrant.createdAt), desc(promoGrant.id))
       .limit(query.limit)
       .offset(pageToOffset(query.page, query.limit));
-    return rows.map(toAdminGrant);
+    return this.withForfeitActors(rows);
   }
 
   async getForAdmin(id: PromoGrant['id']): Promise<AdminGrant> {
@@ -260,12 +274,12 @@ export class GrantReaderService {
       .select(ADMIN_COLUMNS)
       .from(promoGrant)
       .leftJoin(promoOffer, withOffer)
-      .leftJoin(user, withForfeitActor)
       .where(eq(promoGrant.id, id));
     if (!row) {
       throw new GrantNotFoundError(id);
     }
-    return toAdminGrant(row);
+    const [grant] = await this.withForfeitActors([row]);
+    return grant;
   }
 
   /**
@@ -302,6 +316,8 @@ type AdminGrantRow = PlayerGrantRow & {
   forfeitedByEmail: string | null;
   closedAmount: string | null;
 };
+
+type UnnamedAdminGrantRow = Omit<AdminGrantRow, 'forfeitedByName' | 'forfeitedByEmail'>;
 
 function toAdminGrant({
   forfeitedById,

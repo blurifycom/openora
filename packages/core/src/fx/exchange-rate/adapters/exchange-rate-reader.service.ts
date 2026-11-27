@@ -25,7 +25,7 @@ const MAX_FAILURE_ENTRIES = 512;
 
 type StoredQuote = { rate: string; providerAsOf: Date };
 
-function selectProvider(
+export function selectProvider(
   currency: string,
   cryptoProvider: ExchangeRateProvider | undefined,
   fiatProvider: ExchangeRateProvider | undefined,

@@ -16,7 +16,7 @@ export type MailPayloadCipher = {
 
 const MAIL_PAYLOAD_KEY_INFO = 'openora:mail-payload:v1';
 
-const toKey = (secret: string): Buffer =>
+export const toKey = (secret: string): Buffer =>
   Buffer.from(hkdfSync('sha256', secret, Buffer.alloc(0), MAIL_PAYLOAD_KEY_INFO, 32));
 
 export function createMailPayloadCipher(secret: string): MailPayloadCipher {

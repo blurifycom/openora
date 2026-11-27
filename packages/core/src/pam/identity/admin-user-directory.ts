@@ -33,7 +33,7 @@ import { expireActiveSessions } from './service/session.service.js';
 // username + KYC without leaking the schema to the consumer module.
 import { player } from '@openora/core/pam/schema/profile';
 
-const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&');
+export const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&');
 
 // Identity owns the `user` table, so it owns the admin directory port.
 // admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.
@@ -82,7 +82,9 @@ type AdminUserPatch = { isActive?: boolean; role?: string };
  * The revocation a patch calls for, keyed on the state it writes rather than on the change it
  * makes: repeating a deactivation or a demotion revokes again.
  */
-function automaticMcpRevokeReason(patch: AdminUserPatch): McpTokenAutomaticRevokeReason | null {
+export function automaticMcpRevokeReason(
+  patch: AdminUserPatch,
+): McpTokenAutomaticRevokeReason | null {
   if (patch.isActive === false) {
     return 'admin_disabled';
   }

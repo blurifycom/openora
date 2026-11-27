@@ -6,7 +6,7 @@ import { createLogger, type DrizzleService, type DrizzleTx } from '@openora/core
 import {
   PlayEligibilitySnapshotSchema,
   playRefusalOf,
-  type PlayEligibilityPort,
+  type LedgerPlayEligibilityPort,
   type PlayEligibilityProjectionPort,
   type PlayEligibilitySnapshot,
   type PlayEligibilityState,
@@ -15,6 +15,12 @@ import {
 } from '@openora/core/contracts';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { ledgerPlayEligibility } from '../schema/index.js';
+import {
+  assertFresh,
+  beat,
+  lateAlertClock,
+  type ProjectionFreshness,
+} from './ledger-projection-heartbeat.service.js';
 
 const log = createLogger('wallet:play-eligibility');
 
@@ -30,6 +36,15 @@ function rowOf(input: PlayEligibilitySnapshot): ProjectionRow {
     banExpires: toDate(snapshot.banExpires),
   };
 }
+
+const stateOf = (row: PlayEligibilityState): PlayEligibilityState => ({
+  rgBlocked: row.rgBlocked,
+  rgBlockedUntil: row.rgBlockedUntil,
+  isActive: row.isActive,
+  banned: row.banned,
+  banExpires: row.banExpires,
+  status: row.status,
+});
 
 const sameInstant = (a: Date | null, b: Date | null) => a?.getTime() === b?.getTime();
 
@@ -70,32 +85,70 @@ const fromExcluded = {
   updatedAt: sql`now()`,
 };
 
-export class LedgerPlayEligibilityService
-  implements Required<PlayEligibilityPort>, PlayEligibilityProjectionPort
-{
-  constructor(private readonly drizzle: Pick<DrizzleService, 'db'>) {}
+type EligibilityRead = { row: typeof ledgerPlayEligibility.$inferSelect; now: Date };
 
-  private async read(userId: User['id'], tx?: unknown) {
+const rgBlockedNow = ({ row, now }: EligibilityRead): boolean =>
+  row.rgBlocked && (row.rgBlockedUntil === null || row.rgBlockedUntil > now);
+
+export class LedgerPlayEligibilityService
+  implements LedgerPlayEligibilityPort, PlayEligibilityProjectionPort
+{
+  constructor(
+    private readonly drizzle: Pick<DrizzleService, 'db'>,
+    private readonly freshness?: ProjectionFreshness,
+  ) {}
+
+  private readonly lateAlert = lateAlertClock();
+
+  private async read(userId: User['id'], tx: unknown, refuses: (read: EligibilityRead) => boolean) {
     const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
     const query = db
-      .select()
+      .select({
+        row: ledgerPlayEligibility,
+        now: sql`now()`.mapWith(ledgerPlayEligibility.updatedAt),
+      })
       .from(ledgerPlayEligibility)
       .where(eq(ledgerPlayEligibility.userId, userId))
       .limit(1);
-    const [row] = tx ? await query.for('share') : await query;
-    return row;
+    const [read] = tx ? await query.for('share') : await query;
+    if (!read || !refuses(read)) {
+      await assertFresh(db, 'play_eligibility', this.freshness, this.lateAlert);
+    }
+    return read;
   }
 
   async isRestricted(userId: User['id'], tx?: unknown): Promise<boolean> {
-    const row = await this.read(userId, tx);
-    return (
-      !row || (row.rgBlocked && (row.rgBlockedUntil === null || row.rgBlockedUntil > new Date()))
-    );
+    const read = await this.read(userId, tx, rgBlockedNow);
+    return read ? rgBlockedNow(read) : true;
   }
 
   async checkPlay(userId: User['id'], tx?: unknown): Promise<PlayRefusal | null> {
-    const row = await this.read(userId, tx);
-    return row ? playRefusalOf(row) : 'account_inactive';
+    const read = await this.read(userId, tx, ({ row, now }) => playRefusalOf(row, now) !== null);
+    return read ? playRefusalOf(read.row, read.now) : 'account_inactive';
+  }
+
+  async stateOf(userId: User['id'], tx?: unknown): Promise<PlayEligibilityState | null> {
+    const read = await this.read(userId, tx, () => false);
+    return read ? stateOf(read.row) : null;
+  }
+
+  async statesOf(
+    userIds: readonly User['id'][],
+    tx?: unknown,
+  ): Promise<Map<User['id'], PlayEligibilityState>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const db = (tx as DrizzleTx | undefined) ?? this.drizzle.db;
+    await assertFresh(db, 'play_eligibility', this.freshness, this.lateAlert);
+    const query = db
+      .select()
+      .from(ledgerPlayEligibility)
+      .where(
+        sql`${ledgerPlayEligibility.userId} = ANY(${sql.param([...new Set(userIds)])}::uuid[])`,
+      );
+    const rows = tx ? await query.for('share') : await query;
+    return new Map(rows.map((row) => [row.userId, stateOf(row)]));
   }
 
   async write(snapshot: PlayEligibilitySnapshot, tx: unknown): Promise<void> {
@@ -118,6 +171,21 @@ export class LedgerPlayEligibilityService
       .insert(ledgerPlayEligibility)
       .values(row)
       .onConflictDoUpdate({ target: ledgerPlayEligibility.userId, set: fromExcluded });
+  }
+
+  async writeFromRemote(snapshot: PlayEligibilitySnapshot, tx: unknown): Promise<void> {
+    await (tx as DrizzleTx)
+      .insert(ledgerPlayEligibility)
+      .values(rowOf(snapshot))
+      .onConflictDoUpdate({
+        target: ledgerPlayEligibility.userId,
+        set: fromExcluded,
+        setWhere: sql`${ledgerPlayEligibility.version} <= excluded.version`,
+      });
+  }
+
+  heartbeat(): Promise<void> {
+    return beat(this.drizzle.db, 'play_eligibility');
   }
 
   async reconcile(snapshots: readonly PlayEligibilitySnapshot[]): Promise<number> {
@@ -194,9 +262,8 @@ export class LedgerPlayEligibilityService
   }
 }
 
-/** The projection over a bare database handle, for a seed script that boots no container. */
 export function ledgerPlayEligibilityProjection(
   db: DrizzleService['db'],
-): PlayEligibilityProjectionPort {
+): PlayEligibilityProjectionPort & LedgerPlayEligibilityPort {
   return new LedgerPlayEligibilityService({ db });
 }

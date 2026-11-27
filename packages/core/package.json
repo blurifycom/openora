@@ -23,7 +23,8 @@
   },
   "bin": {
     "openora-audit-copy": "./bin/audit-copy.mjs",
-    "openora-migrate": "./bin/migrate.mjs"
+    "openora-migrate": "./bin/migrate.mjs",
+    "openora-outbox-replay": "./bin/outbox-replay.mjs"
   },
   "files": [
     "bin",
@@ -324,6 +325,11 @@
       "types": "./dist/engagement/chat-remote/plugin.d.ts",
       "import": "./dist/engagement/chat-remote/plugin.js",
       "default": "./dist/engagement/chat-remote/plugin.js"
+    },
+    "./money-remote/plugin": {
+      "types": "./dist/money-remote/plugin.d.ts",
+      "import": "./dist/money-remote/plugin.js",
+      "default": "./dist/money-remote/plugin.js"
     },
     "./engagement/plugins/notifications": {
       "types": "./dist/engagement/notifications/plugin.d.ts",
@@ -860,6 +866,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "drizzle-kit": "0.31.11",
+    "fast-check": "4.11.0",
     "jsdom": "29.1.1",
     "react-dom": "19.2.7",
     "typescript": "6.0.3",

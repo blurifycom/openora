@@ -1,5 +1,6 @@
 import { asc, eq, isNull } from 'drizzle-orm';
 import type {
+  IdentityReader,
   AuditWritePort,
   ExchangeRateReader,
   PlayEligibilityPort,
@@ -55,6 +56,7 @@ export class RankChallengePayoutService {
     private readonly audit: AuditWritePort,
     private readonly events: EventBus,
     private readonly logger: Logger,
+    private readonly identity: IdentityReader,
   ) {}
 
   async settlePending(): Promise<RankChallengeWon[]> {
@@ -192,12 +194,16 @@ export class RankChallengePayoutService {
     };
     await this.events.emitInTransaction(tx, 'promo.rank-challenge.won', won);
     if (paidCashAmount !== null) {
-      await announceCashCredit(tx, this.events, {
-        userId: claim.userId,
-        amount: paidCashAmount,
-        currency: paidCurrency,
-        transactionId,
-      });
+      await announceCashCredit(
+        tx,
+        { events: this.events, identity: this.identity },
+        {
+          userId: claim.userId,
+          amount: paidCashAmount,
+          currency: paidCurrency,
+          transactionId,
+        },
+      );
     }
     return won;
   }

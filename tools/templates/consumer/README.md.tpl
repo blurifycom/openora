@@ -50,10 +50,11 @@ is listed at https://openora.ai/documentation/telemetry.
 ## Deploy
 
 `compose.prod.yml` runs the app on one server with Docker: Postgres, Redis, a migration step, then
-the API. Before the first start:
+the API and chat as two services of the same image, behind a gateway that routes the chat paths
+(`/chat/*`, `/social/*`, `/chat-command/*` and their `/backoffice` twins) to chat. Before the first start:
 
 1. Copy the repo to the server, `pnpm-lock.yaml` included. Never commit `.env`.
-2. In the server's `.env`, set fresh `AUTH_SECRET` and `WITHDRAWAL_PIN_HMAC_SECRET`
+2. In the server's `.env`, set fresh `AUTH_SECRET`, `WITHDRAWAL_PIN_HMAC_SECRET` and `INTERNAL_API_SECRETS`
    (`openssl rand -base64 32`) and `POSTGRES_PASSWORD` (`openssl rand -hex 32`). Postgres keeps
    the password from the first start; changing it later does not change the database.
 3. Set `CORS_ORIGINS` and the `*_PUBLIC_API_URL` values to your real `https://` domains.
@@ -64,7 +65,7 @@ the API. Before the first start:
 docker compose -f compose.prod.yml up -d --build
 ```
 
-The API listens on `127.0.0.1` only, port `API_PORT` (default 3001). Put a reverse proxy with TLS (Caddy, nginx) in front of it
+The gateway listens on `127.0.0.1` only, port `API_PORT` (default 3001). Put a reverse proxy with TLS (Caddy, nginx) in front of it
 for your public domain.
 
 It seeds nothing: no backoffice roles and no admin yet, so nobody can log in. Create them with a

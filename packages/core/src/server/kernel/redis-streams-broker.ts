@@ -23,6 +23,22 @@ const LAG_LOG_INTERVAL_MS = 60_000;
 // Deliveries (first read + reclaims) after which a still-failing entry is dead-lettered.
 const MAX_DELIVERIES = 5;
 
+export function streamStartIdFromEnv(raw: string | undefined, splitService: boolean): '$' | '0' {
+  if (raw === undefined || raw === '' || raw === '$') {
+    return '$';
+  }
+  if (raw === '0' && !splitService) {
+    throw new Error(
+      'EVENT_BUS_START_ID=0 needs SERVICE_MANIFEST. Only a newly split service starts its consumer ' +
+        'groups at the oldest retained event; the main API would replay every handler it runs.',
+    );
+  }
+  if (raw === '0') {
+    return '0';
+  }
+  throw new Error(`EVENT_BUS_START_ID must be "$" or "0", got "${raw}".`);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -61,22 +77,22 @@ type ConsumerLoop = {
   done: Promise<void>;
 };
 
-function streamKey(topic: string): string {
+export function streamKey(topic: string): string {
   return STREAM_PREFIX + topic;
 }
 
-function dlqKey(streamKeyName: string): string {
+export function dlqKey(streamKeyName: string): string {
   return DLQ_PREFIX + streamKeyName.slice(STREAM_PREFIX.length);
 }
 
 // A stream id is `<ms since epoch>-<seq>`, stamped by Redis on XADD.
-function streamIdTime(id: string): number {
+export function streamIdTime(id: string): number {
   return Number(id.split('-')[0]);
 }
 
-function streamIdAfter(a: string, b: string): boolean {
-  const [aTime = 0, aSeq = 0] = a.split('-').map(Number);
-  const [bTime = 0, bSeq = 0] = b.split('-').map(Number);
+export function streamIdAfter(a: string, b: string): boolean {
+  const [aTime = 0n, aSeq = 0n] = a.split('-').map(BigInt);
+  const [bTime = 0n, bSeq = 0n] = b.split('-').map(BigInt);
   return aTime > bTime || (aTime === bTime && aSeq > bSeq);
 }
 
@@ -84,7 +100,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function isBusyGroupError(err: unknown): boolean {
+export function isBusyGroupError(err: unknown): boolean {
   return err instanceof Error && err.message.includes('BUSYGROUP');
 }
 

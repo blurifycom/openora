@@ -2,6 +2,7 @@ import { MONEY_SCALE } from '@openora/core/contracts';
 import {
   moneyAdd,
   moneyCompare,
+  moneyMin,
   moneyDivide,
   moneyScaleBy,
   moneySubtract,
@@ -47,15 +48,12 @@ export function attributeStake<Id>(
     return {
       grant: g,
       realStake: ZERO,
-      progress: moneyCompare(own, g.headroom) < 0 ? own : g.headroom,
+      progress: moneyMin(own, g.headroom),
     };
   });
 
   let remaining = realStake;
   for (const slot of slots) {
-    if (moneyCompare(remaining, ZERO) <= 0) {
-      break;
-    }
     const { headroom, percent } = slot.grant;
     const room = moneySubtract(headroom, slot.progress);
     if (moneyCompare(percent, ZERO) <= 0 || moneyCompare(room, ZERO) <= 0) {
@@ -75,7 +73,7 @@ export function attributeStake<Id>(
   }
 
   const [first] = slots;
-  if (first && moneyCompare(remaining, ZERO) > 0) {
+  if (first) {
     first.realStake = moneyAdd(first.realStake, remaining);
   }
 

@@ -25,9 +25,19 @@ export const readActions: Partial<Record<ResourceName, readonly string[]>> = Obj
   }),
 ) as Partial<Record<ResourceName, readonly string[]>>;
 
+export function readActionsOf(actions: readonly string[]): string[] {
+  return actions.includes('view') ? ['view'] : [];
+}
+
+export function actionsOf(resource: string): readonly string[] | undefined {
+  return Object.hasOwn(statement, resource)
+    ? (statement[resource as ResourceName] as readonly string[])
+    : undefined;
+}
+
 /** Expands a (resource, level) cell to the action set AdminGuard checks - levels are stored, actions derived at the authz edge. */
 export function levelToActions(resource: string, level: PermissionLevel): readonly string[] {
-  const actions = statement[resource as ResourceName] as readonly string[] | undefined;
+  const actions = actionsOf(resource);
   if (!actions) {
     return [];
   }
@@ -37,12 +47,12 @@ export function levelToActions(resource: string, level: PermissionLevel): readon
   if (level === 'read_write') {
     return actions;
   }
-  return readActions[resource as ResourceName] ?? (actions.includes('view') ? ['view'] : []);
+  return readActionsOf(actions);
 }
 
 /** Collapses a concrete action set to the closest level - used only for legacy/edge data; new writes are level-native. */
 export function actionsToLevel(resource: string, actions: readonly string[]): PermissionLevel {
-  const all = statement[resource as ResourceName] as readonly string[] | undefined;
+  const all = actionsOf(resource);
   if (!all || all.length === 0) {
     return 'no_access';
   }
@@ -50,7 +60,7 @@ export function actionsToLevel(resource: string, actions: readonly string[]): Pe
   if (all.every((a) => has.has(a))) {
     return 'read_write';
   }
-  const read = readActions[resource as ResourceName] ?? [];
+  const read = readActionsOf(all);
   if (read.length > 0 && read.every((a) => has.has(a))) {
     return 'read';
   }

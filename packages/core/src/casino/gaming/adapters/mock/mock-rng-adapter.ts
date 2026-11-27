@@ -36,7 +36,7 @@ export class MockRngAdapter implements RngAdapter {
   }
 }
 
-function hashSeed(value: string): number {
+export function hashSeed(value: string): number {
   let h = 2166136261;
   for (let i = 0; i < value.length; i++) {
     h = Math.imul(h ^ value.charCodeAt(i), 16777619);

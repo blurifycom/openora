@@ -26,7 +26,7 @@ export { cached, invalidate } from './cache.js';
 export { createRedisClient, type RedisClient } from './redis-client.js';
 export { RedisCache } from './redis-cache.js';
 export { RedisRateLimiter } from './redis-rate-limiter.js';
-export { RedisStreamsBroker } from './redis-streams-broker.js';
+export { RedisStreamsBroker, streamStartIdFromEnv } from './redis-streams-broker.js';
 export { RedisPubSubRealtimeTransport } from './redis-pubsub-realtime-transport.js';
 export { SseClientAuthorizer } from './realtime-authorizer.js';
 
@@ -82,3 +82,8 @@ export type { EventStreamOptions, MultiplexedChannel, MultiplexedEvent } from '.
 export { loadPlatformConfig, resolvePlatformConfigPath } from './platform-config-loader.js';
 
 export { retryUntilDone } from './retry-until-done.js';
+export {
+  envMs,
+  projectionHeartbeatArmed,
+  projectionHeartbeatEveryMs,
+} from './projection-heartbeat.js';

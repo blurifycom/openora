@@ -34,6 +34,7 @@ import {
   type OnRampWebhookEvent,
   type User,
   type WithdrawalSecurity,
+  LedgerProjectionStaleError,
 } from '@openora/core/contracts';
 import { walletContract, type WalletBalanceUpdate } from '../contract/index.js';
 import { CUSTODY_SWEEP_QUEUE } from '../service/custody-sweep.service.js';
@@ -295,7 +296,7 @@ export function createWalletRouter({
           BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
           CONFLICT: [IdempotencyKeyReuseError, RgLimitExceededError],
           FORBIDDEN: DepositRefusedError,
-          SERVICE_UNAVAILABLE: WalletReferenceRateUnavailableError,
+          SERVICE_UNAVAILABLE: [WalletReferenceRateUnavailableError, LedgerProjectionStaleError],
         },
         () =>
           wallet.deposit({

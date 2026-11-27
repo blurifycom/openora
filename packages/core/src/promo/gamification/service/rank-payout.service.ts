@@ -4,13 +4,14 @@ import type {
   BonusGrantCommands,
   ExchangeRateReader,
   DomainEventPayload,
-  PlayEligibilityPort,
+  LedgerPlayEligibilityPort,
   RankPeriodicBasis,
   Uuid,
   WalletReader,
 } from '@openora/core/contracts';
 import {
   moneyCompare,
+  moneyMin,
   moneyDivide,
   moneyScaleBy,
   type DrizzleService,
@@ -63,12 +64,12 @@ const PERIOD_BONUS = {
 } as const;
 
 /** `margin × percent / 100`, capped at `cap` when there is one; null when it rounds to nothing. */
-function marginBonus(margin: string, percent: string, cap: string | null): string | null {
+export function marginBonus(margin: string, percent: string, cap: string | null): string | null {
   const earned = moneyDivide(moneyScaleBy(margin, percent), '100');
   if (moneyCompare(earned, '0') <= 0) {
     return null;
   }
-  return cap !== null && moneyCompare(earned, cap) > 0 ? cap : earned;
+  return cap === null ? earned : moneyMin(earned, cap);
 }
 
 const isClaimMode = (terms: RankPeriodicRewardTerms): terms is { payout: 'claim' } =>
@@ -93,7 +94,7 @@ export class RankPayoutService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly grants: BonusGrantCommands | undefined,
-    private readonly eligibility: PlayEligibilityPort | undefined,
+    private readonly eligibility: LedgerPlayEligibilityPort | undefined,
     private readonly rates: ExchangeRateReader,
     private readonly wallet: WalletReader,
     private readonly events: EventBus,

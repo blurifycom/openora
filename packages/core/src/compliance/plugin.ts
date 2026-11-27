@@ -4,6 +4,8 @@ import {
   ADMIN_GUARD,
   createLogger,
   retryUntilDone,
+  projectionHeartbeatArmed,
+  projectionHeartbeatEveryMs,
 } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
@@ -122,6 +124,7 @@ const RECENT_LIMIT_CHANGE_MS = 10 * 60_000;
 
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
+const RG_LIMITS_HEARTBEAT_QUEUE = queue('compliance-ledger-heartbeat');
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 const KYC_EXEMPTION_QUEUE = queue('kyc-exemption');
 
@@ -160,8 +163,8 @@ function enhancedKycRefusalCode(err: unknown) {
 
 export default {
   id: 'compliance',
-  dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit', 'exchange-rate'],
-  requiresPorts: [LOGIN_ENFORCEMENT, RG_LIMIT_LEDGER, WALLET_READER],
+  dependsOn: ['player-management', 'identity', 'audit'],
+  requiresPorts: [LOGIN_ENFORCEMENT, RG_LIMIT_LEDGER, WALLET_READER, EXCHANGE_RATE_READER],
   register(ctx) {
     ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
     ctx.provide(GAME_GEO_CHECK, makeComplianceService);
@@ -203,6 +206,7 @@ export default {
     let selfServiceRef: RgSelfServiceService | null = null;
     let monitorRef: RgMonitoringService | null = null;
     let healRecentLimitsRef: (() => Promise<number>) | null = null;
+    let limitsHeartbeatRef: (() => Promise<void>) | null = null;
     const monitoring = (c: TypedContainer<CoreTokenCatalog>) =>
       (monitorRef ??= new RgMonitoringService({
         drizzle: c.get(DRIZZLE),
@@ -443,6 +447,16 @@ export default {
       },
     });
     ctx.jobs.worker({
+      queue: RG_LIMITS_HEARTBEAT_QUEUE,
+      schema: RgMonitorJobSchema,
+      handler: async () => {
+        if (!limitsHeartbeatRef) {
+          throw new Error('compliance: the limits heartbeat ran before its router was built');
+        }
+        await limitsHeartbeatRef();
+      },
+    });
+    ctx.jobs.worker({
       queue: RG_MONITOR_QUEUE,
       schema: RgMonitorJobSchema,
       handler: async () => {
@@ -499,7 +513,7 @@ export default {
       },
     });
 
-    ctx.routers.add('compliance', (c) => {
+    ctx.routers.add('compliance', (c, options) => {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const kycAdapter = c.get(KYC_ADAPTER);
@@ -515,6 +529,7 @@ export default {
         logger.warn(msg);
       }
       backfillRgLimitsAtBoot(c);
+      limitsHeartbeatRef = () => c.get(RG_LIMIT_LEDGER).heartbeat();
       healRecentLimitsRef = () =>
         backfillRgLimits(c.get(DRIZZLE).db, c.get(RG_LIMIT_LEDGER), {
           changedSince: new Date(Date.now() - RECENT_LIMIT_CHANGE_MS),
@@ -538,9 +553,25 @@ export default {
       selfServiceRef = rgSelfService;
 
       jobQueueRef = c.get(JOB_QUEUE);
-      void jobQueueRef
-        .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000 })
-        .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
+      if (options?.mounted !== false) {
+        void jobQueueRef
+          .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000 })
+          .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
+        if (projectionHeartbeatArmed(c.get(RG_LIMIT_LEDGER).remote)) {
+          void c
+            .get(RG_LIMIT_LEDGER)
+            .heartbeat()
+            .catch((err) => logger.error({ err }, 'compliance: limits boot heartbeat failed'));
+          void jobQueueRef
+            .schedule(
+              RG_LIMITS_HEARTBEAT_QUEUE,
+              'compliance-ledger-heartbeat',
+              {},
+              { everyMs: projectionHeartbeatEveryMs() },
+            )
+            .catch((err) => logger.error({ err }, 'compliance: limits heartbeat schedule failed'));
+        }
+      }
 
       return createComplianceRouter({
         compliance,

@@ -1,6 +1,7 @@
+import { withUsernames } from '../shared/rank-challenge-ladder.js';
 import { and, desc, eq, gt, lt, sql } from 'drizzle-orm';
-import { user } from '@openora/core/pam/schema/identity';
 import type {
+  IdentityReader,
   AuditWritePort,
   ExchangeRateReader,
   Uuid,
@@ -76,6 +77,7 @@ export type StreakServiceDeps = {
   rates: ExchangeRateReader;
   logger: Logger;
   audit: AuditWritePort;
+  identity: IdentityReader;
 };
 
 export class StreakService implements WagerTrackingCommands {
@@ -84,11 +86,14 @@ export class StreakService implements WagerTrackingCommands {
   private readonly logger: Logger;
   private readonly audit: AuditWritePort;
 
+  private readonly identity: IdentityReader;
+
   constructor(deps: StreakServiceDeps) {
     this.drizzle = deps.drizzle;
     this.rates = deps.rates;
     this.logger = deps.logger;
     this.audit = deps.audit;
+    this.identity = deps.identity;
   }
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
@@ -421,17 +426,15 @@ export class StreakService implements WagerTrackingCommands {
   }
 
   async leaderboard(userId: Uuid): Promise<StreakLeaderboard> {
-    const top = await this.drizzle.db
-      .select({
-        userId: promoPlayerStreak.userId,
-        streak: promoPlayerStreak.current,
-        username: user.username,
-      })
-      .from(promoPlayerStreak)
-      .innerJoin(user, eq(user.id, promoPlayerStreak.userId))
-      .where(gt(promoPlayerStreak.current, 0))
-      .orderBy(desc(promoPlayerStreak.current))
-      .limit(5);
+    const top = await withUsernames(
+      this.identity,
+      await this.drizzle.db
+        .select({ userId: promoPlayerStreak.userId, streak: promoPlayerStreak.current })
+        .from(promoPlayerStreak)
+        .where(gt(promoPlayerStreak.current, 0))
+        .orderBy(desc(promoPlayerStreak.current))
+        .limit(5),
+    );
 
     if (top.some((row) => row.userId === userId)) {
       return { top, ownPosition: top.findIndex((row) => row.userId === userId) + 1 };

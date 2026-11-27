@@ -20,7 +20,7 @@ export { BANNER_IMAGE_COUNT_BOUNDS } from '@openora/core/contracts';
 export const DEFAULT_LOCALE = 'default';
 
 function isSafeInternalBannerPath(value: string): boolean {
-  return /^\/(?![\\/])/.test(value);
+  return /^\/(?![\\/])/.test(value) && !/[\t\n\r]/.test(value);
 }
 function isSafeExternalBannerUrl(value: string): boolean {
   try {

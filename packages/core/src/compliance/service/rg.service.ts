@@ -386,10 +386,15 @@ export async function writeLimitRow(
   );
 }
 
-function addMonths(from: Date, months: number): Date {
-  const d = new Date(from);
-  d.setMonth(d.getMonth() + months);
-  return d;
+export function addMonths(from: Date, months: number): Date {
+  const target = new Date(from);
+  target.setUTCDate(1);
+  target.setUTCMonth(target.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  target.setUTCDate(Math.min(from.getUTCDate(), lastDay));
+  return target;
 }
 
 function toLimitDto(row: typeof userLimit.$inferSelect) {
@@ -414,7 +419,7 @@ export type RgServiceDeps = {
   audit?: AuditWritePort | null;
   rates: ExchangeRateReader;
   /** The ledger's limits projection, written in every limit change's own transaction. */
-  limitsLedger: Pick<RgLimitLedgerPort, 'write'>;
+  limitsLedger: Pick<RgLimitLedgerPort, 'write' | 'remote'>;
 };
 
 /**

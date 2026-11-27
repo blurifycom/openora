@@ -12,7 +12,8 @@
 //     wallet's admin-reporting.ts). Stops new strays; does not force a mass move of the
 //     current tree.
 //   layer-file-naming - files directly in service/ end .service.ts (plus a short surveyed
-//     allowlist of pre-existing exceptions); files in __tests__/ end .test.ts.
+//     allowlist of pre-existing exceptions); files in __tests__/ end .unit.test.ts,
+//     .int.test.ts or .e2e.test.ts.
 //   int-test-file-naming - a test file importing createTestDb/createTestRedis must end
 //     .int.test.ts, so `test:unit` stays the infra-free suite and `test:integration` owns
 //     everything that needs docker Postgres + Redis.
@@ -212,10 +213,10 @@ const layerFileNaming = {
             message: `${base} is in service/ but doesn't end .service.ts - rename it (eg wallet.service.ts).`,
           });
         }
-        if (layer === '__tests__' && !base.endsWith('.test.ts')) {
+        if (layer === '__tests__' && !TEST_TIER_SUFFIXES.some((suffix) => base.endsWith(suffix))) {
           context.report({
             node,
-            message: `${base} is in __tests__/ but doesn't end .test.ts - rename it (Vitest co-located tests).`,
+            message: `${base} is in __tests__/ but doesn't end ${TEST_TIER_SUFFIXES.join(', ')} - rename it to the tier it runs in.`,
           });
         }
       },
@@ -780,11 +781,12 @@ const noInlineZEnumOutsideContract = {
 };
 
 const REAL_INFRA_FACTORIES = new Set(['createTestDb', 'createTestRedis']);
+const TEST_TIER_SUFFIXES = ['.unit.test.ts', '.int.test.ts', '.e2e.test.ts'];
 
 const intTestFileNaming = {
   create(context) {
     const file = filename(context);
-    if (!file.endsWith('.test.ts') || file.endsWith('.int.test.ts')) {
+    if (!file.endsWith('.unit.test.ts')) {
       return {};
     }
     return {

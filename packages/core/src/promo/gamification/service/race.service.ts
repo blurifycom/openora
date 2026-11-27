@@ -1,7 +1,7 @@
+import { leaderboardNamesOf } from '@openora/core/contracts';
 import { and, asc, count, desc, eq, gt, isNull, lte, sql } from 'drizzle-orm';
-import { player } from '@openora/core/pam/schema/profile';
-import { user } from '@openora/core/pam/schema/identity';
 import type {
+  IdentityReader,
   ExchangeRateReader,
   SettledWagerArgs,
   Uuid,
@@ -60,7 +60,7 @@ const INCOGNITO = 'Incognito';
  * response reflects masking itself rather than leaving it to be applied client-side. A fixed
  * suffix, so the mask never tells how long the hidden part is.
  */
-function maskUsername(name: string): string {
+export function maskUsername(name: string): string {
   return `${name.slice(0, Math.min(3, name.length - 1))}****`;
 }
 
@@ -91,6 +91,7 @@ export class RaceService implements WagerTrackingCommands {
     private readonly drizzle: DrizzleService,
     private readonly rates: ExchangeRateReader,
     private readonly logger: { warn: (context: object, message: string) => void },
+    private readonly identity: IdentityReader,
   ) {}
 
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
@@ -305,12 +306,8 @@ export class RaceService implements WagerTrackingCommands {
         .select({
           userId: promoRaceWager.userId,
           wagered: promoRaceWager.wagered,
-          username: user.username,
-          hideUsername: player.hideUsernameOnLeaderboards,
         })
         .from(promoRaceWager)
-        .innerJoin(user, eq(user.id, promoRaceWager.userId))
-        .leftJoin(player, eq(player.userId, promoRaceWager.userId))
         .where(eq(promoRaceWager.raceId, raceId))
         .orderBy(...RACE_STANDING_ORDER)
         .limit(LEADERBOARD_CAP),
@@ -321,12 +318,20 @@ export class RaceService implements WagerTrackingCommands {
         .where(eq(promoRaceWager.raceId, raceId)),
     ]);
 
-    const entries: RaceLeaderboardEntry[] = ranked.map((row, index) => ({
+    const names = await leaderboardNamesOf(
+      this.identity,
+      ranked.map((row) => row.userId),
+    );
+    const named = ranked.flatMap((row) => {
+      const name = names.get(row.userId);
+      return name ? [{ ...row, ...name }] : [];
+    });
+    const entries: RaceLeaderboardEntry[] = named.map((row, index) => ({
       userId: row.userId,
       username:
         row.userId === userId
           ? row.username
-          : (row.hideUsername ?? false)
+          : row.hideUsername
             ? INCOGNITO
             : maskUsername(row.username),
       wagered: row.wagered,
@@ -342,7 +347,11 @@ export class RaceService implements WagerTrackingCommands {
             userId,
             wagered: ownEntry.wagered,
             position: ownEntry.position,
-            amountToNextPaidPosition: this.amountToNextPaidPosition(race, entries, ownIndex),
+            amountToNextPaidPosition: amountToNextPaidPosition(
+              race.positions.length,
+              entries,
+              ownIndex,
+            ),
           };
 
     return {
@@ -353,29 +362,22 @@ export class RaceService implements WagerTrackingCommands {
       participants: Number(counted?.n ?? 0),
     };
   }
+}
 
-  /**
-   * How much more the player must wager to reach the next-better paid position - the wagered
-   * amount of whoever currently holds it, minus the player's own. Null once the player already
-   * holds a paid position, or the race pays no positions at all.
-   */
-  private amountToNextPaidPosition(
-    race: Race,
-    entries: readonly RaceLeaderboardEntry[],
-    ownIndex: number,
-  ): string | null {
-    const paidPositions = race.positions.length;
-    if (paidPositions === 0 || ownIndex < paidPositions) {
-      return null;
-    }
-    const nextBetter = entries[paidPositions - 1];
-    const ownEntry = entries[ownIndex];
-    if (!nextBetter || !ownEntry) {
-      return null;
-    }
-    const own = ownEntry.wagered;
-    return moneyCompare(nextBetter.wagered, own) <= 0
-      ? '0'
-      : moneySubtract(nextBetter.wagered, own);
+export function amountToNextPaidPosition(
+  paidPositions: number,
+  entries: readonly RaceLeaderboardEntry[],
+  ownIndex: number,
+): string | null {
+  if (paidPositions === 0 || ownIndex < paidPositions) {
+    return null;
   }
+  const lastPaid = entries[paidPositions - 1];
+  const ownEntry = entries[ownIndex];
+  if (!lastPaid || !ownEntry) {
+    return null;
+  }
+  return moneyCompare(lastPaid.wagered, ownEntry.wagered) <= 0
+    ? '0'
+    : moneySubtract(lastPaid.wagered, ownEntry.wagered);
 }

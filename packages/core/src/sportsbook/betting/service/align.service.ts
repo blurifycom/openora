@@ -54,7 +54,7 @@ export class SportsbookAlignRefusedError extends Error {
 }
 
 /** Deterministic, so a repeated align of the same observation replays instead of moving twice. */
-function alignTxId(
+export function alignTxId(
   bet: Pick<SportsbookBetRow, 'id'>,
   version: number,
   kind: SportsbookTransactionKind,
@@ -65,7 +65,10 @@ function alignTxId(
 type Alignment = { steps: LedgerStep[]; mismatch: boolean };
 
 /** The guarded ledger steps that bring the bet to what the provider reports, or a mismatch core cannot apply. */
-function alignmentSteps(bet: SportsbookBetRow, observed: SportsbookProviderBetStatus): Alignment {
+export function alignmentSteps(
+  bet: SportsbookBetRow,
+  observed: SportsbookProviderBetStatus,
+): Alignment {
   const key = { provider: bet.provider, providerBetId: bet.providerBetId };
   const confirm = (): LedgerStep => ({
     kind: 'confirm',

@@ -100,7 +100,7 @@ export type DebtCollection = {
 type CollectionSlice = Pick<WalletCorrectionDebitArgs, 'amount' | 'type' | 'providerRef'>;
 
 /** What collections, offsets and write-offs left of each shortfall; they consume the oldest first. */
-function unconsumed<T extends { amount: string }>(
+export function unconsumed<T extends { amount: string }>(
   shortfalls: readonly T[],
   consumed: string,
 ): (T & { remaining: string })[] {

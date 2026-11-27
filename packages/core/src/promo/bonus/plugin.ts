@@ -14,6 +14,7 @@ import {
   GEO_CHECK_COMMANDS,
   JOB_QUEUE,
   PLATFORM_CONFIG,
+  IDENTITY_READER,
   PLAY_ELIGIBILITY,
   resolvePromoConfig,
   RATE_LIMITER,
@@ -100,7 +101,7 @@ const ForfeitJobSchema = z.object({
 export default {
   id: 'bonus',
   dependsOn: ['audit'],
-  requiresPorts: [PLAY_ELIGIBILITY],
+  requiresPorts: [PLAY_ELIGIBILITY, IDENTITY_READER],
   optionalPorts: [
     {
       port: EXCHANGE_RATE_READER,
@@ -130,7 +131,7 @@ export default {
       return (input) => summary.grantsSummary(input);
     });
     ctx.mcp.tool(grantsFindTool, (c) => {
-      const grants = new GrantsFindService(c.get(DRIZZLE));
+      const grants = new GrantsFindService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => grants.find(input);
     });
     ctx.provideSealed(
@@ -327,7 +328,7 @@ export default {
       forfeitEverything('identity.user.deactivated', 'account_deactivated'),
     );
 
-    ctx.routers.add('promo-bonus', (c) => {
+    ctx.routers.add('promo-bonus', (c, options) => {
       offers = new OfferService(
         c.get(DRIZZLE),
         c.get(AUDIT_WRITER),
@@ -339,11 +340,13 @@ export default {
       );
       jobs = c.get(JOB_QUEUE);
       realtime = c.get(REALTIME_TRANSPORT);
-      void jobs
-        .schedule(EXPIRY_QUEUE, 'promo-bonus-expiry.cron', {}, { cron: EXPIRY_CRON })
-        .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
+      if (options?.mounted !== false) {
+        void jobs
+          .schedule(EXPIRY_QUEUE, 'promo-bonus-expiry.cron', {}, { cron: EXPIRY_CRON })
+          .catch((err: unknown) => logger.error({ err }, 'promo-bonus-expiry schedule failed'));
+      }
       return createBonusRouter({
-        grants: new GrantReaderService(c.get(DRIZZLE)),
+        grants: new GrantReaderService(c.get(DRIZZLE), c.get(IDENTITY_READER)),
         funds: new PlayerFundsService(
           c.get(DRIZZLE),
           c.get(WALLET_READER),
@@ -365,6 +368,7 @@ export default {
             ),
           ),
           logger,
+          c.get(IDENTITY_READER),
         ),
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),

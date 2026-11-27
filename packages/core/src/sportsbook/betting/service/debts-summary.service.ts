@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, lte, sql } from 'drizzle-orm';
 import { sumMoney, type DrizzleService } from '@openora/core/server';
-import { player } from '@openora/core/pam/schema/profile';
+import { playerIdsOfUsers, type IdentityReader } from '@openora/core/contracts';
 import {
   DEBTS_MAX_CURRENCIES,
   type DebtsSummary,
@@ -15,7 +15,10 @@ import { holdActiveSql } from './debt.service.js';
  * kernel builds every tool's handler when it starts.
  */
 export class SportsbookDebtsSummaryService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly identity: IdentityReader,
+  ) {}
 
   async summary({ currency, largest }: DebtsSummaryInput): Promise<DebtsSummary> {
     const debt = sportsbookPlayerDebt;
@@ -26,7 +29,7 @@ export class SportsbookDebtsSummaryService {
       .select({
         currency: debt.currency,
         debtId: sql<string>`${debt.id}`.as('debt_id'),
-        playerId: sql<string | null>`${player.id}`.as('player_id'),
+        userId: sql<string>`${debt.userId}`.as('user_id'),
         outstanding: debt.outstanding,
         owed: debt.owed,
         collected: debt.collected,
@@ -38,7 +41,6 @@ export class SportsbookDebtsSummaryService {
         ),
       })
       .from(debt)
-      .leftJoin(player, eq(player.userId, debt.userId))
       .where(and(open, inCurrency))
       .as('ranked');
     const [totals, largestRows] = await Promise.all([
@@ -64,6 +66,10 @@ export class SportsbookDebtsSummaryService {
             .where(lte(ranked.rank, largest))
             .orderBy(asc(ranked.currency), asc(ranked.rank)),
     ]);
+    const playerIds = await playerIdsOfUsers(
+      this.identity,
+      largestRows.map((entry) => entry.userId),
+    );
     return {
       currencies: totals.slice(0, DEBTS_MAX_CURRENCIES).map((row) => ({
         ...row,
@@ -71,7 +77,7 @@ export class SportsbookDebtsSummaryService {
           .filter((entry) => entry.currency === row.currency)
           .map((entry) => ({
             debtId: entry.debtId,
-            playerId: entry.playerId,
+            playerId: playerIds.get(entry.userId) ?? null,
             outstanding: entry.outstanding,
             owed: entry.owed,
             collected: entry.collected,
