@@ -10,6 +10,7 @@
       "entry": [
         "src/**/drizzle.config.ts",
         "src/audit/service/audit-copy.service.ts",
+        "src/server/db/outbox/replay.ts",
         "src/{compliance,casino/*,engagement/*,fx/*,pam/*,promo/*,sportsbook/*}/index.ts",
         "vitest.mutation.config.ts",
         "vitest.mutation.setup.ts"
