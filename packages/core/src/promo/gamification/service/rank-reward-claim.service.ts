@@ -330,7 +330,10 @@ export class RankRewardClaimService {
     }
     const claimed = outcome === 'claimed';
     await this.deps.audit.recordInTransaction(tx, {
-      actorId: claimed ? row.userId : null,
+      // No player profile: keep the user id so a player entry always has an actor.
+      actorId: claimed
+        ? ((await this.deps.identity.getPlayerIdByUserId(row.userId, tx)) ?? row.userId)
+        : null,
       actorType: claimed ? 'player' : 'system',
       action: claimed ? 'promo.rank_reward.claimed' : 'promo.rank_reward.auto_paid',
       resourceType: 'promo_rank_periodic_reward',
