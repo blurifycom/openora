@@ -117,6 +117,11 @@ allow-list): `https:` only, and the hostname must equal or be a subdomain of an 
 A URL that fails validation is rejected with `BannerImageHostNotAllowedError` before it is ever
 written - `allowedBannerImageHosts` empty means no banner images can be set at all.
 
+`setBannerImage` also accepts optional `desktopImageSizeBytes` / `mobileImageSizeBytes`, file
+size metadata so clients can show it without fetching the file. They are caller-supplied and
+display only: core never checks them against the file. Omitting one or sending `null` stores
+`null`; both are returned on the admin reads and the public banner read.
+
 ## Expected consumer integration
 
 This module is intentionally silent about where images come from. A downstream operator wires:

@@ -24,6 +24,7 @@ import {
   bannerConfiguration as bannerConfigurationTable,
   bannerImage as bannerImageTable,
   bannerSchedule as bannerScheduleTable,
+  type BannerImage as BannerImageRow,
 } from '../schema/index.js';
 import { BANNER_IMAGE_COUNT_BOUNDS, DEFAULT_LOCALE, type BannerLayout } from '../contract/index.js';
 import { validateBannerImageUrl } from '../moderation/validate-banner-image-url.js';
@@ -82,8 +83,10 @@ const CMS_CACHE_TTL_MS = 60_000;
 
 const pageCacheKey = (slug: string) => `cms:page:${slug}`;
 const publicBannerCacheEpochKey = (placement: string) => `cms:banner-placement:${placement}:epoch`;
+// Bump the suffix when the cached PublicBanner shape changes: an entry written by older code
+// would fail output validation.
 const publicBannerCacheKey = (placement: string, epoch: string, locale: string) =>
-  `cms:banner-placement:${placement}:${epoch}:${locale}`;
+  `cms:banner-placement:${placement}:${epoch}:${locale}:v2`;
 const bannerConfigurationCreateLockKey = (placement: string) =>
   `cms:banner-configuration-create:${placement}`;
 const bannerScheduleLockKey = (placement: string) => `cms:banner-schedule:${placement}`;
@@ -159,26 +162,8 @@ function toPage(record: {
   };
 }
 
-function toBannerImage(record: {
-  id: string;
-  bannerConfigurationId: Uuid;
-  sortOrder: number;
-  locale: string;
-  desktopImageUrl: string;
-  mobileImageUrl: string;
-  linkUrl: string | null;
-  createdAt: Date;
-}) {
-  return {
-    id: record.id,
-    bannerConfigurationId: record.bannerConfigurationId,
-    sortOrder: record.sortOrder,
-    locale: record.locale,
-    desktopImageUrl: record.desktopImageUrl,
-    mobileImageUrl: record.mobileImageUrl,
-    linkUrl: record.linkUrl,
-    createdAt: record.createdAt.toISOString(),
-  };
+function toBannerImage({ updatedAt: _updatedAt, ...rest }: BannerImageRow) {
+  return { ...rest, createdAt: rest.createdAt.toISOString() };
 }
 
 type ImageCountBounds = { min: number; max: number };
@@ -751,6 +736,8 @@ export class CmsService {
       desktopImageUrl: string;
       mobileImageUrl: string;
       linkUrl?: string | null;
+      desktopImageSizeBytes?: number | null;
+      mobileImageSizeBytes?: number | null;
     },
     actorId: User['id'],
     meta?: ClientMeta,
@@ -804,6 +791,14 @@ export class CmsService {
               ...(replaced ? [replaced.desktopImageUrl, replaced.mobileImageUrl] : []),
             ],
             async () => {
+              // PUT semantics: an omitted optional field is stored as null, never kept from the replaced row.
+              const fields = {
+                desktopImageUrl: input.desktopImageUrl,
+                mobileImageUrl: input.mobileImageUrl,
+                linkUrl: input.linkUrl ?? null,
+                desktopImageSizeBytes: input.desktopImageSizeBytes ?? null,
+                mobileImageSizeBytes: input.mobileImageSizeBytes ?? null,
+              };
               const record = findOneOrThrow(
                 await tx
                   .insert(bannerImageTable)
@@ -811,9 +806,7 @@ export class CmsService {
                     bannerConfigurationId: input.bannerConfigurationId,
                     sortOrder: input.sortOrder,
                     locale,
-                    desktopImageUrl: input.desktopImageUrl,
-                    mobileImageUrl: input.mobileImageUrl,
-                    linkUrl: input.linkUrl ?? null,
+                    ...fields,
                   })
                   .onConflictDoUpdate({
                     target: [
@@ -821,11 +814,7 @@ export class CmsService {
                       bannerImageTable.sortOrder,
                       bannerImageTable.locale,
                     ],
-                    set: {
-                      desktopImageUrl: input.desktopImageUrl,
-                      mobileImageUrl: input.mobileImageUrl,
-                      linkUrl: input.linkUrl ?? null,
-                    },
+                    set: fields,
                   })
                   .returning(),
                 new BannerConfigurationNotFoundError(input.bannerConfigurationId),
@@ -1011,6 +1000,8 @@ export class CmsService {
               desktopImageUrl: resolved.desktopImageUrl,
               mobileImageUrl: resolved.mobileImageUrl,
               linkUrl: resolved.linkUrl,
+              desktopImageSizeBytes: resolved.desktopImageSizeBytes,
+              mobileImageSizeBytes: resolved.mobileImageSizeBytes,
             };
           })
           .sort((a, b) => a.sortOrder - b.sortOrder);

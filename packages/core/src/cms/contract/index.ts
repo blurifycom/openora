@@ -38,6 +38,10 @@ export const BannerLinkUrlSchema = z
       'linkUrl must be an internal path starting with a single "/" (not "//" or "/\\") or a well-formed http(s) URL',
   });
 
+// Optional, caller-supplied file size metadata for display; core never checks it against the file.
+// Capped at int4 max so an oversized value is a validation error, not a database error.
+export const BannerImageSizeBytesSchema = z.number().int().nonnegative().max(2_147_483_647);
+
 export const BannerImageSchema = z.object({
   id: UuidSchema,
   bannerConfigurationId: UuidSchema,
@@ -46,6 +50,8 @@ export const BannerImageSchema = z.object({
   desktopImageUrl: z.string(),
   mobileImageUrl: z.string(),
   linkUrl: z.string().nullable(),
+  desktopImageSizeBytes: BannerImageSizeBytesSchema.nullable(),
+  mobileImageSizeBytes: BannerImageSizeBytesSchema.nullable(),
   createdAt: TimestampSchema,
 });
 export type BannerImage = z.infer<typeof BannerImageSchema>;
@@ -83,6 +89,8 @@ export const PublicBannerSlotSchema = z.object({
   desktopImageUrl: z.string(),
   mobileImageUrl: z.string(),
   linkUrl: z.string().nullable(),
+  desktopImageSizeBytes: BannerImageSizeBytesSchema.nullable(),
+  mobileImageSizeBytes: BannerImageSizeBytesSchema.nullable(),
 });
 export type PublicBannerSlot = z.infer<typeof PublicBannerSlotSchema>;
 
@@ -131,6 +139,8 @@ export const SetBannerImageInputSchema = z.object({
   desktopImageUrl: z.string(),
   mobileImageUrl: z.string(),
   linkUrl: BannerLinkUrlSchema.nullable().optional(),
+  desktopImageSizeBytes: BannerImageSizeBytesSchema.nullable().optional(),
+  mobileImageSizeBytes: BannerImageSizeBytesSchema.nullable().optional(),
 });
 export type SetBannerImageInput = z.infer<typeof SetBannerImageInputSchema>;
 
