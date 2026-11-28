@@ -114,7 +114,7 @@ export class GameCategoryMembershipService {
    * nothing to change writes no link rows.
    */
   async evaluate(args: EvaluateArgs) {
-    const { categoryId, trigger, actor, authorizeRule } = args;
+    const { categoryId, authorizeRule } = args;
     for (let attempt = 0; attempt < MAX_EVALUATE_ATTEMPTS; attempt += 1) {
       const snapshot = await this.claimEvaluation(categoryId);
       // lockAndDiff applies nothing unless this claim is still current, so the rule
@@ -126,12 +126,16 @@ export class GameCategoryMembershipService {
       if (outcome === 'stale') {
         if (attempt === MAX_EVALUATE_ATTEMPTS - 1) {
           const contended = new GameCategoryMembershipContendedError(categoryId);
-          await this.recordFailedAttempt(categoryId, snapshot, contended);
-          this.publishFailure(args, contended);
+          await this.recordFailedAttempt(categoryId, snapshot, contended, {
+            args,
+            announceWhenStale: true,
+          });
         }
         continue;
       }
-      this.publish(categoryId, trigger, actor, outcome);
+      if (outcome.diff.toAdd.length > 0 || outcome.diff.toRemove.length > 0) {
+        enqueueGameCategoryRank(this.jobQueue, categoryId);
+      }
       return {
         matchedCount: outcome.matchedCount,
         addedCount: outcome.diff.toAdd.length,
@@ -188,7 +192,9 @@ export class GameCategoryMembershipService {
       if (locked.status === 'stale') {
         return 'stale';
       }
-      return this.applyDiff(tx, categoryId, locked.diff, locked.matchedCount);
+      const applied = await this.applyDiff(tx, categoryId, locked.diff, locked.matchedCount);
+      await this.publish(tx, args, applied);
+      return applied;
     });
   }
 
@@ -228,10 +234,9 @@ export class GameCategoryMembershipService {
       }
       return await this.rules.resolveGameIds(rule);
     } catch (err) {
-      if (!(await this.recordFailedAttempt(args.categoryId, snapshot, err))) {
+      if (!(await this.recordFailedAttempt(args.categoryId, snapshot, err, { args }))) {
         return 'stale';
       }
-      this.publishFailure(args, err);
       throw err;
     }
   }
@@ -346,20 +351,16 @@ export class GameCategoryMembershipService {
     };
   }
 
-  private publish(
-    categoryId: GameCategory['id'],
-    trigger: EvaluateArgs['trigger'],
-    actor: CatalogActor | undefined,
+  private async publish(
+    tx: DrizzleTx,
+    { categoryId, trigger, actor }: EvaluateArgs,
     { diff, matchedCount, relabeledCount }: Applied,
   ) {
     const changed = diff.toAdd.length > 0 || diff.toRemove.length > 0;
-    if (changed) {
-      enqueueGameCategoryRank(this.jobQueue, categoryId);
-    }
     if (!changed && relabeledCount === 0 && trigger !== 'admin') {
       return;
     }
-    this.events.emit('gaming.category.membership_evaluated', {
+    await this.events.emitInTransaction(tx, 'gaming.category.membership_evaluated', {
       categoryId,
       actorId: actor?.actorId ?? SYSTEM_ACTOR_ID,
       trigger,
@@ -372,11 +373,15 @@ export class GameCategoryMembershipService {
     });
   }
 
-  private publishFailure({ categoryId, trigger, actor }: EvaluateArgs, err: unknown) {
+  private async publishFailure(
+    tx: DrizzleTx,
+    { categoryId, trigger, actor }: EvaluateArgs,
+    err: unknown,
+  ) {
     if (trigger !== 'admin') {
       return;
     }
-    this.events.emit('gaming.category.membership_evaluation.failed', {
+    await this.events.emitInTransaction(tx, 'gaming.category.membership_evaluation.failed', {
       categoryId,
       actorId: actor?.actorId ?? SYSTEM_ACTOR_ID,
       reason: failureReason(err),
@@ -391,24 +396,30 @@ export class GameCategoryMembershipService {
     categoryId: GameCategory['id'],
     snapshot: EvaluationSnapshot,
     err: unknown,
+    announce: { args: EvaluateArgs; announceWhenStale?: boolean },
   ) {
     try {
-      const recorded = await this.drizzle.db
-        .update(gameCategory)
-        .set({
-          membershipAttemptedAt: sql`now()`,
-          membershipLastError: failureReason(err),
-          updatedAt: sql`${gameCategory.updatedAt}`,
-        })
-        .where(
-          and(
-            eq(gameCategory.id, categoryId),
-            eq(gameCategory.membershipMode, 'rule'),
-            eq(gameCategory.membershipSeq, snapshot.membershipSeq),
-          ),
-        )
-        .returning({ id: gameCategory.id });
-      return recorded.length > 0;
+      return await this.drizzle.db.transaction(async (tx) => {
+        const recorded = await tx
+          .update(gameCategory)
+          .set({
+            membershipAttemptedAt: sql`now()`,
+            membershipLastError: failureReason(err),
+            updatedAt: sql`${gameCategory.updatedAt}`,
+          })
+          .where(
+            and(
+              eq(gameCategory.id, categoryId),
+              eq(gameCategory.membershipMode, 'rule'),
+              eq(gameCategory.membershipSeq, snapshot.membershipSeq),
+            ),
+          )
+          .returning({ id: gameCategory.id });
+        if (recorded.length > 0 || announce.announceWhenStale) {
+          await this.publishFailure(tx, announce.args, err);
+        }
+        return recorded.length > 0;
+      });
     } catch (recordErr) {
       logger.error(
         { err: recordErr, categoryId },

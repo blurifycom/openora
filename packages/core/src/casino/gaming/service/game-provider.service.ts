@@ -265,6 +265,13 @@ export class GameProviderService {
           );
         }
         const mappings = (await mappingsByProviderIds(tx, [created.id])).get(created.id) ?? [];
+        await this.events.emitInTransaction(tx, 'gaming.provider.created', {
+          providerId: created.id,
+          ...providerSnapshot(created, mappings),
+          actorId,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
         return { record: created, mappings };
       });
     } catch (error) {
@@ -277,14 +284,6 @@ export class GameProviderService {
       }
       throw error;
     }
-    const snapshot = providerSnapshot(outcome.record, outcome.mappings);
-    this.events.emit('gaming.provider.created', {
-      providerId: outcome.record.id,
-      ...snapshot,
-      actorId,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
     return toProviderDetail(outcome.record, outcome.mappings, 0);
   }
 
@@ -331,13 +330,7 @@ export class GameProviderService {
         const hasProviderChanges = Object.values(patch).some((value) => value !== undefined);
         const replaceMappings = aggregatorMappings !== undefined;
         if (!hasProviderChanges && !replaceMappings) {
-          const snapshot = providerSnapshot(existing, existingMappings);
-          return {
-            changed: false,
-            before: snapshot,
-            after: snapshot,
-            result: toProviderDetail(existing, existingMappings, pendingReviewCount),
-          };
+          return { result: toProviderDetail(existing, existingMappings, pendingReviewCount) };
         }
         if (replaceMappings) {
           // A game on a dropped aggregator would stay playable yet sit in the unmapped
@@ -388,12 +381,15 @@ export class GameProviderService {
         const persistedMappings = replaceMappings
           ? ((await mappingsByProviderIds(tx, [id])).get(id) ?? [])
           : existingMappings;
-        return {
-          changed: true,
+        await this.events.emitInTransaction(tx, 'gaming.provider.updated', {
+          providerId: id,
+          actorId,
           before: providerSnapshot(existing, existingMappings),
           after: providerSnapshot(next, persistedMappings),
-          result: toProviderDetail(next, persistedMappings, pendingReviewCount),
-        };
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+        return { result: toProviderDetail(next, persistedMappings, pendingReviewCount) };
       })
       .catch((error: unknown) => {
         // Translate only the index that actually fired: a vendor-id collision must
@@ -406,17 +402,6 @@ export class GameProviderService {
         }
         throw error;
       });
-    if (!outcome.changed) {
-      return outcome.result;
-    }
-    this.events.emit('gaming.provider.updated', {
-      providerId: id,
-      actorId,
-      before: outcome.before,
-      after: outcome.after,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
     return outcome.result;
   }
 }

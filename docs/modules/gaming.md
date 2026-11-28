@@ -305,6 +305,8 @@ An importer that writes `game` rows must call `notifyGamesCreated` or `notifyGam
 
 Every admin change to sort config, order, or pins emits an event carrying the actor's id, the before/after state, and optional request-origin metadata.
 
+Every event below, and the catalogue events beside them (`gaming.tag.*`, `gaming.provider.*`, `gaming.game.*`, `gaming.games.*`, `gaming.category.created`), is written to the outbox in the transaction that made the change, so the audit record commits with it and is never lost to a crash after commit. A refused or rolled-back change leaves no event. The audit record is keyed by the event id, so a redelivery writes it once.
+
 - **`gaming.category.updated`** - `sortKey`, `sortDirection`, `sortParams`, etc. changed. Carries before/after snapshots of the full category config.
 - **`gaming.category.games_reordered`** - Manual reorder via the PUT route. Carries `before`/`after` as the full ordered game-id lists (every member, not only previously-positioned ones), `sortKeyBefore`/`sortKeyAfter` to show the mode switch, and `sortDirectionBefore`/`sortDirectionAfter` plus `sortParamsBefore`/`sortParamsAfter` to show the direction/params reset a reorder always performs.
 - **`gaming.category.pins_updated`** - Pins replaced via the PUT route. Carries `before`/`after` as ordered lists of `{ gameId, position }` objects.

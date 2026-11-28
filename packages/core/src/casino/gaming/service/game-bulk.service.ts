@@ -247,63 +247,57 @@ export class GameBulkService {
       // reuse them instead of resolving the same lookup a second time after commit.
       const dirtiedByGames = await markCategoriesRankDirtyForGames(tx, changedGameIds);
       const dirtiedByProviders = await markCategoriesRankDirtyForProviders(tx, changedProviderIds);
+      const approvedByStatus = groupIdsByStatus(toApprove, new Set(approvedGameIds));
+
+      if (changedGameIds.length > 0 || changedProviderIds.length > 0) {
+        await this.events.emitInTransaction(tx, 'gaming.games.bulk_updated', {
+          operation: 'set_active',
+          actorId,
+          bulkOperationId,
+          target: { gameIds, providerIds },
+          isActive,
+          changedGameIds: sortIds(changedGameIds),
+          changedProviderIds: sortIds(changedProviderIds),
+          affectedCategoryIds: sortIds([...new Set([...dirtiedByGames, ...dirtiedByProviders])]),
+          notFound: { gameIds: notFoundGameIds, providerIds: notFoundProviderIds },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
+      for (const snapshot of changedProviderSnapshots) {
+        await this.events.emitInTransaction(tx, 'gaming.provider.updated', {
+          providerId: snapshot.providerId,
+          actorId,
+          bulkOperationId,
+          before: snapshot.before,
+          after: snapshot.after,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
+      for (const [previousStatus, approvedIds] of approvedByStatus) {
+        await this.events.emitInTransaction(tx, 'gaming.games.reviewed', {
+          actorId,
+          decision: 'approve',
+          previousStatus,
+          gameIds: approvedIds,
+          bulkOperationId,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
 
       return {
-        gameIds,
-        providerIds,
         notFoundGameIds,
         notFoundProviderIds,
-        changedGameIds: sortIds(changedGameIds),
-        changedProviderIds: sortIds(changedProviderIds),
-        changedProviderSnapshots,
-        dirtiedCategoryIds: sortIds([...new Set([...dirtiedByGames, ...dirtiedByProviders])]),
         gamesUpdatedCount: changedGameIds.length,
         gamesUnchangedCount: games.length - changedGameIds.length - reviewSkipped.length,
         providersUpdatedCount: changedProviderIds.length,
         providersUnchangedCount: existingProviderIds.length - changedProviderIds.length,
         unplayableGameIds,
         reviewSkippedCount: reviewSkipped.length,
-        approvedByStatus: groupIdsByStatus(toApprove, new Set(approvedGameIds)),
       };
     });
-
-    if (outcome.changedGameIds.length > 0 || outcome.changedProviderIds.length > 0) {
-      this.events.emit('gaming.games.bulk_updated', {
-        operation: 'set_active',
-        actorId,
-        bulkOperationId,
-        target: { gameIds: outcome.gameIds, providerIds: outcome.providerIds },
-        isActive,
-        changedGameIds: outcome.changedGameIds,
-        changedProviderIds: outcome.changedProviderIds,
-        affectedCategoryIds: outcome.dirtiedCategoryIds,
-        notFound: { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
-    for (const snapshot of outcome.changedProviderSnapshots) {
-      this.events.emit('gaming.provider.updated', {
-        providerId: snapshot.providerId,
-        actorId,
-        bulkOperationId,
-        before: snapshot.before,
-        after: snapshot.after,
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
-    for (const [previousStatus, approvedIds] of outcome.approvedByStatus) {
-      this.events.emit('gaming.games.reviewed', {
-        actorId,
-        decision: 'approve',
-        previousStatus,
-        gameIds: approvedIds,
-        bulkOperationId,
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
 
     return {
       games: {
@@ -362,43 +356,42 @@ export class GameBulkService {
           .returning({ id: game.id });
         changedGameIds = rows.map((row) => row.id);
       }
+      const notFound = { gameIds: notFoundGameIds, providerIds: notFoundProviderIds };
+      if (changedGameIds.length > 0) {
+        if (decision === 'approve') {
+          await this.events.emitInTransaction(tx, 'gaming.games.bulk_updated', {
+            operation: 'set_active',
+            actorId,
+            bulkOperationId,
+            target: { gameIds, providerIds },
+            isActive: true,
+            changedGameIds: sortIds(changedGameIds),
+            changedProviderIds: [],
+            affectedCategoryIds: sortIds(dirtiedCategoryIds),
+            notFound,
+            ip: ip ?? null,
+            userAgent: userAgent ?? null,
+          });
+        }
+        await this.events.emitInTransaction(tx, 'gaming.games.reviewed', {
+          actorId,
+          decision,
+          previousStatus: 'pending',
+          gameIds: sortIds(changedGameIds),
+          bulkOperationId,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
       return {
-        notFoundGameIds,
-        notFoundProviderIds,
+        notFound,
         changedGameIds: sortIds(changedGameIds),
-        dirtiedCategoryIds: sortIds(dirtiedCategoryIds),
         unchangedCount: games.length - changedGameIds.length,
         unplayableGameIds,
       };
     });
 
-    const notFound = { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds };
-    if (outcome.changedGameIds.length > 0) {
-      if (decision === 'approve') {
-        this.events.emit('gaming.games.bulk_updated', {
-          operation: 'set_active',
-          actorId,
-          bulkOperationId,
-          target: { gameIds, providerIds },
-          isActive: true,
-          changedGameIds: outcome.changedGameIds,
-          changedProviderIds: [],
-          affectedCategoryIds: outcome.dirtiedCategoryIds,
-          notFound,
-          ip: ip ?? null,
-          userAgent: userAgent ?? null,
-        });
-      }
-      this.events.emit('gaming.games.reviewed', {
-        actorId,
-        decision,
-        previousStatus: 'pending',
-        gameIds: outcome.changedGameIds,
-        bulkOperationId,
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
+    const { notFound } = outcome;
 
     return {
       games: {
@@ -470,29 +463,25 @@ export class GameBulkService {
       }
 
       const changedGameIds = addedLinks.map((link) => link.gameId);
+      if (addedLinks.length > 0) {
+        await this.events.emitInTransaction(tx, 'gaming.games.bulk_updated', {
+          operation: 'add_tags',
+          actorId,
+          target: { gameIds, providerIds },
+          tagIds,
+          addedLinks,
+          notFound: { gameIds: notFoundGameIds, providerIds: notFoundProviderIds },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
       return {
-        gameIds,
-        providerIds,
         notFoundGameIds,
         notFoundProviderIds,
-        addedLinks,
         gamesUpdatedCount: changedGameIds.length,
         gamesUnchangedCount: matchedGameIds.length - changedGameIds.length,
       };
     });
-
-    if (outcome.addedLinks.length > 0) {
-      this.events.emit('gaming.games.bulk_updated', {
-        operation: 'add_tags',
-        actorId,
-        target: { gameIds: outcome.gameIds, providerIds: outcome.providerIds },
-        tagIds,
-        addedLinks: outcome.addedLinks,
-        notFound: { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
 
     return {
       games: {
@@ -569,29 +558,25 @@ export class GameBulkService {
       }
 
       const changedGameIds = addedLinks.map((link) => link.gameId);
+      if (addedLinks.length > 0) {
+        await this.events.emitInTransaction(tx, 'gaming.games.bulk_updated', {
+          operation: 'add_categories',
+          actorId,
+          target: { gameIds, providerIds },
+          categoryIds,
+          addedLinks,
+          notFound: { gameIds: notFoundGameIds, providerIds: notFoundProviderIds },
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+      }
       return {
-        gameIds,
-        providerIds,
         notFoundGameIds,
         notFoundProviderIds,
-        addedLinks,
         gamesUpdatedCount: changedGameIds.length,
         gamesUnchangedCount: matchedGameIds.length - changedGameIds.length,
       };
     });
-
-    if (outcome.addedLinks.length > 0) {
-      this.events.emit('gaming.games.bulk_updated', {
-        operation: 'add_categories',
-        actorId,
-        target: { gameIds: outcome.gameIds, providerIds: outcome.providerIds },
-        categoryIds,
-        addedLinks: outcome.addedLinks,
-        notFound: { gameIds: outcome.notFoundGameIds, providerIds: outcome.notFoundProviderIds },
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
 
     return {
       games: {
