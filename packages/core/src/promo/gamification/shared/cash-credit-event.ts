@@ -5,17 +5,11 @@ export type CashCredit = {
   userId: Uuid;
   amount: string;
   currency: string;
-  /** Null on a replayed credit: nothing moved, and the first credit was already announced. */
   transactionId: string | null;
 };
 
 export type CashCreditAnnouncer = { events: EventBus; identity: IdentityReader };
 
-/**
- * Announces gamification cash credits through the outbox, in the transaction that moved them, so
- * each balance event exists if and only if its credit committed. The player is resolved once for
- * the whole batch.
- */
 export async function announceCashCredits(
   tx: DrizzleTx,
   { events, identity }: CashCreditAnnouncer,

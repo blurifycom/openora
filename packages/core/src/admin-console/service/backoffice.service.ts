@@ -141,13 +141,6 @@ export class BackofficeService {
     return toAdminUser(row, assignedRoles);
   }
 
-  /**
-   * Refuses a change that would lock admin management out: an admin disabling or re-roling
-   * themselves, or the last active super-admin being disabled or demoted. Runs inside the
-   * update's transaction, against the locked row; the super-admin check takes the shared
-   * super-admin management lock, so concurrent changes that each remove a different
-   * super-admin are decided one after the other and the write commits under that lock.
-   */
   private async assertKeepsAdminAccess({
     userId,
     data,
@@ -193,8 +186,6 @@ export class BackofficeService {
       sortOrder,
     } = filters;
 
-    // `userId` = exact wallet.userId match; `player` = free-text resolved to ids.
-    // When both are set the result is their intersection.
     let userIds: string[] | undefined;
     if (player) {
       const resolved = await this.users.findPlayerIds(player);
@@ -250,8 +241,6 @@ export class BackofficeService {
     return new Map(summaries.map((s) => [s.userId, s]));
   }
 
-  // The port's row shape already matches GamePerformanceSchema field-for-field (no
-  // Date/Decimal to serialize - volume/revenue are already decimal strings) - no mapping.
   async getGamePerformance(filter: GamePerformanceFilter) {
     return this.gameReporting.listGamePerformance({
       dateFrom: filter.dateFrom ? new Date(filter.dateFrom) : undefined,
@@ -268,8 +257,6 @@ export class BackofficeService {
     const dateFrom = filter.dateFrom
       ? new Date(filter.dateFrom)
       : new Date(dateTo.getTime() - DEFAULT_TREND_RANGE_DAYS * 24 * 60 * 60 * 1000);
-    // The schema only orders the range when both ends are given; a lone dateFrom can
-    // still land after the default dateTo of now.
     if (dateFrom > dateTo) {
       throw new GamePerformanceTrendRangeError('dateFrom must be before or equal to dateTo');
     }

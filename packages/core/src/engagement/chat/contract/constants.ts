@@ -15,7 +15,6 @@ export const JOIN_CODE_INPUT_MAX_LENGTH = 20;
 export const PRIVATE_ROOM_SLUG_PREFIX = 'private-';
 export const CONTEXT_ROOM_SLUG_PREFIX = 'context-';
 
-// `context` rooms belong to server code through CHAT_CONTEXT_ROOMS and never appear in a player's room list.
 export const CHAT_ROOM_KINDS = ['standard', 'context'] as const;
 
 export const MAX_PRIVATE_ROOMS_PER_PLAYER = 15;
@@ -30,20 +29,13 @@ export const STAFF_USER_ROLES = ['admin', 'super-admin'] as const;
 export const isStaffRole = (role: string | undefined) =>
   STAFF_USER_ROLES.some((staffRole) => staffRole === role);
 
-// The name a roster shows for a member whose account the identity service does not know.
 export const UNKNOWN_PLAYER_USERNAME = 'Unknown player';
 
 export const CHAT_ROOM_RESTRICTION_TYPES = ['mute', 'ban', 'cooldown'] as const;
-// `admin`: set by staff through the backoffice. `room`: set by the room's owner or a moderator.
 export const CHAT_ROOM_RESTRICTION_SOURCES = ['admin', 'room'] as const;
 
-// Roles a room owner can grant or revoke through the member-role route. `owner` is absent
-// on purpose: ownership moves through its own transfer flow, never through a role write.
 export const CHAT_ROOM_ASSIGNABLE_ROLES = ['member', 'moderator'] as const;
 
-// Realtime signal published on a room's channel when a member's role changes, so connected
-// clients refetch the roster instead of rendering a stale badge until their cache expires.
-// Named alongside the transport's own ACCESS_REVOKED_SIGNAL; a client subscribes to it by name.
 export const CHAT_MEMBER_ROLE_CHANGED_SIGNAL = 'chat:member-role-changed';
 
 export const CHAT_MEMBER_JOINED_SIGNAL = 'chat:member-joined';
@@ -63,7 +55,6 @@ export const CHAT_ROOM_INVITE_CANDIDATE_STATUSES = [
   'banned',
 ] as const;
 
-// `unavailable` marks an id that is not a player.
 export const CHAT_ROOM_INVITE_LOOKUP_STATUSES = [
   ...CHAT_ROOM_INVITE_CANDIDATE_STATUSES,
   'unavailable',

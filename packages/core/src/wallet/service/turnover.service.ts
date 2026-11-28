@@ -85,7 +85,6 @@ export type TurnoverServiceDeps = {
   audit: AuditWritePort;
   config: WalletTurnoverConfig;
   pivotCurrency: string;
-  /** Absent on an fx-less install: every non-pivot credit then stays pending. */
   rates?: ExchangeRateReader;
   logger?: ReturnType<typeof createLogger>;
 };
@@ -95,7 +94,6 @@ export type TurnoverStakeStamp = {
   state: Exclude<TurnoverStakeState, 'reversal'>;
 };
 
-/** Pivot rates keyed by `rateKey`, looked up once for a whole pricing run. */
 type PendingRates = ReadonlyMap<string, string>;
 
 const rateKey = (currency: string, pivotCurrency: string): string =>
@@ -107,11 +105,9 @@ export type TurnoverStake = {
   userId: User['id'];
   product: WagerProduct | undefined;
   currency: string;
-  /** The part of the stake the real balance paid. */
   realPart: string;
 };
 
-/** A ledger round: one wallet's rows under one provider round id, in one currency. */
 export type TurnoverRound = {
   userId: User['id'];
   walletId: LedgerRow['walletId'];
@@ -181,7 +177,6 @@ export class TurnoverService {
     };
   }
 
-  /** Nothing owed: what is left is at most dust and no entry waits for a rate. */
   private isMet(row: TurnoverRow): boolean {
     const remaining = maxZero(moneySubtract(row.required, row.progress));
     return moneyCompare(remaining, this.deps.config.dustThreshold) <= 0 && row.pendingCount === 0;
@@ -213,7 +208,6 @@ export class TurnoverService {
     return row ? this.toSummary(row) : this.emptySummary(true);
   }
 
-  /** The stored requirement for staff, kept readable while the multiplier is '0'; it locks nothing then. */
   async adminSummary(userId: User['id']): Promise<TurnoverSummary> {
     const row = await this.readRow(this.deps.drizzle.db, userId);
     if (!row) {
@@ -261,10 +255,6 @@ export class TurnoverService {
     return { items: rows.map(toAdminEntry), nextCursor };
   }
 
-  /**
-   * Zeroes the player's requirement and clears every live entry, audited, whenever the row holds
-   * anything: a met requirement with history is cleared too. A no-op only on an empty row.
-   */
   async clear(
     adminId: User['id'],
     { userId, reason }: { userId: User['id']; reason: string },
@@ -275,7 +265,6 @@ export class TurnoverService {
       if (!row) {
         return { cleared: false, summary: await this.summary(userId, tx) };
       }
-      // Taken under the row lock, so every bet that locked the row earlier was created before it.
       const [stamp] = await tx
         .select({ at: sql<string>`clock_timestamp()::text` })
         .from(walletTurnover)
@@ -412,7 +401,6 @@ export class TurnoverService {
     });
   }
 
-  /** The pivot value of `amount`, or null while no rate is available. */
   private async price({
     amount,
     currency,
@@ -435,10 +423,6 @@ export class TurnoverService {
     return (await this.deps.rates?.getRate(currency, pivotCurrency, tx))?.rate ?? null;
   }
 
-  /**
-   * The stored entry for `(source, sourceRef)` as a replay, or null when there is none.
-   * @throws WalletReplayMismatchError when that entry belongs to another player, currency or amount.
-   */
   private async findReplay(
     db: DrizzleDb,
     entry: NewEntry,
@@ -474,10 +458,6 @@ export class TurnoverService {
     return row;
   }
 
-  /**
-   * The row under its lock, and whether a staff clear committed after this transaction began: a
-   * row this transaction writes is then dated before that clear, so it must count nothing.
-   */
   private async lockSinceClear(
     db: DrizzleDb,
     userId: User['id'],
@@ -498,10 +478,6 @@ export class TurnoverService {
     return row;
   }
 
-  /**
-   * Writes the locked row's new values and emits `wallet.turnover.met` when this write is the one
-   * that meets the requirement. The row lock makes that transition visible to one writer only.
-   */
   private async writeRow(
     db: DrizzleDb,
     row: TurnoverRow,
@@ -522,14 +498,12 @@ export class TurnoverService {
     }
   }
 
-  /** What still counts toward the row: its remainder, or anything while an entry awaits a rate. */
   private countable(row: TurnoverRow, contribution: string): string {
     return row.pendingCount > 0
       ? contribution
       : minMoney(contribution, maxZero(moneySubtract(row.required, row.progress)));
   }
 
-  /** Moves the player's progress by `delta` under the row lock, never below zero. */
   private async moveProgress(db: DrizzleDb, userId: User['id'], delta: string): Promise<void> {
     const row = await this.lockRow(db, userId);
     if (!row) {
@@ -538,10 +512,6 @@ export class TurnoverService {
     await this.writeRow(db, row, { progress: maxZero(moneyAdd(row.progress, delta)) });
   }
 
-  /**
-   * Adds one entry's requirement on the caller's transaction, deduplicated on `(source, sourceRef)`.
-   * Prices before it takes the player's turnover row lock, then locks that row before the entry.
-   */
   private async addEntry(tx: unknown, entry: NewEntry): Promise<AddTurnoverRequirementResult> {
     const db = tx as DrizzleDb;
     const replay = await this.findReplay(db, entry);
@@ -588,7 +558,6 @@ export class TurnoverService {
       }
       return existing;
     }
-    // Play past a met requirement is not banked; while anything is owed, play already counted stays.
     const progress = this.isMet(row) ? row.required : row.progress;
     await this.writeRow(
       db,
@@ -620,11 +589,6 @@ export class TurnoverService {
     });
   }
 
-  /**
-   * The requirement a credit owes, added on the caller's transaction once per `sourceRef` (its
-   * ledger row id). Touches nothing while turnover is off or `kind` is not in `creditTypes`. The
-   * caller already holds the wallet, balance and grant locks it takes, never takes them after.
-   */
   async addCredit(
     tx: unknown,
     { kind, ...credit }: TurnoverCredit,
@@ -635,12 +599,6 @@ export class TurnoverService {
     return this.addEntry(tx, { ...credit, source: kind, multiplier: this.deps.config.multiplier });
   }
 
-  /**
-   * Prices the player's pending entries that have a rate now, then applies them under the turnover
-   * row lock. Only an entry this call moves out of `pending` adds to `required`, so a repeat or a
-   * concurrent run adds nothing twice. `rates` replaces the lookups when a batch already made them.
-   * Returns how many it priced.
-   */
   async pricePending(tx: unknown, userId: User['id'], rates?: PendingRates): Promise<number> {
     const db = tx as DrizzleDb;
     const current = await this.readRow(db, userId);
@@ -696,11 +654,6 @@ export class TurnoverService {
     return priced.length;
   }
 
-  /**
-   * Prices the player's pending entries in a transaction of its own, so a withdrawal decides on
-   * the newest known requirement without a rate lookup under its money locks, and the pricing
-   * stays when the withdrawal is refused.
-   */
   async pricePendingNow(userId: User['id']): Promise<void> {
     if (!this.enabled) {
       return;
@@ -712,10 +665,6 @@ export class TurnoverService {
     await this.deps.drizzle.db.transaction((tx) => this.pricePending(tx, userId));
   }
 
-  /**
-   * What an outflow would be refused with now, under the turnover row lock on the caller's
-   * transaction, after the wallet, balance and grant locks it already holds; null when it passes.
-   */
   async refusal(
     tx: unknown,
     { userId, outflow }: { userId: User['id']; outflow: TurnoverOutflow },
@@ -738,7 +687,6 @@ export class TurnoverService {
     });
   }
 
-  /** @throws TurnoverLockedError while more than dust remains or an entry is still unpriced. */
   async assertOutflow(
     tx: unknown,
     args: { userId: User['id']; outflow: TurnoverOutflow },
@@ -749,10 +697,6 @@ export class TurnoverService {
     }
   }
 
-  /**
-   * The pricing job: each pending currency's rate is looked up once, then one transaction per
-   * player holding a priceable entry, so no lock outlives its player and one failure skips only it.
-   */
   async priceAllPending(): Promise<void> {
     if (!this.enabled || !this.deps.rates) {
       return;
@@ -815,12 +759,6 @@ export class TurnoverService {
     return (await this.readRow(tx as DrizzleDb, userId)) !== undefined;
   }
 
-  /**
-   * What a bet's real part counts, decided under the turnover row lock before its ledger row is
-   * written so the row carries it, with the row it locked. Null while nothing is owed. A product in
-   * `countAtSettle` is `deferred` at its full value: it counts when its round settles. A `counted`
-   * stake is stamped with at most what still counts, so a reversal takes back only what counted.
-   */
   async stakeStamp(
     tx: unknown,
     { userId, product, currency, realPart }: TurnoverStake,
@@ -868,10 +806,6 @@ export class TurnoverService {
     };
   }
 
-  /**
-   * Adds a `counted` stake to the row `stakeStamp` locked, after its stamped ledger row is written;
-   * the bet holds that lock throughout, so the row is still current.
-   */
   async countStake(
     tx: unknown,
     { row, contribution }: { row: TurnoverRow; contribution: string },
@@ -913,12 +847,6 @@ export class TurnoverService {
     );
   }
 
-  /**
-   * The round's final result reached the wallet: its `deferred` stakes count now, net of its
-   * reversals. The conditional flip is the guard, so a re-settle after a reopen counts nothing more.
-   * A stake placed at or before the player's last staff clear flips but adds nothing, like a
-   * stake that counted before that clear.
-   */
   async settleRound(tx: unknown, round: TurnoverRound): Promise<void> {
     if (!this.enabled) {
       return;
@@ -959,12 +887,6 @@ export class TurnoverService {
     }
   }
 
-  /**
-   * Takes a stake reversal's share back: the named bet's contribution pro rata to what is
-   * reversed, else the round's, capped at what the round still holds. Only stakes placed after the
-   * player's last staff clear count. Stamped on the reversal row; progress drops only by the part
-   * that had already counted.
-   */
   async reverseStake(tx: unknown, reversal: TurnoverReversal): Promise<void> {
     if (!this.enabled) {
       return;

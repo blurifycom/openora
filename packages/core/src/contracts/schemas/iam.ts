@@ -8,17 +8,10 @@ export const invitationStatuses = ['pending', 'accepted', 'revoked'] as const;
 export const InvitationStatusSchema = z.enum(invitationStatuses);
 export type InvitationStatus = z.infer<typeof InvitationStatusSchema>;
 
-// Closed set of values the better-auth `user.role` column legitimately holds.
-// Shared here so the adapter port (contracts) and consumer contracts never duplicate it.
 export const userRoles = ['player', 'admin'] as const;
 export const UserRoleSchema = z.enum(userRoles);
 export type UserRole = z.infer<typeof UserRoleSchema>;
 
-// Admin RBAC catalog. It lives in contracts, not in `server/auth`, because the
-// backoffice gates its navigation, its routes and its query hooks on the same
-// resource names that AdminGuard asserts, and a browser bundle cannot import
-// from `server/`. Without one shared source each consumer retypes the list, and
-// a typo resolves silently to "no grant" instead of failing the build.
 export const adminStatement = {
   player: ['view', 'update', 'ban'] as const,
   transaction: ['view', 'refund'] as const,
@@ -60,8 +53,6 @@ export const adminStatement = {
   'agent-proposal': ['view', 'approve', 'reject'] as const,
   'agent-config': ['view', 'update'] as const,
   'mcp-access': ['use'] as const,
-  // Checked by the agent hub, not by core: lets an admin use the back-office AI assistant, which
-  // reads platform tools on the admin's own grants.
   'agent-chat': ['use'] as const,
   'mcp-token': ['view', 'revoke'] as const,
   'support-chat': ['view'] as const,

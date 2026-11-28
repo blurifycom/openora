@@ -12,10 +12,8 @@ import {
 
 type ExpiringTable = typeof chatMute | typeof chatPlatformBan | typeof chatPlayerCooldown;
 
-/** Rows considered per table per pass. A backlog just drains over the next few ticks. */
 const EXPIRY_SWEEP_BATCH_SIZE = 500;
 
-/** Lifts lapsed rows at their own expiry with no `lifted_by`, so the sweep still records the lapse. */
 export async function retireLapsedRows(
   tx: DrizzleTx,
   table: ExpiringTable | typeof chatRoomBan | typeof chatRoomMute,
@@ -28,20 +26,12 @@ export async function retireLapsedRows(
     .where(and(active, isNull(table.liftedAt), lte(table.expiresAt, now)));
 }
 
-/**
- * Writes the audit entry nothing else writes: a timed chat mute, platform ban or cooldown lapsing
- * on its own. Expiry here is a read-time predicate, so no actor-initiated path records
- * it and the trail would otherwise show moderation start and never end.
- *
- * Changes no enforcement; `expiryRecordedAt` is read nowhere but here.
- */
 export class ChatModerationExpiryService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly audit: AuditWritePort,
   ) {}
 
-  /** One pass over every table. Idempotent: a recorded row stops matching the scan. */
   async sweep() {
     const mutes = await this.recordLapsed(chatMute, 'chat.mute.expired', 'chat_mute');
     const bans = await this.recordLapsed(
@@ -84,7 +74,6 @@ export class ChatModerationExpiryService {
           isNull(table.expiryRecordedAt),
         ),
       )
-      // Oldest lapse first, so the batch cap cannot starve a row behind newer ones.
       .orderBy(asc(table.expiresAt))
       .limit(EXPIRY_SWEEP_BATCH_SIZE);
 
@@ -115,7 +104,6 @@ export class ChatModerationExpiryService {
     },
   ) {
     return this.drizzle.db.transaction(async (tx) => {
-      // Re-applies the scan's guards so only one worker claims a row and a later lift drops it.
       const claimed = await tx
         .update(table)
         .set({ expiryRecordedAt: new Date() })
@@ -136,8 +124,6 @@ export class ChatModerationExpiryService {
         action,
         resourceType,
         resourceId: id,
-        // The row's own expiresAt, not the sweep's clock: the entry has to state when
-        // moderation stopped applying, not when cron got round to noticing.
         before: { ...before, expiresAt: expiresAt?.toISOString() ?? null },
       });
       return true;

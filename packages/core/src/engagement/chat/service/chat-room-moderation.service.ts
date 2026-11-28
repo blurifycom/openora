@@ -7,7 +7,6 @@ import {
   ChatRoomSelfModerationError,
 } from './errors/chat-moderation.errors.js';
 
-/** When a moderation of `durationSeconds` lapses, counted from now; null is indefinite. */
 export const expiryFrom = (durationSeconds: number | null) =>
   durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
 
@@ -26,10 +25,6 @@ export function assertNotSelfModeration(moderatorId: Uuid, userId: Uuid) {
   }
 }
 
-/**
- * The actor must moderate or own the room; with a target, only an owner may act on a fellow
- * moderator or the owner. Returns the actor's role.
- */
 export async function assertRoomModerator(
   db: DrizzleDb | DrizzleTx,
   roomId: Uuid,

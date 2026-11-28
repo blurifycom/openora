@@ -11,22 +11,11 @@ import {
 } from '@openora/core/contracts';
 import { mapConcurrent, TtlCache, type InternalClient } from '@openora/core/server';
 
-// How stale a role, status or exclusion may be on a read that does not ask for `fresh`.
 const ACCOUNT_CACHE_TTL_MS = 30_000;
 const ACCOUNT_CACHE_MAX_ENTRIES = 10_000;
-// Batches of one big read in flight at once, so a large roster does not queue them one by one.
 const BATCH_CONCURRENCY = 4;
 
-/**
- * {@link AccountReader} over the identity service's internal API. Each account found is kept
- * for {@link ACCOUNT_CACHE_TTL_MS}, unless the read asks for `fresh`; an unknown id is asked
- * again next time, so a new account shows at once. Any failed call throws, so a caller
- * deciding access refuses instead of treating an unreachable identity service as "no
- * restriction".
- */
 export class RemoteAccountReader implements AccountReader {
-  // Accounts by lower-case id, and the cold reads in flight, so concurrent reads of one id make
-  // one call. A fresh read neither joins nor registers one; a miss is not remembered.
   private readonly cache: TtlCache<Account, Map<string, Account>>;
 
   constructor(
@@ -101,7 +90,6 @@ export class RemoteAccountReader implements AccountReader {
     return reply.userId;
   }
 
-  /** Reads `ids` (lower case) in batches; caches and answers only the ids asked for. */
   private async fetch(
     ids: readonly string[],
     playEligibility?: boolean,

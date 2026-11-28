@@ -59,7 +59,6 @@ export type McpKernelDeps<C extends TokenCatalog> = {
   container: TypedContainer<C>;
   authorize: McpAuthorizer;
   audit: AuditWritePort | null;
-  /** The domain events that may start a run (`PlatformConfig.agents.triggers.topics`); none when absent. */
   triggerTopics?: readonly DomainEventName[];
 };
 
@@ -88,12 +87,6 @@ type ToolOutcome = { result: McpToolResult; inputHash?: string; outputHash?: str
 
 type ExecutionOutcome = { result: ActionExecutionResult; payloadHash: string };
 
-/**
- * Builds the kernel behind MCP_KERNEL: runs every tool and action-type factory once,
- * precomputes the descriptors, and wraps every call in IAM, schema validation, error-code
- * mapping and one audit record. Throws when a factory throws or returns the wrong shape,
- * so a broken registration fails boot.
- */
 export function createMcpKernel<C extends TokenCatalog>(deps: McpKernelDeps<C>): McpKernel {
   const tools = indexById(
     deps.tools.map((tool) => serveTool(tool, deps.container)),
@@ -124,7 +117,6 @@ export function createMcpKernel<C extends TokenCatalog>(deps: McpKernelDeps<C>):
   };
 }
 
-/** The trigger catalog's entries for the given topics, in catalog order. */
 export function allowedTriggers(topics: readonly DomainEventName[]): readonly TriggerDescriptor[] {
   const allowed = new Set<string>(topics);
   return triggerCatalog().filter((trigger) => allowed.has(trigger.topic));
@@ -346,9 +338,6 @@ async function recordAudit(audit: AuditWritePort | null, entry: AuditEntry): Pro
   }
 }
 
-// An executor's effect is already committed when its audit record is written, so a transient
-// write failure is retried here instead of being handed back as a failure the caller replays -
-// by then the state may have moved on, and the replay would report an applied action as refused.
 async function recordExecutionAudit(
   audit: AuditWritePort | null,
   entry: AuditEntry,
@@ -571,7 +560,6 @@ async function runExecution(
   }
   const payloadHash = sha256Hex(parsed.data);
   try {
-    // Every audit row and event the executor writes carries the run's correlation id.
     const outcome = ActionExecutionOutcomeSchema.safeParse(
       await withCorrelationId(correlationId, () =>
         action.implementation.execute(parsed.data, proposalId, actor),

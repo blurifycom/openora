@@ -12,7 +12,6 @@ const RAKEBACK_LIABILITY_DEFAULT_DAYS = 30;
 export const RAKEBACK_LIABILITY_MAX_DAYS = 366;
 export const RAKEBACK_LIABILITY_MAX_CURRENCIES = 20;
 
-/** bonus.rakeback_liability's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolveRakebackLiabilityRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, RAKEBACK_LIABILITY_DEFAULT_DAYS, now);
 }
@@ -47,27 +46,20 @@ export const RakebackLiabilityOutputSchema = z.object({
     .array(
       z.object({
         currency: CurrencyTickerSchema,
-        /** Accrued and not yet claimed, now: what the operator owes. */
         unclaimed: RakebackFigureSchema,
-        /** Accrued over the range, whatever became of it since. */
         accrued: RakebackFigureSchema,
-        /** Claimed over the range, by when each was claimed. */
         claimed: RakebackFigureSchema,
       }),
     )
     .max(RAKEBACK_LIABILITY_MAX_CURRENCIES),
   truncated: z.boolean(),
-  /** Claim-mode daily, weekly and monthly rank rewards, kept apart from rakeback. */
   rankRewards: z.object({
     currencies: z
       .array(
         z.object({
           currency: CurrencyTickerSchema,
-          /** Left for the player and not yet paid, now: what the operator owes. */
           unclaimed: RankRewardFigureSchema,
-          /** Left over the range, whatever became of them since. */
           created: RankRewardFigureSchema,
-          /** Claimed or auto-paid over the range, by when each was paid. */
           paid: RankRewardFigureSchema,
         }),
       )

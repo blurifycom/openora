@@ -1,7 +1,3 @@
-// The ledger's view of whether a user may stake: `ledger_play_eligibility`. Identity, the owner
-// of every input, writes it through PLAY_ELIGIBILITY_PROJECTION in the transaction that changes
-// one, and repairs it from the `identity.play_eligibility.changed` outbox event and its backfill.
-// A stake reads this table, never the identity tables. See ADR-0056.
 import { createLogger, type DrizzleService, type DrizzleTx } from '@openora/core/server';
 import {
   PlayEligibilitySnapshotSchema,
@@ -67,7 +63,6 @@ function isStale(current: ProjectionRow | undefined, wanted: ProjectionRow): boo
   );
 }
 
-/** How a projection stands against its owner's snapshots. */
 export type ProjectionComparison = {
   behind: User['id'][];
   differing: User['id'][];
@@ -160,8 +155,6 @@ export class LedgerPlayEligibilityService
       .where(eq(ledgerPlayEligibility.userId, row.userId))
       .limit(1);
     if (held && held.version > row.version) {
-      // The writer holds the user row lock and its version is the truth: a higher one here came
-      // from outside identity. Overwrite it, so the ledger never keeps a state identity did not.
       log.error(
         { userId: row.userId, heldVersion: held.version, version: row.version },
         'ledger_play_eligibility held a version ahead of identity; overwritten',
@@ -199,7 +192,6 @@ export class LedgerPlayEligibilityService
       return 0;
     }
     const db = this.drizzle.db;
-    // Unlocked: the upsert's own condition decides, so a row nobody needs to change is never locked.
     const stale = await this.staleOf([...newest.values()]);
     if (stale.length === 0) {
       return 0;
@@ -221,11 +213,6 @@ export class LedgerPlayEligibilityService
     return result.rowCount ?? 0;
   }
 
-  /**
-   * `behind`: the users whose row is missing or at a lower version than their snapshot.
-   * `differing`: those at its version with another state. `ahead`: those at a higher version with
-   * another state.
-   */
   async compare(snapshots: readonly PlayEligibilitySnapshot[]): Promise<ProjectionComparison> {
     const rows = snapshots.map(rowOf);
     const heldBy = await this.heldBy(rows);

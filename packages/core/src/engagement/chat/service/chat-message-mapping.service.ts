@@ -38,10 +38,6 @@ export function sanitizeCommandMetadata(metadata: unknown): unknown {
   return Object.fromEntries(entries);
 }
 
-// A system message IS its command metadata, and the column is jsonb - a shape Postgres never
-// enforced, so a row can outlive the contract that wrote it. Sanitizing first keeps the
-// deliberate repair path (legacy money strings) working; what still fails to parse cannot be
-// rendered as any system message the contract describes.
 export function toSystemMessage(record: typeof chatMessage.$inferSelect): ChatSystemMessage | null {
   const message = toMessage(record);
   const metadata = CommandMetadataSchema.safeParse(sanitizeCommandMetadata(message.metadata));

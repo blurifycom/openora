@@ -15,12 +15,6 @@ export const WagerWeightProfileNameTakenError = makeConflictError(
 
 export const WeightProfileNotFoundError = makeNotFoundError('WagerWeightProfile');
 
-/**
- * What an operator configures to decide how much of a bet clears a wagering requirement.
- *
- * Editing a profile never reaches a bonus a player already holds: a grant snapshots the rows it
- * scores against at grant time, so this surface only shapes the bonuses granted after it.
- */
 export class WeightService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -50,8 +44,6 @@ export class WeightService {
     input: CreateWagerWeightProfileInput,
   ): Promise<WagerWeightProfileDetail> {
     return this.drizzle.db.transaction(async (tx) => {
-      // The unique index is the guard rather than a read: two admins saving the same name at once
-      // would both find it free.
       const [created] = await tx
         .insert(promoWeightProfile)
         .values({
@@ -72,14 +64,10 @@ export class WeightService {
         resourceId: created.id,
         after: { name: created.name, ...contributionOf(created) },
       });
-      // A profile with no rows scores every bet at zero, so a grant made against it can never be
-      // wagered down. Nothing is granted against a profile that was only just created, but the
-      // caller is told the set is empty rather than left to assume a default.
       return toDetail(created, []);
     });
   }
 
-  /** Replaces the profile's rows outright, so a saved profile is never half a profile. */
   async set(adminId: Uuid, input: SetWagerWeightsInput): Promise<WagerWeightProfileDetail> {
     return this.drizzle.db.transaction(async (tx) => {
       const [profile] = await tx

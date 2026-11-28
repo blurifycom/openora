@@ -1,10 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
-/**
- * Runs `attempt` until it lands, waiting `firstDelayMs` doubling to `maxDelayMs` between failures,
- * or gives up with `undefined` once `signal` aborts. For a projection's boot backfill: what reads
- * the projection stays refused meanwhile, so a failed backfill fails closed and heals by itself.
- */
 export async function retryUntilDone<T>(
   attempt: () => Promise<T>,
   options: {

@@ -11,8 +11,6 @@ import { ChatCommandsService } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
 
-// A typed query reads usernames across every player, so it is throttled per viewer. An overlay
-// serving its own mention route limits it under the same key to share this counter.
 const MENTION_SEARCH_RATE_LIMIT = {
   limit: 30,
   windowMs: 10_000,

@@ -8,8 +8,6 @@ export const playerNote = pgTable(
     playerId: uuid().notNull(),
     actorId: uuid().notNull(),
     content: text().notNull(),
-    // The agent proposal whose execution wrote the note; null for a note an admin wrote. Bare
-    // uuid, no .references: core stores no proposals.
     proposalId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })

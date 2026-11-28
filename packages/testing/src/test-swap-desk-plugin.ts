@@ -11,17 +11,10 @@ import {
   type SwapAdapter,
 } from '@openora/core/contracts';
 
-/** Units of the target currency the desk pays per unit of the source, whatever the pair. */
 export const TEST_SWAP_DESK_RATE = '50000';
 
-/** Largest swap the desk quotes, in units of the source currency. */
 export const TEST_SWAP_DESK_LIMIT = '1';
 
-/**
- * Binds a synchronous swap desk that fills at `TEST_SWAP_DESK_RATE`, refuses a quote above
- * `TEST_SWAP_DESK_LIMIT` and fills each quote once, so a test can prove the typed refusals
- * reach the caller as 4xx. Opt-in only - pass it in `config.plugins`.
- */
 export default {
   id: 'testing-swap-desk',
   dependsOn: ['wallet'],

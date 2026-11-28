@@ -18,10 +18,6 @@ type Figures = {
 
 const NONE: Figures = { bets: 0, promotionPaid: '0', promotionReversed: '0', net: '0' };
 
-/**
- * sportsbook.promotion_report: the admin promotions report's rows over whole UTC days, per currency
- * with its totals and each row's net.
- */
 export async function promotionReport(
   drizzle: DrizzleService,
   { currency, ...dates }: PromotionReportInput,

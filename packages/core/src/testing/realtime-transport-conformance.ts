@@ -7,39 +7,16 @@ import {
 } from '@openora/core/contracts';
 
 export type RealtimeTransportHarness = {
-  /** Used only in describe() block naming for readable output. */
   name: string;
   create: () => RealtimeTransport;
-  /** True when every `create()` instance shares one backend, like two replicas; gates the cross-instance revocation test. */
   sharesBackendAcrossInstances?: boolean;
-  /**
-   * False for a transport whose subscribe() is a server-side no-op because
-   * clients connect directly to a managed vendor's edge (eg AblyRealtimeTransport).
-   * Gates the publish/subscribe fan-out assertions.
-   */
   supportsServerSideSubscribe: boolean;
-  /**
-   * Seeds the harness's notion of "these users are online in this channel" so
-   * getOnlineUserIds() can be asserted the same way across a transport that
-   * tracks join/leave itself (in-process) and one that reads a vendor-side
-   * presence set instead (Ably) - the entries stand in for real connections
-   * regardless of how the transport backs them.
-   */
   addPresence?: (
     transport: RealtimeTransport,
     channel: string,
     entries: { userId: string; connectionId: string }[],
   ) => void | Promise<void>;
-  /**
-   * Forces the harness's next presence/online-user call to fail, to assert
-   * graceful degradation (never throws/rejects, returns a safe default).
-   */
   simulateFailure?: (transport: RealtimeTransport) => void;
-  /**
-   * Resolves once the backend delivers to the subscriptions just opened on `channel`'s payload
-   * and signal `lanes`, and a revocation reaches every open instance. Without it the suite waits
-   * a fixed time, which a slow backend can outrun.
-   */
   untilSubscribed?: (channel: string, lanes: readonly ('payload' | 'signal')[]) => Promise<void>;
 };
 
@@ -48,11 +25,6 @@ function settle(ms = SUBSCRIBE_SETTLE_MS): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Shared behavioral spec for every RealtimeTransport implementation. Run this
- * against each adapter alongside its own adapter-specific tests (this suite
- * doesn't replace those) - it only proves the two satisfy the SAME contract.
- */
 export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportHarness): void {
   const untilSubscribed = (
     channel: string,

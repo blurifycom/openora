@@ -14,11 +14,6 @@ import {
   isActiveLockout,
 } from './lockout-policy.service.js';
 
-// better-auth withholds the session until the second factor clears, so a failing
-// attempt has no session to identify. It does store the pending user id in a
-// verification row keyed by the identifier it puts in the signed two-factor cookie
-// (`2fa-<random>`), which is what lets the lockout follow the account rather than
-// only the browser. Cookie value is `<identifier>.<signature>`.
 const PENDING_2FA_IDENTIFIER_PREFIX = '2fa-';
 
 export function pendingIdentifier(cookieValue: string | undefined): string | undefined {
@@ -36,11 +31,6 @@ export type TwoFactorLockoutServiceDeps = {
   config: AdminSecurityConfig['twoFactorLockout'];
 };
 
-/**
- * Consecutive-failure lockout for the second factor, counted per account and kept in
- * columns of its own: a second-factor lockout must not consume the password-login
- * budget, and the two thresholds are configured independently.
- */
 export class TwoFactorLockoutService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -79,11 +69,6 @@ export class TwoFactorLockoutService {
     }
   }
 
-  /**
-   * `method` is the credential that was presented, so the audit trail can tell a wrong
-   * recovery code from a wrong authenticator code. Throws the account-locked error when this
-   * failure trips the lockout.
-   */
   async recordFailure(
     userId: User['id'],
     method: TwoFactorChallengeMethod,
@@ -95,11 +80,6 @@ export class TwoFactorLockoutService {
     }
   }
 
-  /**
-   * `recordFailure` for a caller that answers the lockout itself instead of throwing. Counts
-   * under the account row's lock, so overlapping wrong codes are each counted; one that lands
-   * after another has locked the account answers that lock without extending it.
-   */
   async countFailure(
     userId: User['id'],
     method: TwoFactorChallengeMethod,

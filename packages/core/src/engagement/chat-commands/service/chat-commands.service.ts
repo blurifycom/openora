@@ -122,7 +122,6 @@ export class ChatCommandsService {
     return toDescriptor(row);
   }
 
-  // The global room is present on `chat:global` whether the client names it by slug or row id.
   private async presenceChannel(roomId: Uuid | null, viewerId: Uuid) {
     const [room] = await this.drizzle.db
       .select({ id: chatRoom.id, slug: chatRoom.slug })

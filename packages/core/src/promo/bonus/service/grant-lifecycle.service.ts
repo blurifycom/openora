@@ -41,12 +41,10 @@ export const PlayerForfeitNotAllowedError = makeConflictError(
 
 const PLAYER_FORFEIT_NOTE = 'Forfeited by the player';
 
-/** A grant that can still be taken away. `completed`, `expired` and `forfeited` cannot. */
 const LIVE_STATUSES = ['pending', 'active'] as const;
 
 const ZERO = '0';
 
-/** One sweep takes at most this many grants, oldest expiry first, so a backlog cannot starve. */
 const EXPIRY_SWEEP_BATCH = 500;
 
 type ClosedGrant = {
@@ -54,18 +52,9 @@ type ClosedGrant = {
   userId: Uuid;
   currency: string;
   forfeitedAmount: string;
-  /** The admin who forfeited it, for the `promo.bonus.forfeited` event; null otherwise. */
   actorId: Uuid | null;
 };
 
-/**
- * What ends a grant: its expiry, or someone taking it away. Both leave the same shape behind -
- * a terminal status, a zeroed bonus balance, a ledger entry for the funds that died with it,
- * and an audit row - so they are one code path with two reasons.
- *
- * Unlike the wagering engine this owns its transactions: nothing else is moving money at the
- * same time, and a sweep that took the caller's transaction would hold it open across the batch.
- */
 export class GrantLifecycleService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -75,10 +64,6 @@ export class GrantLifecycleService {
     private readonly concurrency: GrantConcurrencyMode = 'multiple',
   ) {}
 
-  /**
-   * The player starts a pending grant once its slot is free. Its rollover window restarts here,
-   * so the time it spent waiting is not taken out of the time to wager it.
-   */
   async activate({
     userId,
     grantId,
@@ -96,8 +81,6 @@ export class GrantLifecycleService {
       if (!owned) {
         throw new GrantNotFoundError(grantId);
       }
-      // The same gate opting into an offer runs: a self-excluded or blocked player cannot start
-      // a bonus that was parked while they could still play.
       if (await this.playEligibility.isRestricted(userId, tx)) {
         throw new GrantActivationRestrictedError();
       }
@@ -163,10 +146,6 @@ export class GrantLifecycleService {
     });
   }
 
-  /**
-   * Expire what is due. Each grant is claimed and closed in its own transaction, so a second
-   * sweep running beside this one settles on a row rather than duplicating its ledger entry.
-   */
   async expireDue(): Promise<ClosedGrant[]> {
     const due = await this.drizzle.db
       .select({ id: promoGrant.id })
@@ -187,7 +166,6 @@ export class GrantLifecycleService {
     return closed;
   }
 
-  /** Every live grant a player holds, taken away at once - a self-exclusion, a closed account. */
   async forfeitAllFor(
     userId: Uuid,
     reason: BonusForfeitReason,
@@ -216,11 +194,6 @@ export class GrantLifecycleService {
     return closed;
   }
 
-  /**
-   * Every live grant the player held when `tx` began, closed on `tx`. A grant created after that
-   * is not the one the rule was about, and a grant another path closed first comes back from
-   * `close` as null and is skipped - no refusal row, since nobody attempted it.
-   */
   async forfeitHeld(
     tx: DrizzleTx,
     { userId, reason, actor, note, meta }: BonusForfeitHeldArgs,
@@ -254,13 +227,6 @@ export class GrantLifecycleService {
     return closed;
   }
 
-  /**
-   * A single grant, taken away by name rather than by player - the shape a scheduled job needs
-   * (an Activity Bonus grant that missed its daily wager) that `forfeitAllFor` cannot give it,
-   * since that sweeps every live grant a player holds. `actor` is optional for the same reason
-   * `close` already allows it: a job has no admin session to assert, and recording one it does
-   * not have would misname the regulator-facing audit row as an admin action.
-   */
   async forfeit({
     grantId,
     reason,
@@ -294,9 +260,6 @@ export class GrantLifecycleService {
       }),
     );
     if (!closed) {
-      // Not the status from the read above: expiry, a conversion, or another forfeit can close
-      // the grant between that read and the claim just failing, and this refusal is itself an
-      // immutable audit row. Read what the grant actually is now, not what it was on the way in.
       const [current] = await this.drizzle.db
         .select({ status: promoGrant.status })
         .from(promoGrant)
@@ -314,10 +277,6 @@ export class GrantLifecycleService {
     return closed;
   }
 
-  /**
-   * The player giving up one of their own grants, only where its terms allow it. Another
-   * player's grant reads as missing, so the route cannot confirm the id exists.
-   */
   async forfeitByPlayer({
     userId,
     grantId,
@@ -363,10 +322,6 @@ export class GrantLifecycleService {
     });
   }
 
-  /**
-   * An attempt that took nothing is still an attempt on a money resource, and the record has to
-   * tell a probe apart from a forfeit that landed.
-   */
   private async recordRefusal({
     grantId,
     userId,
@@ -389,9 +344,6 @@ export class GrantLifecycleService {
             actorId: actor.id,
             actorType: actor.isAdmin ? ('admin' as const) : ('player' as const),
           }),
-      // Its own action, not the successful one. A denial shares the resource type, so counting
-      // forfeitures - or reading a grant's history in a dispute - would otherwise mix probes at
-      // ids that do not exist in with the movements that destroyed real money.
       action: 'promo.bonus.forfeit_refused',
       resourceType: 'promo_grant',
       resourceId: grantId,
@@ -400,10 +352,6 @@ export class GrantLifecycleService {
     });
   }
 
-  /**
-   * Claim-then-act: the predicate on the update is what makes a second sweep, or an admin racing
-   * the sweep, a no-op rather than a second ledger entry.
-   */
   private async close(
     tx: DrizzleTx,
     grantId: PromoGrant['id'],
@@ -416,8 +364,6 @@ export class GrantLifecycleService {
       meta?: ClientMeta;
     },
   ): Promise<ClosedGrant | null> {
-    // The balance under the lock the update is about to take, so the amount recorded as
-    // forfeited is the column the CHECK constraint protects rather than a derived sum.
     const [locked] = await tx
       .select({
         status: promoGrant.status,
@@ -437,10 +383,7 @@ export class GrantLifecycleService {
         status: outcome.status,
         closedAt: sql`now()`,
         bonusBalance: ZERO,
-        // The requirement dies with the funds. A terminal grant still reporting progress reads,
-        // on the backoffice screen the rule is written for, as a bonus part-way to converting.
         wageringProgress: ZERO,
-        // B is released and A unlocked: the real cash stays in the wallet, free.
         linkedCash: ZERO,
         unlinkedCash: ZERO,
         ...(outcome.reason === undefined ? {} : { forfeitReason: outcome.reason }),
@@ -471,8 +414,6 @@ export class GrantLifecycleService {
     }
 
     await this.audit.recordInTransaction(tx, {
-      // A player excluding themselves is not an admin action, and recording it as one would
-      // put the wrong name against a forfeiture in the regulator-facing record.
       ...(outcome.actor === undefined
         ? { actorType: 'system' as const }
         : {
@@ -482,8 +423,6 @@ export class GrantLifecycleService {
       action: outcome.action,
       resourceType: 'promo_grant',
       resourceId: grantId,
-      // From the locked read, not the update's RETURNING: Postgres returns the new row there, so
-      // the audit row would have said the grant was already forfeited before it was forfeited.
       before: {
         status: locked.status,
         bonusBalance: forfeitedAmount,
@@ -506,13 +445,9 @@ export class GrantLifecycleService {
       userId: claimed.userId,
       currency: claimed.currency,
       forfeitedAmount,
-      // The event's actorId names the admin who forfeited it, null otherwise - a player's own
-      // id here would tell downstream consumers an admin forfeited their own self-exclusion.
       actorId: outcome.actor?.isAdmin ? outcome.actor.id : null,
     };
     const { actorId, ...announced } = closed;
-    // The single producer of both topics, committed with the close itself. Every forfeit
-    // carries a reason; only an expiry has none.
     if (outcome.reason === undefined) {
       await this.events.emitInTransaction(tx, 'promo.bonus.expired', announced);
     } else {

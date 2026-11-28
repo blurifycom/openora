@@ -49,7 +49,6 @@ export type DepositCompareDeps = {
   pivotCurrency: string;
 };
 
-/** `change` as a percentage of `depositsA` to one decimal; null when there is nothing to compare to. */
 export function changePercent({ depositsA, change }: PricedPlayer): number | null {
   if (moneyCompare(depositsA, '0') === 0) {
     return null;
@@ -58,10 +57,6 @@ export function changePercent({ depositsA, change }: PricedPlayer): number | nul
   return (Math.sign(percent) * Math.round(Math.abs(percent) * 10)) / 10;
 }
 
-/**
- * The players whose deposits moved the way `order` asks, largest change first and ties by
- * player id, at most `limit` of them.
- */
 export function rankDepositChanges(
   players: readonly PricedPlayer[],
   order: DepositCompareOrder,
@@ -98,11 +93,6 @@ function inWindow({ from, to }: DepositWindow) {
   return sql`${depositedAt()} >= ${startOf(from)}::timestamptz and ${depositedAt()} < ${endOf(to)}::timestamptz`;
 }
 
-/**
- * Completed deposits of a tagged segment in two windows, priced per player into the fx pivot.
- * Reads the segment a page at a time: one query resolves a page's user ids and one sums its
- * deposits.
- */
 export class DepositCompareService {
   constructor(private readonly deps: DepositCompareDeps) {}
 

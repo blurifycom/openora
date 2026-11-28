@@ -13,17 +13,6 @@ const CONFIG_COLUMNS = {
   fixedRewards: promoStreakConfig.fixedRewards,
 };
 
-/**
- * The operator's side of the streak: the on/off switch, the daily threshold, which products count,
- * the rakeback rate per milestone day and the fixed rewards, read and replaced as one config - the
- * same singleton shape `RankAdminService` uses for `promoRankConfig`. Every change is audited with
- * a before/after, so an operator's change to what a milestone pays is traceable the way a change
- * to a rank tier is.
- *
- * An edit applies from the next qualifying bet onward; it never rewrites a reward a player has
- * already unlocked. Turning the streak on from off resets every run to zero, so a player never
- * resumes a streak that was switched off.
- */
 export class StreakAdminService {
   constructor(
     private readonly drizzle: DrizzleService,

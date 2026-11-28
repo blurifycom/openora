@@ -41,17 +41,9 @@ of your own.
 
 Any one of these switches it off. Nothing is sent and the daily job is removed from the queue:
 
-```bash
-OPENORA_TELEMETRY_DISABLED=1   # or the cross-tool standard DO_NOT_TRACK=1
-```
-
-```ts
-createApp({ ...config, telemetry: false });
-```
-
-```bash
-npm create @openora my-app -- --no-telemetry
-```
+- Set `OPENORA_TELEMETRY_DISABLED=1`, or the cross-tool standard `DO_NOT_TRACK=1`, in the environment.
+- Pass `telemetry: false` in the config given to `createApp`.
+- Scaffold with the `--no-telemetry` flag of `npm create @openora`.
 
 It's always off under `NODE_ENV=test` or when `CI` is set, so pipeline and e2e runs don't count as
 installs. The server logs one line at boot when telemetry is on, with the switch to turn it off.

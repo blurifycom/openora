@@ -75,7 +75,6 @@ export const playerSummaryTool = defineMcpTool({
   errors: ['player_not_found'],
 });
 
-/** At most this many tags players.find requires a player to hold at once. */
 export const PLAYERS_FIND_MAX_TAGS = 10;
 
 export const PLAYERS_FIND_SORT_FIELDS = [

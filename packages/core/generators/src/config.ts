@@ -3,35 +3,12 @@ import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import type { PlopTypes } from '@turbo/gen';
 
-// The single generation surface for the platform. ONE Plop engine, ONE template
-// dir - used by both the OSS monorepo and downstream consumer repos (a consumer's
-// `turbo/generators/config.ts` re-exports this default). Humans run `pnpm gen
-// <type> ...`; AI agents call the same via the MCP `scaffold-*` tools. See the
-// Root instructions document the available generators.
-//
-//   pnpm gen module <domain> <name>  - business module (schema/service/router/plugin)
-//   pnpm gen route <module> <M> <p>  - oRPC procedure + contract entry
-//   pnpm gen plugin <name>           - overlay plugin
-//   pnpm gen adapter <name> <token>  - overlay that rebinds a vendor adapter token
-//   pnpm gen config <name>           - operator config schema block
-//   pnpm gen event <topic>           - domain event payload in the catalog
-//   pnpm gen job-worker <name>       - JOB_QUEUE worker overlay
-//   pnpm gen adr <title>             - architecture decision record
-//   pnpm gen service <name> <mods>   - thin single-service host (SERVICE_MANIFEST)
-//   pnpm gen app <dir>               - downstream consumer repo
-
-// turbo gen bundles this config into a CJS file inside the *consumer* repo, so
-// import.meta.url / __dirname point at the consumer, not here, and the .hbs files
-// are never copied. Resolve our own install dir through node_modules (the bundle
-// is CJS, so `require.resolve` is the real Node resolver) and read templates by
-// absolute path.
 declare const require: NodeJS.Require;
 const pkgDir = dirname(require.resolve('@openora/core/package.json'));
 const tpl = (name: string): string => join(pkgDir, 'generators', 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
 
-// Plop hands actions an open `Answers` bag; read fields through these coercers.
 type Answers = Record<string, unknown>;
 const s = (a: Answers, k: string): string => String(a[k] ?? '');
 
@@ -45,10 +22,8 @@ const toCamel = (v: string): string =>
   toKebab(v).replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 
 const root = (): string => process.cwd();
-// The OSS monorepo owns the core source tree; a consumer repo only has overlays.
 const coreSrc = (): string => join(root(), 'packages', 'core', 'src');
 const isOssRepo = (): boolean => existsSync(join(coreSrc(), 'contracts'));
-// extensions.config.ts lives at the repo root (both OSS and consumer repos).
 const extensionsConfigPath = (): string => join(root(), 'extensions.config.ts');
 const ossOnly = (gen: string): void => {
   if (!isOssRepo()) {
@@ -115,10 +90,6 @@ function moduleDir(domain: string, name: string): string {
   return join(coreSrc(), domain, name);
 }
 
-/**
- * Appends a `export * as <slice> from ...` (or plugin re-export) line to a domain
- * barrel, creating the barrel when the domain is brand new.
- */
 function appendToBarrel(file: string, line: string, header: string): void {
   if (!existsSync(file)) {
     writeFileSync(file, `${header}\n${line}\n`);
@@ -178,10 +149,6 @@ const DOMAIN_TARGETS = [
   { suffix: '/server', file: 'server' },
 ] as const;
 
-/**
- * Adds the module's subpaths to the @openora/core exports map - the package's
- * public surface. `pnpm regen` mirrors them into the tsconfig paths.
- */
 function wireCoreExports(domain: string, name: string): string {
   const pkgFile = join(root(), 'packages', 'core', 'package.json');
   const pkg = JSON.parse(readFileSync(pkgFile, 'utf8')) as {

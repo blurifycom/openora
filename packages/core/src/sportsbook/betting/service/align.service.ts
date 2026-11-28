@@ -42,7 +42,6 @@ export const SportsbookBetChangedError = makeConflictError(
   { reason: 'bet_changed' },
 );
 
-/** `applied` lists the steps that committed before the refused one. */
 export class SportsbookAlignRefusedError extends Error {
   readonly data: { reason: 'ledger_refused'; refusal: SportsbookRefusalReason; applied: string };
 
@@ -53,7 +52,6 @@ export class SportsbookAlignRefusedError extends Error {
   }
 }
 
-/** Deterministic, so a repeated align of the same observation replays instead of moving twice. */
 export function alignTxId(
   bet: Pick<SportsbookBetRow, 'id'>,
   version: number,
@@ -64,7 +62,6 @@ export function alignTxId(
 
 type Alignment = { steps: LedgerStep[]; mismatch: boolean };
 
-/** The guarded ledger steps that bring the bet to what the provider reports, or a mismatch core cannot apply. */
 export function alignmentSteps(
   bet: SportsbookBetRow,
   observed: SportsbookProviderBetStatus,
@@ -149,7 +146,6 @@ export function alignmentSteps(
         return mismatch;
       }
       if (observed.result === bet.result && moneyEquals(observed.payout, bet.payoutTotal)) {
-        // Re-settling to move only the attribution would reverse and re-pay real money.
         return observed.promotionAmount === undefined ||
           moneyEquals(observed.promotionAmount, bet.promotionPaid)
           ? none
@@ -194,7 +190,6 @@ export class SportsbookAlignService {
     return this.provider?.name === betProvider && this.provider.getBetStatus !== undefined;
   }
 
-  /** Asks the provider, outside any transaction. */
   async observe(bet: SportsbookBetRow): Promise<SportsbookProviderBetStatus> {
     const provider = this.provider;
     if (!provider) {
@@ -223,7 +218,6 @@ export class SportsbookAlignService {
     return { bet: toAdminBet(await this.current(id)), providerStatus, applied };
   }
 
-  /** Applies the answer about `observedAt` unless the bet moved since. A null actor is the reconciliation job. */
   async apply(
     observedAt: SportsbookBetRow,
     providerStatus: SportsbookProviderBetStatus,

@@ -13,17 +13,14 @@ import { announceCashCredit } from '../shared/cash-credit-event.js';
 import { priceForPayout } from '../shared/payout-currency.js';
 import { STUCK_AFTER_FAILURES } from './race-payout.service.js';
 
-/** One settled win, announced through the outbox in its claim's settlement transaction. */
 export type RankChallengeWon = {
   userId: Uuid;
   tierId: Uuid;
   tierKey: string;
   tierName: string;
-  /** As actually credited, after `priceForPayout` - may differ from the tier's own currency. */
   cashAmount: string | null;
   physicalItem: string | null;
   currency: string;
-  /** Null when there was no cash part, or on a replayed credit. */
   transactionId: string | null;
 };
 
@@ -32,19 +29,7 @@ type Logger = {
   error: (context: object, message: string) => void;
 };
 
-/**
- * Settles a claim `RankChallengeService.recordWager` already inserted: credits the cash portion
- * (if any) once, marks the claim settled, and announces the win in the same transaction -
- * mirroring `RankPayoutService.settleLevelUps`'s own "read unsettled rows, credit, mark
- * settled, announce" shape, guarded by the
- * same `settledAt is null` idiom `promoRankLevelUp`/`promoStreakMilestoneGrant` use.
- *
- * A player under a responsible-gambling block still gets the claim settled (so a physical prize
- * still reaches the fulfilment queue) - only the cash credit is withheld, the same rule
- * `RacePayoutService` applies to its own grants.
- */
 export class RankChallengePayoutService {
-  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
   private readonly failures = new Map<Uuid, number>();
 
   constructor(
@@ -75,7 +60,6 @@ export class RankChallengePayoutService {
         }
         this.failures.delete(id);
       } catch (err) {
-        // One claim's failure must not stop the next tick from settling the others due.
         const failures = (this.failures.get(id) ?? 0) + 1;
         this.failures.set(id, failures);
         this.logger.error({ err, claimId: id, failures }, 'rank challenge settlement failed');
@@ -124,9 +108,6 @@ export class RankChallengePayoutService {
       if (!this.wallet) {
         throw new Error('WALLET_COMMANDS is not bound');
       }
-      // Never the tier's own currency unconditionally - see RacePayoutService's own use of
-      // `priceForPayout` for why. Throws on no rate, rolling back this claim's settlement so the
-      // payout job's next tick retries it.
       const priced = await priceForPayout(
         tx,
         this.rates,
@@ -145,9 +126,6 @@ export class RankChallengePayoutService {
         providerRef: { providerName: 'promo-rank-challenge', providerRefId: sourceRef },
       });
       if (!credited.ok) {
-        // Thrown rather than logged-and-recorded-as-granted: a claim must never settle
-        // `outcome: 'granted'` for cash that never moved. See RacePayoutService for the same
-        // "roll back and let the job retry" rule.
         throw new Error(`rank challenge cash credit failed: ${credited.reason}`);
       }
       paidCashAmount = priced.amount;
@@ -176,9 +154,6 @@ export class RankChallengePayoutService {
       },
     });
 
-    // Same rule RacePayoutService applies: a restricted player is still ranked/settled, but
-    // nothing is announced - the win event exists to tell a player about money or a prize they
-    // can act on, and a restricted player's claim is on hold either way.
     if (restricted) {
       return null;
     }

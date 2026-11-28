@@ -105,17 +105,8 @@ function within(column: PgColumn, { dateFrom, dateTo }: DateRange) {
   ];
 }
 
-/** A bet the provider has not settled or cancelled: the operator still owes its outcome. */
 export const openBet = inArray(sportsbookBet.status, ['reserved', 'accepted']);
 
-/**
- * One currency's bet figures in the range, as each bet stands now (SportsbookPlayerSummaryRow):
- * stake-side fields count every bet not cancelled, by its acceptance or, while still reserved, its
- * debit, in the range; payout-side fields bets settled in it; and `openExposure` the reserved and
- * accepted stakes now, whatever the range. Group by currency; `read` keeps the bets any of them
- * counts. `netResult`, their cash stake less their payout, is the player summary's alone: the
- * operator's GGR (financial.summary) follows the wallet ledger, so a reopen counts when it posts.
- */
 export function betTotals(range: DateRange) {
   const bet = sportsbookBet;
   const allOf = (conditions: SQL[]) => sql`(${sql.join(conditions, sql` and `)})`;
@@ -140,11 +131,6 @@ export function betTotals(range: DateRange) {
   };
 }
 
-/**
- * What promotions paid and reopens took back in the range, by type label, funder and currency. It
- * reads the append-only transaction rows, so a later reopen never changes a closed period: the
- * admin promotion report and the agent's both count it so.
- */
 export function promotionReportOf(
   db: DrizzleService['db'],
   range: DateRange,
@@ -254,10 +240,6 @@ export class SportsbookBetQueryService {
     return { ...toAdminBet(row), transactions: transactions.map(toTransaction) };
   }
 
-  /**
-   * What promotions paid and reopens took back in the range, by type label and currency
-   * (`promotionReportOf`).
-   */
   async promotionReport(
     range: SportsbookPromotionReportInput,
   ): Promise<SportsbookPromotionReportRow[]> {

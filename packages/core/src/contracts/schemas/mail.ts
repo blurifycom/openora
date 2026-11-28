@@ -39,10 +39,6 @@ export const MAIL_TEMPLATE_KEYS = [
 
 export type EmailTemplateKey = (typeof MAIL_TEMPLATE_KEYS)[number];
 
-// Ticker, not the ISO-4217 code: a wallet holds crypto as well as fiat, and a four-letter
-// ticker (USDT, USDC, DOGE) failed the three-character rule - the mail job then failed its
-// retries in the queue and the player was never told their money moved. This is the string
-// the mail prints; the money path validates the amount and the wallet's currency itself.
 const WithdrawalDetailsShape = {
   amount: MoneyAmountSchema,
   currency: CurrencyTickerSchema,
@@ -81,7 +77,6 @@ export const EmailTemplateDataSchemas = {
   }),
   withdrawalCompleted: z.object({ ...WithdrawalDetailsShape }),
   withdrawalFailed: z.object({ ...WithdrawalDetailsShape }),
-  // A missing tier (mail queued before the field existed) means basic.
   kycResubmissionRequested: z.object({
     reason: z.string().nullable(),
     tier: KycTierSchema.default('basic'),
@@ -89,15 +84,9 @@ export const EmailTemplateDataSchemas = {
   adminInvitation: z.object({ token: z.string(), expiresAt: TimestampSchema }),
   securityLoginAlert: z.object({ occurredAt: TimestampSchema }),
   securityWithdrawalRequested: z.object({ ...WithdrawalDetailsShape }),
-  // Whether the player may be shown a promotion: false when the account is RG-restricted or
-  // the address it verified from is in a blocked country. Optional only for jobs queued
-  // before it existed; a renderer reads anything but `true` as ineligible.
   welcome: z.object({ promotionsEligible: z.boolean().optional() }),
   emailChangeConfirmation: z.object({
     otp: z.string(),
-    // Masked, never the full address: this mail goes to the new inbox before it has
-    // proven anything, so the current owner's real address must not leak to whoever
-    // typed it in as the target.
     oldEmail: z.string(),
     newEmail: z.email(),
   }),
@@ -107,18 +96,12 @@ export const EmailTemplateDataSchemas = {
     isNewAddress: z.boolean(),
   }),
   securityAntiPhishingCodeChanged: z.object({ previousAntiPhishingCode: z.string().nullable() }),
-  // An admin cleared the player's second factor (lost device); the mail tells them to set
-  // one up again. No token: enrolment happens in the signed-in account, so the link is
-  // the operator's own settings page, which the template knows.
   twoFactorReset: z.object({ occurredAt: TimestampSchema }),
-  // The address is in the mail on purpose: the owner has to recognise it to know whether a
-  // stolen session added it. The label is not - it is free text the one who added it chose.
   withdrawalAddressAdded: z.object({
     address: z.string(),
     network: z.string(),
     occurredAt: TimestampSchema,
   }),
-  // The fixed 30 minutes is part of the copy, so the data carries only when it happened.
   withdrawalsLocked: z.object({ occurredAt: TimestampSchema }),
   raceWon: z.object({
     raceName: z.string(),
@@ -136,7 +119,6 @@ export const EmailTemplateDataSchemas = {
     convertedAmount: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
   }),
-  // The credit and the wagering it obliges, so the player reads the terms the moment they apply.
   bonusCredited: z.object({
     grantedAmount: MoneyAmountSchema,
     wageringRequired: MoneyAmountSchema,

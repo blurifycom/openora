@@ -76,7 +76,6 @@ type Region =
   | { available: false; reason: NonNullable<SportsbookAvailability['reason']> };
 const PROVIDER_REVOKE_CONCURRENCY = 4;
 
-/** A session a reserve may bet on: live, bound to this provider. */
 export function isLiveSession(
   session: SportsbookSessionRow | undefined,
   provider: SportsbookSessionRow['provider'],
@@ -216,7 +215,6 @@ export class SportsbookSessionService {
     };
   }
 
-  /** The rules `issue` applies to the caller's address, for a visitor who has no session yet. */
   async availability(ipAddress: string | null): Promise<SportsbookAvailability> {
     const region = await this.region(ipAddress);
     return region.available
@@ -240,7 +238,6 @@ export class SportsbookSessionService {
     return { available: true, countryCode };
   }
 
-  /** The provider's authenticate and balance callbacks. Reads only; reserve re-checks under its locks. */
   async describe(args: SportsbookSessionArgs): Promise<SportsbookSessionOutcome> {
     const parsed = SportsbookSessionArgsSchema.safeParse(args);
     const sessionId = UuidSchema.safeParse(args.sessionId);
@@ -275,10 +272,6 @@ export class SportsbookSessionService {
     };
   }
 
-  /**
-   * The player's own logout: ends the one session, or all their live ones, and tells the provider
-   * after commit. Repeating it, or naming another player's session, revokes nothing.
-   */
   async revokeOwn(
     userId: User['id'],
     { sessionId }: RevokeSportsbookSessionInput,
@@ -302,7 +295,6 @@ export class SportsbookSessionService {
     return ids;
   }
 
-  /** Runs under the caller's player lock; hand the result to `revokeAtProvider` after commit. */
   async revokeLive(
     tx: DrizzleTx,
     userId: User['id'],
@@ -323,11 +315,6 @@ export class SportsbookSessionService {
     return rows.map((r) => r.id);
   }
 
-  /**
-   * An RG restriction started: kill the player's live sessions and audit it, then tell the provider
-   * about every revoked session it opened and has not acknowledged. Throws while one is left, so the
-   * job retries; the reconcile sweep covers a session whose open core never recorded.
-   */
   async revokeAll(
     userId: User['id'],
     trigger: SportsbookRgRevokeJob['trigger'] | 'reconcile',
@@ -372,10 +359,6 @@ export class SportsbookSessionService {
     }
   }
 
-  /**
-   * Tells the provider after commit and marks each session it acknowledged. Returns the ones it did
-   * not; the session is already dead in core, so a reserve on it refuses either way.
-   */
   async revokeAtProvider(
     userId: User['id'],
     sessionIds: SportsbookSessionRow['id'][],
@@ -388,7 +371,6 @@ export class SportsbookSessionService {
     return failed.filter((id) => id !== null);
   }
 
-  /** Revokes the live sessions of every player play eligibility refuses, should an RG revoke not have run or the account have been closed. */
   async revokeIneligible(now = new Date()): Promise<number> {
     let revoked = 0;
     let after: User['id'] | undefined;
@@ -421,7 +403,6 @@ export class SportsbookSessionService {
     }
   }
 
-  /** The reconcile job's retry of revoked sessions the provider has not acknowledged yet. */
   async retryProviderRevokes(): Promise<number> {
     const provider = this.provider;
     if (!provider?.revokeSession) {
@@ -455,7 +436,6 @@ export class SportsbookSessionService {
     if (!revoke) {
       return true;
     }
-    // Read before the call: only a revoke sent after the provider's open was recorded can end it.
     const [session] = await this.drizzle.db
       .select({ openedAt: sportsbookSession.providerOpenedAt })
       .from(sportsbookSession)

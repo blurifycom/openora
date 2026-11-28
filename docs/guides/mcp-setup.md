@@ -10,13 +10,7 @@ query a running platform's data from an admin's MCP client, see
 
 ## Zero-config setup: `pnpm setup:mcp`
 
-The fastest way to wire MCP for Claude Code. Run it right after `pnpm install`:
-
-```bash
-pnpm setup:mcp
-```
-
-It is idempotent and does three things against the current repo:
+The fastest way to wire MCP for Claude Code. Run it right after `pnpm install`. The command is `pnpm setup:mcp`, and it is idempotent and does three things against the current repo:
 
 1. Ensures `.mcp.json` registers the MCP server (writes the `oss-dev` default if missing).
 2. Adds every server name to `.claude/settings.json#enabledMcpjsonServers` so Claude Code
@@ -30,29 +24,17 @@ the decision tree, with live module and adapter context), and drives the right s
 A `create:app` consumer needs no setup step: its generated `.mcp.json` already runs
 `@openora/mcp` from `node_modules`.
 
-## Server config snippet
+## Server config
 
-The server uses stdio transport (no port). Add this to your editor's MCP config:
-
-```json
-{
-  "mcpServers": {
-    "oss-dev": {
-      "type": "stdio",
-      "command": "pnpm",
-      "args": ["exec", "tsx", "apps/mcp-server-dev/src/main.ts"]
-    }
-  }
-}
-```
+The server uses stdio transport (no port). Add an `oss-dev` entry under `mcpServers` in your editor's MCP config: type `stdio`, command `pnpm`, arguments `exec`, `tsx`, and `apps/mcp-server-dev/src/main.ts`. The repo's own `.mcp.json` holds the reference entry.
 
 ## Per-editor setup
 
 | Editor             | Config location                                                                     | Notes                     |
 | ------------------ | ----------------------------------------------------------------------------------- | ------------------------- |
 | **Claude Code**    | `.mcp.json` at repo root (already present)                                          | Verify: `claude mcp list` |
-| **Cursor**         | Settings > MCP, or `.cursor/mcp.json` at repo root                                  | Paste the snippet above   |
-| **Windsurf**       | Cascade settings > MCP Servers                                                      | Paste the snippet above   |
+| **Cursor**         | Settings > MCP, or `.cursor/mcp.json` at repo root                                  | Use the entry above       |
+| **Windsurf**       | Cascade settings > MCP Servers                                                      | Use the entry above       |
 | **Any MCP client** | `npx @modelcontextprotocol/inspector pnpm exec tsx apps/mcp-server-dev/src/main.ts` | Smoke-test in browser     |
 
 ## Available tools
@@ -96,34 +78,16 @@ It reads `docs/catalog.json`, resolving it by walking up from `cwd`, then fallin
 `node_modules/@openora/mcp/docs/catalog.json`. The catalog is gitignored and generated on
 install and by the husky hooks; `pnpm gen:catalog` regenerates it by hand.
 
-Until it's published to npm, run it locally from the built `dist/`:
-
-```bash
-pnpm --filter @openora/mcp build   # rebuild after any source change
-```
-
-```json
-{
-  "mcpServers": {
-    "oss": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/casino-oss/packages/platform/mcp/dist/main.js"]
-    }
-  }
-}
-```
+Until it's published to npm, run it locally from the built `dist/`. Build it with `pnpm --filter @openora/mcp build` (rebuild after any source change), then add an `oss` entry under `mcpServers` in your editor's MCP config: type `stdio`, command `node`, and as its argument the absolute path to the `mcp` bin that `packages/mcp/package.json` declares, inside the built `dist/` of this checkout.
 
 Note: a `create:app` consumer doesn't need this - its generated `.mcp.json` already runs
 `@openora/mcp` from `node_modules`.
 
 ## Usage pattern for agents
 
-```
-1. read-agents-md  -> understand the decision tree
-2. list-modules    -> see what already exists
-3. describe-module -> deep-dive before editing a specific module
-4. propose-table-change -> check for collisions before adding a table
-5. scaffold-*      -> create the skeleton
-6. run-verify      -> confirm nothing broke
-```
+1. `read-agents-md` to understand the decision tree.
+2. `list-modules` to see what already exists.
+3. `describe-module` to deep-dive before editing a specific module.
+4. `propose-table-change` to check for collisions before adding a table.
+5. The `scaffold-*` tools to create the skeleton.
+6. `run-verify` to confirm nothing broke.

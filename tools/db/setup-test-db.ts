@@ -32,7 +32,6 @@ async function main() {
       await client.query(`DROP DATABASE "${dbName.replace(/"/g, '')}" WITH (FORCE)`);
       console.log(`Dropped test database "${dbName}".`);
     }
-    // CREATE DATABASE cannot be parameterized; dbName comes from our own env.
     await client.query(`CREATE DATABASE "${dbName.replace(/"/g, '')}"`);
     console.log(`Created test database "${dbName}".`);
   } finally {

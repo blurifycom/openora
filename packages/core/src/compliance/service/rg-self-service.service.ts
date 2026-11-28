@@ -93,15 +93,6 @@ export type RgSelfServiceDeps = {
   rates: ExchangeRateReader;
 };
 
-/**
- * Player self-service responsible-gambling: setting, lowering, raising, dropping and
- * confirming limits, plus starting a break or a self-exclusion on oneself.
- *
- * A limit never moves upward without the player confirming it after the cool-down.
- * `user_limit.amount` is the effective limit at all times; a raise or removal is parked
- * in the `pending*` columns until `confirmPendingChange` runs. Lowering a limit, and
- * cancelling a request, are always immediate.
- */
 export class RgSelfServiceService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -134,11 +125,6 @@ export class RgSelfServiceService {
     return this.toViews(userId, rows);
   }
 
-  /**
-   * A first limit or a lower one is written immediately; a raise files a request instead.
-   * The returned view's `amount` is the limit in force right now, which for a raise is
-   * still the OLD value.
-   */
   async upsertLimit(
     userId: User['id'],
     input: UpsertLimitInput,
@@ -155,8 +141,6 @@ export class RgSelfServiceService {
           resolvedExisting &&
           (await isWeakening(resolvedExisting, input, this.rates, tx))
         ) {
-          // The pending amount is the effective one being validated - it's what
-          // applies once the player confirms it.
           await this.assertOrdering(tx, userId, input);
           const parked = await this.park(tx, existing, 'increase', input);
           await this.emitRequested(tx, userId, playerId, existing, parked, meta);
@@ -202,7 +186,6 @@ export class RgSelfServiceService {
     return this.toView(userId, outcome.row);
   }
 
-  /** Files a removal request. The row stays and the limit keeps applying until the player confirms. */
   async requestLimitRemoval(
     limitId: LimitRow['id'],
     userId: User['id'],
@@ -226,10 +209,6 @@ export class RgSelfServiceService {
     return this.toView(userId, row);
   }
 
-  /**
-   * Applies a request whose cool-down has elapsed. Returns null when the confirmed
-   * request was a removal; the limit's new state otherwise.
-   */
   async confirmPendingChange(
     limitId: LimitRow['id'],
     userId: User['id'],
@@ -381,11 +360,6 @@ export class RgSelfServiceService {
     );
   }
 
-  /**
-   * Self-exclusion the player starts on themselves. Irreversible before its term: the
-   * platform refuses to lift a permanent one at all, and a fixed-term one before it has
-   * elapsed, for a player and an admin alike.
-   */
   requestSelfExclusion(
     userId: User['id'],
     input: RequestSelfExclusionInput,
@@ -406,7 +380,6 @@ export class RgSelfServiceService {
     );
   }
 
-  /** Drops requests nobody confirmed in time. Never touches `amount`. */
   async expireStaleLimitChanges(): Promise<void> {
     const now = new Date();
     const candidates = await this.drizzle.db
@@ -453,7 +426,6 @@ export class RgSelfServiceService {
           expiresAt: (row.pendingExpiresAt ?? now).toISOString(),
         });
       }
-      // In user id order, so two sweeps lock the version rows in the same order.
       const users = [
         ...new Set(candidates.filter((row) => clearedIds.has(row.id)).map((row) => row.userId)),
       ].sort();
@@ -463,7 +435,6 @@ export class RgSelfServiceService {
     });
   }
 
-  /** Re-projects the user's limits into the ledger, in the transaction that changed one. */
   private publish(
     tx: DrizzleTx,
     userId: User['id'],

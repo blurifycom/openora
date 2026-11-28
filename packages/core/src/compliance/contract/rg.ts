@@ -47,7 +47,6 @@ export const SetPlayerLimitInputSchema = withLimitConsistencyRefinements(
 );
 export type SetPlayerLimitInput = z.infer<typeof SetPlayerLimitInputSchema>;
 
-// 24h .. 6 weeks (1008h) per the Confluence cooling-off window.
 export const ActivateCoolingOffInputSchema = z.object({
   userId: UuidSchema,
   durationHours: z.number().int().min(24).max(1008),
@@ -55,8 +54,6 @@ export const ActivateCoolingOffInputSchema = z.object({
 });
 export type ActivateCoolingOffInput = z.infer<typeof ActivateCoolingOffInputSchema>;
 
-// Self-exclusion is permanent, OR a fixed term of at least 6 months. `confirm` guards
-// against an accidental irreversible action.
 export const ActivateSelfExclusionInputSchema = z
   .object({
     userId: UuidSchema,
@@ -113,7 +110,6 @@ export const RequestSelfExclusionInputSchema = z
   });
 export type RequestSelfExclusionInput = z.infer<typeof RequestSelfExclusionInputSchema>;
 
-// Each flagType writes one known detail shape (see rg-monitoring.service.ts).
 export const LimitThresholdDetailSchema = z.object({
   actual: MoneyAmountSchema,
   limit: MoneyAmountSchema,
@@ -143,8 +139,6 @@ export const RgFlagListItemSchema = z.object({
   email: z.string().nullable(),
   flagType: RgFlagTypeSchema,
   limitType: z.string().nullable(),
-  // ponytail: tolerate a legacy/empty ('{}') detail on read so one malformed row can't
-  // 500 the whole RG dashboard. Writes stay strict via RgFlagDetailSchema (raiseFlag).
   detail: RgFlagDetailSchema.or(z.record(z.string(), z.unknown())),
   status: RgFlagStatusSchema,
   flaggedAt: TimestampSchema,

@@ -20,10 +20,6 @@ export const HighRiskAssignMetadataSchema = z.object({
 });
 export type HighRiskAssignMetadata = z.infer<typeof HighRiskAssignMetadataSchema>;
 
-/**
- * @alias Kept distinct from HighRiskAssignMetadataSchema so a second tag's assign-metadata
- * shape can join this union later without touching call sites - same extensibility
- * precedent as RgFlagDetail in the sibling compliance module.
- */
+/** @alias */
 export const PlayerTagAssignMetadataSchema = HighRiskAssignMetadataSchema;
 export type PlayerTagAssignMetadata = z.infer<typeof PlayerTagAssignMetadataSchema>;

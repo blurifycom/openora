@@ -8,8 +8,6 @@ import {
   type TagKey,
 } from '@openora/core/contracts';
 
-// Every other key is either computed by tag rules and compliance (kyc_*, self_excluded, level,
-// inactive, high_roller, ...) or has its own action type (withdrawal_review).
 export const AGENT_ASSIGNABLE_TAG_KEYS = [
   'vip',
   'bonus_abuser',
@@ -31,9 +29,7 @@ export const addTagAction = defineActionType({
   schemaVersion: 1,
   iam: { resource: 'tag', action: 'create' },
   reversible: true,
-  // vip is marketing treatment, a benefit; the risk tags protect the player and the operator.
   benefitsPlayerWhen: { field: 'tagKey', values: ['vip'] },
-  // Each tag is its own change: a pending vip does not stand in for a pending high_risk.
   distinctBy: 'tagKey',
   payloadSchema: z.object({
     playerId: UuidSchema,
@@ -60,13 +56,10 @@ export const sendToManualReviewAction = defineActionType({
 
 const SEGMENT_DEFAULT_WINDOW_DAYS = 30;
 export const SEGMENT_MAX_WINDOW_DAYS = 92;
-/** Account levels one answer lists, lowest first. */
 export const SEGMENT_MAX_LEVELS = 50;
 
 export const SegmentCountsInputSchema = z.object({
-  /** The tags to count, every tag when left out. */
   tagKeys: z.array(TagKeySchema).min(1).max(TAG_KEYS.length).optional(),
-  /** The days, up to now, a player counts as seen in. */
   windowDays: z.coerce
     .number()
     .int()

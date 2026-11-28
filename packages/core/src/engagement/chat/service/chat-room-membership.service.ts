@@ -165,8 +165,6 @@ export class ChatRoomMembershipService {
       }),
     );
     if (inserted.length > 0) {
-      // After commit and best effort: the join stands even when the account cannot be read.
-      // Null when the read failed: the join is then not signalled, since staff cannot be told.
       const accounts = await this.accounts
         .getAccounts([userId])
         .catch((err: unknown): Map<string, Account> | null => {
@@ -182,7 +180,6 @@ export class ChatRoomMembershipService {
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
-      // The member list hides staff from ordinary viewers, so their joins are not signalled.
       const staff = isStaffRole(joiner?.role);
       if (!room.isPublic && accounts && !staff) {
         await this.signalMemberJoined(roomId, userId);
@@ -214,7 +211,6 @@ export class ChatRoomMembershipService {
       });
   }
 
-  // `inTransaction` runs under the room lock after the lock and ban checks, before the insert.
   joinByInvite({
     roomId,
     userId,
@@ -292,15 +288,9 @@ export class ChatRoomMembershipService {
         if (!room.isPublic && !member) {
           throw new ChatRoomNotMemberError(roomId);
         }
-        // The owner is the only member who can manage or delete the room, and `creatorId`
-        // keeps pointing at them once their membership row is gone - so letting them walk
-        // out strands the room with no one able to administer it. Promoting a moderator
-        // raises the count below past 1, which is exactly what used to make this reachable.
         if (member?.role === 'owner') {
           throw new ChatRoomOwnerCannotLeaveError();
         }
-        // An owner can no longer be here, so this is the moderator case alone. The count
-        // still spans both roles: what must not drop to zero is anyone able to moderate.
         if (member?.role === 'moderator') {
           const [{ modCount }] = await t
             .select({ modCount: count() })
@@ -335,7 +325,6 @@ export class ChatRoomMembershipService {
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
-      // A public room stays readable to a non-member.
       if (!isPublic) {
         await revokeChannelBestEffort(this.transport, userId, roomId);
       }
@@ -412,12 +401,6 @@ export class ChatRoomMembershipService {
     return { success: true } as const;
   }
 
-  /**
-   * Grants or revokes the `moderator` role on a private room's member. Owner-only: a moderator
-   * must not be able to create peers, so the shared `assertRoomModerator` guard is deliberately
-   * not used. Idempotent - a target already at the requested role is a successful no-op. Zero
-   * moderators is a valid end state, so the last revoke is never blocked.
-   */
   async setMemberRole({
     actorId,
     roomId,
@@ -431,7 +414,6 @@ export class ChatRoomMembershipService {
     userId: Uuid;
     role: ChatRoomAssignableRole;
   } & ClientMeta) {
-    // Same lock leaveRoom takes, so a role write serializes against the last-moderator check.
     const { changed, expired } = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const [room] = await t
@@ -485,16 +467,10 @@ export class ChatRoomMembershipService {
         changedBy: actorId,
         role,
         previousRole: changed,
-        // Null when the acting owner has no player record (the audit mapper then falls back
-        // to `changedBy`), matching how the kicked/banned events carry the actor.
         playerId,
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
-      // The EventBus is server-side only, so without this the promoted member keeps
-      // rendering as a plain one until their roster cache happens to expire. Best-effort:
-      // the role is already committed, and failing the call here would report failure for
-      // a write that happened and that a retry would no-op.
       await this.signalRoleChange(roomId, userId, role);
     }
     return { success: true } as const;
@@ -518,28 +494,16 @@ export class ChatRoomMembershipService {
     }
   }
 
-  /**
-   * The account close and reopen jobs run on separate queues and retry, so they can arrive out of
-   * order. Each reads the account's state now, fresh, before its transaction, since on a split
-   * service the read is an HTTP call and must not hold a connection and the user's lock; a failed
-   * read throws so the job retries. It then writes under the user's lock, so a close and a reopen
-   * never interleave, and reads again once committed: a state that changed in between gets the
-   * other job's writes, so the last job to write always ends on what the account is now. Closed
-   * here is what `player.account.closed` fires for: an account that no longer exists, is inactive,
-   * or has the status closed. A suspended account is not closed: it lost play, not its rooms.
-   */
   private async isAccountClosed(userId: Uuid) {
     const account = (await this.accounts.getAccounts([userId], { fresh: true })).get(userId);
     const player = account?.player;
     return !account || !account.isActive || (player?.accountClosed ?? player?.closed) === true;
   }
 
-  /** Runs the other job when the account changed while this one wrote, see {@link isAccountClosed}. */
   private async settleAccountState(userId: Uuid, wroteClosed: boolean) {
     if ((await this.isAccountClosed(userId)) === wroteClosed) {
       return { success: true } as const;
     }
-    // The close it missed carried its own closedAt; now is within the time it took to notice.
     return wroteClosed
       ? this.handleAccountReopened({ userId })
       : this.handleAccountClosed({ userId, closedAt: new Date() });
@@ -568,7 +532,6 @@ export class ChatRoomMembershipService {
               isNull(chatRoom.deletedAt),
             ),
           )
-          // One lock order for every close job, so two of them cannot deadlock on room locks.
           .orderBy(asc(chatRoom.id));
         const received = await expirePendingInvites(t, eq(chatRoomInvite.inviteeId, userId));
         const results = [];

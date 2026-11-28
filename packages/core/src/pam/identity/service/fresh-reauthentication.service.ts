@@ -40,11 +40,6 @@ async function accountPasswordMatches({
   return authContext.password.verify({ password, hash: credential.password });
 }
 
-/**
- * Checks the account's standing password without touching any other state, so a caller
- * holding a credential that is spent by being checked (a backup code) can reject a wrong
- * password before burning it.
- */
 export async function assertAccountPassword(input: {
   drizzle: DrizzleService;
   auth: Auth;
@@ -56,12 +51,6 @@ export async function assertAccountPassword(input: {
   }
 }
 
-/**
- * Requires the account's standing password plus (when 2FA is enrolled) a fresh
- * authenticator code before a security-sensitive self-service action proceeds. Shared by
- * every route that gates a mutation on "prove you're still you right now" - phone
- * verification and the withdrawal PIN both call this instead of re-deriving it.
- */
 export async function assertFreshReauthentication({
   drizzle,
   auth,
@@ -116,11 +105,6 @@ export type FreshReauthenticationServiceDeps = {
   twoFactorLockout: TwoFactorLockoutService;
 };
 
-/**
- * The `FRESH_REAUTHENTICATION` port: the same proof as `assertFreshReauthentication`, answered
- * as a verdict for a module that shapes its own refusal. The second-factor lock is read before
- * the password, so a locked account answers `locked` whatever password it is sent.
- */
 export class FreshReauthenticationService implements FreshReauthentication {
   private readonly drizzle: DrizzleService;
   private readonly auth: Auth;

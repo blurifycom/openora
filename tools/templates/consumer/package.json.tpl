@@ -7,7 +7,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "check:types": "turbo run check:types",
-    "check:lint": "oxlint .",
+    "check:lint": "oxlint . && node node_modules/@openora/core/oxlint/check-file-wide-disable.mjs",
     "test:unit": "turbo run test:unit",
     "verify": "sh -c 'turbo run check:types check:lint test:unit \"$@\" && { [ $# -gt 0 ] || node .rulesync/hooks/guard-mr.mjs --stamp; }' verify",
     "gen:agents": "rulesync generate",
@@ -21,6 +21,7 @@
     "gen": "turbo gen"
   },
   "devDependencies": {
+    "@openora/core": "{{coreVersion}}",
     "@openora/create": "{{coreVersion}}",
     "@openora/mcp": "latest",
     "@turbo/gen": "{{turboVersion}}",

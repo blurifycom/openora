@@ -10,9 +10,6 @@
 // push to a shared branch and a hand merge (`gh pr|stack merge`, `glab mr merge`) are denied
 // outright: the merge bot merges. Git errors fail open, like every other guard.
 //
-// ponytail: trusts the state file, which an agent could write by hand, and checks the checked-out
-// HEAD (or a PR/MR's named source branch), not a different ref named in a push refspec. It stops
-// a forgotten review, not a hostile one; the forge's own AI review is the gate an agent cannot write.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';

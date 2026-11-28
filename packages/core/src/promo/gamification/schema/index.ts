@@ -65,8 +65,6 @@ export const promoRankTier = pgTable(
     weeklyBonus: money(),
     monthlyBonus: money(),
     levelUpBonus: money(),
-    // Under the `margin` periodic basis: the share of the period's margin paid, capped by the
-    // matching `*Bonus` amount. Null pays nothing of that kind.
     dailyBonusPercent: percent(),
     weeklyBonusPercent: percent(),
     monthlyBonusPercent: percent(),
@@ -110,26 +108,14 @@ export const promoPlayerRank = pgTable(
     currency: text().notNull(),
     lifetimeWagered: money().notNull().default('0'),
     tierId: uuid().references(() => promoRankTier.id),
-    /**
-     * The rank last announced to the player. A promotion happens inside the bet's transaction,
-     * where nothing may be emitted; the announcement job emits `promo.rank.changed` for every
-     * row where this trails `tierId`, then catches it up.
-     *
-     * No foreign key, unlike `tierId`: in the window before the job runs this names a rank the
-     * player no longer holds, and an admin removing that rank must get the ladder's own
-     * validation, not a constraint violation from a bookkeeping column.
-     */
     announcedTierId: uuid(),
-    /** Last counted wager. A periodic bonus goes only to a player active in the period it pays. */
     lastWageredAt: timestamp({ withTimezone: true }),
-    /** Retired: the streak no longer lifts a rank's rate this way. Nothing reads or writes it; a later release drops it. */
     rakebackBoostPercent: decimal({
       precision: CONTRIBUTION_PERCENT_PRECISION,
       scale: CONTRIBUTION_PERCENT_SCALE,
     }),
     rakebackBoostExpiresAt: timestamp({ withTimezone: true }),
     lastClaimableNotifiedAt: timestamp({ withTimezone: true }),
-    /** When the reminder last found this player below the minimum; only newer rakeback reopens it. */
     rakebackReminderCheckedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
@@ -150,58 +136,29 @@ export type PromoPlayerRank = typeof promoPlayerRank.$inferSelect;
 export type RankRewards = RankConfig['rewards'];
 export type { RankRewardTerms };
 
-/**
- * Ladder-wide settings, one row. Absent means the ladder pays nothing and counts nothing: an
- * operator who has not decided what counts toward a rank has not launched ranks. The rank
- * challenge is not part of the ladder: absent, it counts `DEFAULT_RANK_PERK_PRODUCTS`.
- */
 export const promoRankConfig = pgTable('promo_rank_config', {
   id: uuid().primaryKey().defaultRandom(),
-  // Unique, so the table can only ever hold the one row.
   singletonKey: text().notNull().unique().default('global'),
-  /**
-   * Products whose stakes count toward a rank.
-   * Legacy empty lists still count every product; saves require at least one product.
-   */
   eligibleProducts: text().array().notNull(),
-  /**
-   * Products whose stakes earn rakeback. A stake must count toward the rank as well.
-   * Legacy empty lists still count every product; saves require at least one product.
-   */
   rakebackEligibleProducts: text()
     .array()
     .$type<WagerProduct[]>()
     .notNull()
     .default([...DEFAULT_RANK_PERK_PRODUCTS]),
-  /**
-   * Products whose stakes count toward the rank challenge.
-   * Legacy empty lists still count every product; saves require at least one product.
-   */
   rankChallengeEligibleProducts: text()
     .array()
     .$type<WagerProduct[]>()
     .notNull()
     .default([...DEFAULT_RANK_PERK_PRODUCTS]),
-  /** Terms each reward kind is granted under. A kind with no terms is not paid. */
   rewards: jsonb().$type<RankRewards>().notNull().default({}),
-  /** What rewards are credited in, when that is not the ladder's own currency. */
   payoutCurrency: text(),
-  /** Credit a reward in the currency the player plays in, falling back to the two above. */
   payInPlayerCurrency: boolean().notNull().default(false),
-  /** Pay a periodic bonus only to players who wagered in the period it covers. */
   periodicRequiresActivity: boolean().notNull().default(true),
-  /** How much a player must wager inside the period to qualify. Null means any bet counts. */
   periodicMinimumWager: money(),
-  /** When each periodic payout closes, and so what window it pays for. All UTC. */
   payoutAnchors: jsonb()
     .$type<RankPayoutAnchors>()
     .notNull()
     .default({ dailyHour: 0, weeklyDay: 1, monthlyDay: 1 }),
-  /**
-   * The end of the last period each kind was paid for. A payout runs only for a period that
-   * ends after its watermark, so moving an anchor cannot pay the same stretch of time twice and
-   * a late or repeated tick cannot reach back into a period already settled.
-   */
   paidThrough: jsonb().$type<Partial<Record<RankPayoutKind, string>>>().notNull().default({}),
   updatedBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -213,26 +170,15 @@ export const promoRankConfig = pgTable('promo_rank_config', {
 
 export type PromoRankConfig = typeof promoRankConfig.$inferSelect;
 
-/**
- * How much a player wagered inside one payout period, in the ladder's currency. One row per
- * player per period per kind - written in the bet's own transaction, read by the payout that
- * settles that period.
- *
- * A period of its own rather than a single "last wagered" stamp, because "played in the period"
- * is a question about a window that has closed, and a bet placed a minute after it closed must
- * not answer for it. It is also what an operator's minimum-wager threshold is measured against.
- */
 export const promoRankPeriodWager = pgTable(
   'promo_rank_period_wager',
   {
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
     kind: text().$type<RankPayoutKind>().notNull(),
-    /** The period's own key, the same one the payout is granted under. */
     periodKey: text().notNull(),
     currency: text().notNull(),
     wagered: money().notNull().default('0'),
-    /** Own-money stake × (1 − rtp) inside the period, the base of a `margin` periodic bonus. */
     margin: money().notNull().default('0'),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -240,13 +186,11 @@ export const promoRankPeriodWager = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
-    // The accumulator's guard: one row per player, kind and period, upserted per bet.
     uniqueIndex('promo_rank_period_wager_user_id_kind_period_key_idx').on(
       t.userId,
       t.kind,
       t.periodKey,
     ),
-    // What the payout reads: everyone who wagered in the period it is settling.
     index('promo_rank_period_wager_kind_period_key_idx').on(t.kind, t.periodKey),
     index('promo_rank_period_wager_kind_updated_at_idx').on(t.kind, t.updatedAt),
     check('promo_rank_period_wager_non_negative', sql`${t.wagered} >= 0`),
@@ -256,11 +200,6 @@ export const promoRankPeriodWager = pgTable(
 
 export type PromoRankPeriodWager = typeof promoRankPeriodWager.$inferSelect;
 
-/**
- * Remaining native stake and ladder-currency margin, retained to bound round reversals. One row
- * per staked round under either basis and for ineligible products too, kept until fully reversed
- * or 35 days old.
- */
 export const promoRankRoundWager = pgTable(
   'promo_rank_round_wager',
   {
@@ -287,24 +226,16 @@ export const promoRankRoundWager = pgTable(
   ],
 );
 
-/**
- * A level-up bonus a player has earned and the payout job has yet to settle. Written in the bet's
- * transaction with the amount the tier paid at that moment, so an amount an admin fills in later
- * is never paid backwards. Unique per player and tier: a rank's bonus is earned once.
- */
 export const promoRankLevelUp = pgTable(
   'promo_rank_level_up',
   {
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
-    // No foreign key: an admin may remove a tier the player has since climbed past, and the bonus
-    // it earned is still owed. The amount is on the row, so the tier is not needed to pay it.
     tierId: uuid().notNull(),
     currency: text().notNull(),
     amount: money().notNull(),
     reachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp({ withTimezone: true }),
-    /** `granted`, or why nothing was: `restricted` for a player under an RG block. */
     outcome: text(),
     grantId: uuid(),
   },
@@ -319,27 +250,16 @@ export const promoRankLevelUp = pgTable(
 
 export type PromoRankLevelUp = typeof promoRankLevelUp.$inferSelect;
 
-/**
- * Streak-wide settings, one row - the same singleton shape as `promoRankConfig`. Absent, or
- * `enabled` false, means no day counts and no rate applies: an operator who has not decided what
- * qualifies has not launched the streak.
- */
 export const promoStreakConfig = pgTable('promo_streak_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique().default('global'),
   enabled: boolean().notNull().default(false),
   currency: text().notNull().default(STREAK_CURRENCY),
   dailyMinWager: money().notNull(),
-  /**
-   * Products whose stakes count toward the streak.
-   * Legacy empty lists still count every product; saves require at least one product.
-   */
   eligibleProducts: text().array().notNull(),
   rakebackMilestones: jsonb().$type<StreakRakebackMilestone[]>().notNull().default([]),
   fixedRewards: jsonb().$type<StreakFixedReward[]>().notNull().default([]),
-  /** Retired by `rakebackMilestones` and `fixedRewards`: nothing reads or writes it; a later release drops it. */
   milestones: jsonb().notNull().default([]),
-  /** Retired: a streak no longer resets at a set day. Nothing reads or writes it; a later release drops it. */
   resetAfterDay: integer().notNull().default(30),
   updatedBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -351,11 +271,6 @@ export const promoStreakConfig = pgTable('promo_streak_config', {
 
 export type PromoStreakConfig = typeof promoStreakConfig.$inferSelect;
 
-/**
- * A player's own streak state: the current run, the best run ever held, and the UTC calendar day
- * it last advanced on - the guard that keeps one qualifying day from being counted twice no
- * matter how many qualifying bets land inside it.
- */
 export const promoPlayerStreak = pgTable(
   'promo_player_streak',
   {
@@ -380,11 +295,6 @@ export const promoPlayerStreak = pgTable(
 
 export type PromoPlayerStreak = typeof promoPlayerStreak.$inferSelect;
 
-/**
- * What a player has wagered inside one UTC calendar day, toward that day's qualifying threshold.
- * Upserted per bet, mirroring `promoRankPeriodWager` - the accumulator the daily close job and
- * the leaderboard never need, since a day answers for itself in `promoPlayerStreak` once closed.
- */
 export const promoStreakDailyWager = pgTable(
   'promo_streak_daily_wager',
   {
@@ -406,12 +316,6 @@ export const promoStreakDailyWager = pgTable(
 
 export type PromoStreakDailyWager = typeof promoStreakDailyWager.$inferSelect;
 
-/**
- * What one provider round added to a day's `promoStreakDailyWager`, so a rollback of that round
- * takes back exactly what it counted - on the day it counted, at the rate it was converted at -
- * and never more. `stake` is what still stands in the bet's own currency, `wagered` the matching
- * amount in the streak's currency. Pruned by the daily close once the day can no longer move.
- */
 export const promoStreakRoundWager = pgTable(
   'promo_streak_round_wager',
   {
@@ -437,14 +341,6 @@ export const promoStreakRoundWager = pgTable(
   ],
 );
 
-/**
- * A fixed reward a player has unlocked, one row per player per day for good: a day unlocks once,
- * and only a same-day rollback that took the unlocking day back (`reversed`) lets it unlock again.
- * An unsettled row is a reward waiting to be claimed until `expiresAt`; it outlives a reset of
- * `promo_player_streak.current`. `amount`, `rolloverMultiplier`, `claimExpiryDays` and
- * `expiresAt` are captured when the day is reached, so a config edit never changes them. They
- * are null only on a row from before they were captured, which can never be claimed.
- */
 export const promoStreakMilestoneGrant = pgTable(
   'promo_streak_milestone_grant',
   {
@@ -453,14 +349,7 @@ export const promoStreakMilestoneGrant = pgTable(
     day: integer().notNull(),
     reachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp({ withTimezone: true }),
-    /**
-     * `granted`, or why nothing was: `restricted` for a player under an RG block, settled when
-     * the block starts or when the reward is announced or claimed during it, `reversed` when a
-     * rollback took the day that reached it back under the minimum before it was claimed,
-     * `expired` when the claim window closed first.
-     */
     outcome: text().$type<StreakGrantOutcome>(),
-    /** When the player was told the reward is waiting to be claimed. */
     announcedAt: timestamp({ withTimezone: true }),
     amount: money(),
     rolloverMultiplier: money(),
@@ -486,18 +375,6 @@ export const promoStreakMilestoneGrant = pgTable(
 
 export type PromoStreakMilestoneGrant = typeof promoStreakMilestoneGrant.$inferSelect;
 
-/**
- * A wager challenge: a fixed window over which wagering volume is ranked and a prize pool split
- * across the paid positions. Unlike the rank ladder and streak, a race carries its own explicit
- * `startAt`/`endAt` rather than an operator-wide anchor, since races are run one at a time (or
- * overlapping) on whatever schedule the operator likes.
- *
- * `closedAt` is the hard settlement flag: standings are frozen and prizes paid once, and a late
- * or retried settle-job tick after `endAt` must never recompute them - `endAt < now()` alone
- * cannot express "already settled", since a crash could leave it null after payouts landed.
- * Prospective-only editing (`RaceAdminService`) is enforced by refusing any change once this is
- * set, mirroring how `RankAdminService.set` blocks a ladder edit once a player holds state.
- */
 export const promoRace = pgTable(
   'promo_race',
   {
@@ -507,11 +384,8 @@ export const promoRace = pgTable(
     startAt: timestamp({ withTimezone: true }).notNull(),
     endAt: timestamp({ withTimezone: true }).notNull(),
     prizePool: money().notNull(),
-    /** `{ position, prize }[]`, validated 1..N contiguous, prizes summing to at most `prizePool`. */
     positions: jsonb().$type<RacePositions>().notNull(),
-    /** Products whose stakes count toward this race. */
     eligibleProducts: text().array().notNull().$type<RaceEligibleProducts>(),
-    /** Set once, by the settle job, when standings are frozen and prizes granted. */
     closedAt: timestamp({ withTimezone: true }),
     createdBy: uuid(),
     updatedBy: uuid(),
@@ -533,12 +407,6 @@ export const promoRace = pgTable(
 
 export type PromoRace = typeof promoRace.$inferSelect;
 
-/**
- * What a player has wagered inside one race, in the race's own currency - one row per player per
- * race, upserted per bet, the same accumulator shape as `promoRankPeriodWager`. `updatedAt`
- * doubles as the tie-break clock the payout job reads: two players tied on `wagered` are ranked
- * by whoever's row last moved, ie whoever reached the total first.
- */
 export const promoRaceWager = pgTable(
   'promo_race_wager',
   {
@@ -556,7 +424,6 @@ export const promoRaceWager = pgTable(
   },
   (t) => [
     uniqueIndex('promo_race_wager_race_id_user_id_idx').on(t.raceId, t.userId),
-    // The leaderboard's own query: everyone in one race, ranked by what they wagered.
     index('promo_race_wager_race_id_wagered_idx').on(t.raceId, t.wagered),
     check('promo_race_wager_non_negative', sql`${t.wagered} >= 0`),
   ],
@@ -564,11 +431,6 @@ export const promoRaceWager = pgTable(
 
 export type PromoRaceWager = typeof promoRaceWager.$inferSelect;
 
-/**
- * What one provider round added to a player's `promoRaceWager`, the race-side twin of
- * `promoStreakRoundWager`: a rollback takes back exactly what the round counted in each race it
- * counted in. Deleted with the race's settlement, after which standings are frozen anyway.
- */
 export const promoRaceRoundWager = pgTable(
   'promo_race_round_wager',
   {
@@ -596,12 +458,6 @@ export const promoRaceRoundWager = pgTable(
   ],
 );
 
-/**
- * One prize paid to one player in one race, written once by the settle job -
- * `unique(raceId, userId)` is the idempotency guard a retried or re-ticked settlement reads
- * before crediting anything, the same "insert once, skip if present" shape
- * `promoRankLevelUp`/`promoStreakMilestoneGrant` use for their own settlement.
- */
 export const promoRacePayout = pgTable(
   'promo_race_payout',
   {
@@ -615,7 +471,6 @@ export const promoRacePayout = pgTable(
     currency: text().notNull(),
     settledAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     grantId: uuid(),
-    /** `granted`, or why nothing was: `restricted` for a player under an RG block. */
     outcome: text().notNull(),
   },
   (t) => [
@@ -628,13 +483,6 @@ export const promoRacePayout = pgTable(
 
 export type PromoRacePayout = typeof promoRacePayout.$inferSelect;
 
-/**
- * A Rank Challenge tier: a lifetime real-money wagering threshold and the prize the first player
- * to cross it wins, once, forever - unlike `promoRankTier` (a repeatable ladder every player
- * climbs) or `promoRace` (a repeating leaderboard window), this is a race-to-threshold with a
- * single winner per tier. A tier carries a cash amount, a physical item description, or both
- * (`master`/`titan` combine them) - at least one of the two is required.
- */
 export const promoRankChallengeTier = pgTable(
   'promo_rank_challenge_tier',
   {
@@ -664,12 +512,6 @@ export const promoRankChallengeTier = pgTable(
 
 export type PromoRankChallengeTier = typeof promoRankChallengeTier.$inferSelect;
 
-/**
- * A player's lifetime real-money wagering total toward the Rank Challenge - independent of
- * `promoPlayerRank.lifetimeWagered` (the rank ladder's own accumulator, filtered by that
- * ladder's `eligibleProducts`). Counts the real-money part of every stake on a product
- * `promoRankConfig.rankChallengeEligibleProducts` admits.
- */
 export const promoRankChallengeWager = pgTable(
   'promo_rank_challenge_wager',
   {
@@ -687,16 +529,6 @@ export const promoRankChallengeWager = pgTable(
 
 export type PromoRankChallengeWager = typeof promoRankChallengeWager.$inferSelect;
 
-/**
- * The winner record for one tier - `unique(tierId)` is the whole mechanic's atomicity guard: two
- * players crossing the same tier concurrently both attempt this insert, and the unique index
- * lets exactly one land (`onConflictDoNothing`, checked via `.returning()`). `cashAmount`/
- * `physicalItem` are snapshotted from the tier at claim time so a later admin edit to the tier's
- * prize never changes what a past winner was actually granted (prospective-only, the same rule
- * `promoRankLevelUp` follows for its own amount). Settled by a payout job, mirroring
- * `promoRankLevelUp`/`promoStreakMilestoneGrant`'s own unsettled-row pattern, rather than being
- * credited inline in the same transaction that detects the crossing.
- */
 export const promoRankChallengeClaim = pgTable(
   'promo_rank_challenge_claim',
   {
@@ -708,7 +540,6 @@ export const promoRankChallengeClaim = pgTable(
     physicalItem: text(),
     claimedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp({ withTimezone: true }),
-    /** `granted`, or why the cash part was not: `restricted` for a player under an RG block. */
     outcome: text(),
     cashGrantId: uuid(),
     physicalFulfilledAt: timestamp({ withTimezone: true }),
@@ -742,13 +573,6 @@ export const promoRakebackClaimOutcomeEnum = pgEnum(
   RAKEBACK_CLAIM_OUTCOMES,
 );
 
-/**
- * One bet's rakeback under the claim payout, in the bet's own currency. Nothing reaches the
- * balance until a claim flips the row to `claimed`. An instant sportsbook credit is written as a
- * `claimed` row with no claim, so a re-settle after a reopen finds the bet already paid. The rate, streak rate and rtp it was priced
- * at are kept so the amount can be reproduced after the ladder or the streak config changes.
- * `boostPercent` is retired and written as zero; it stays for rows priced before.
- */
 export const promoRakebackAccrual = pgTable(
   'promo_rakeback_accrual',
   {
@@ -788,7 +612,6 @@ export const promoRakebackAccrual = pgTable(
       .on(t.currency, t.userId)
       .where(sql`${t.status} = 'accrued'`),
     index('promo_rakeback_accrual_created_at_idx').on(t.createdAt, t.id),
-    // What was claimed over a range, every player's.
     index('promo_rakeback_accrual_claimed_settled_at_idx')
       .on(t.settledAt)
       .where(sql`${t.status} = 'claimed'`),
@@ -810,10 +633,6 @@ export const promoRakebackAccrual = pgTable(
 
 export type PromoRakebackAccrual = typeof promoRakebackAccrual.$inferSelect;
 
-/**
- * One payout of a player's accrued rakeback. `(userId, idempotencyKey)` makes a retried claim
- * return the first one's result instead of paying again.
- */
 export const promoRakebackClaim = pgTable(
   'promo_rakeback_claim',
   {
@@ -830,10 +649,6 @@ export const promoRakebackClaim = pgTable(
 
 export type PromoRakebackClaim = typeof promoRakebackClaim.$inferSelect;
 
-/**
- * What one claim paid in one currency. Paid rakeback is final, so these rows are the player's
- * lifetime claimed total without re-reading every claimed accrual.
- */
 export const promoRakebackClaimPayout = pgTable(
   'promo_rakeback_claim_payout',
   {
@@ -862,11 +677,6 @@ export const promoRankPeriodicRewardStatusEnum = pgEnum(
   RANK_PERIODIC_REWARD_STATUSES,
 );
 
-/**
- * A daily, weekly or monthly rank reward left for the player to claim, one per player, kind and
- * period. Converted into the paid currency when the period settles, so the amount owed does not
- * move with the rate. It never expires: a closed or self-excluded account is paid out instead.
- */
 export const promoRankPeriodicReward = pgTable(
   'promo_rank_periodic_reward',
   {
@@ -876,7 +686,6 @@ export const promoRankPeriodicReward = pgTable(
     periodKey: text().notNull(),
     periodStart: timestamp({ withTimezone: true }).notNull(),
     periodEnd: timestamp({ withTimezone: true }).notNull(),
-    // No foreign key, as on promoRankLevelUp: the reward outlives a removed tier.
     tierId: uuid().notNull(),
     ladderCurrency: text().notNull(),
     ladderAmount: money().notNull(),
@@ -918,10 +727,6 @@ export const promoRankPeriodicReward = pgTable(
 
 export type PromoRankPeriodicReward = typeof promoRankPeriodicReward.$inferSelect;
 
-/**
- * The terms a period is paid under, fixed by its first run. A retry finishes the period in the
- * mode it started in, so switching a kind between bonus and claim never pays a period twice.
- */
 export const promoRankPeriodPayout = pgTable(
   'promo_rank_period_payout',
   {

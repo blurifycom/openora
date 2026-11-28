@@ -32,7 +32,6 @@ type CatalogModule = {
 type CatalogAdapter = {
   category: string;
   interface: string;
-  // Absent in a catalog generated before port members were catalogued.
   methods?: string[];
   token: string;
   status: string;
@@ -80,9 +79,7 @@ type CatalogAgentAction = {
   schemaVersion: number | null;
   iam: CatalogAgentIam | null;
   reversible: boolean | null;
-  // Absent in a catalog generated before action types could declare it.
   benefitsPlayer?: boolean | null;
-  // Absent in a catalog generated before action types could declare them.
   benefitsPlayerWhen?: { field: string; values: string[] } | null;
   distinctBy?: string | null;
 };
@@ -94,7 +91,6 @@ type Catalog = {
   schemas: CatalogSchema[];
   config: CatalogConfig;
   pluginContract: string[];
-  // Absent in a catalog generated before the agent surface existed.
   agentTools?: CatalogAgentTool[];
   agentActions?: CatalogAgentAction[];
 };
@@ -134,7 +130,6 @@ function formatAgentAction(a: CatalogAgentAction): string[] {
 const containsIgnoreCase = (query: string, ...fields: string[]): boolean =>
   fields.some((f) => f.toLowerCase().includes(query.toLowerCase()));
 
-// `packages/core/src/promo/bonus/plugin.ts` -> `promo/bonus`; test files are not bindings.
 function bindingPlugins(a: CatalogAdapter): string[] {
   return a.boundIn
     .filter((p) => p.endsWith('/plugin.ts'))
@@ -194,7 +189,7 @@ function loadCatalog(): { catalog: Catalog; path: string } | null {
       const catalog = JSON.parse(readFileSync(candidate, 'utf8')) as Catalog;
       return { catalog, path: candidate };
     } catch {
-      // corrupt file - keep probing
+      continue;
     }
   }
   return null;
@@ -484,7 +479,6 @@ const USAGE_LIMIT = 40;
 const SYMBOL_LOCATION_LIMIT = 5;
 type Source = { root: string; files: SourceFile[] };
 
-// Read on every call (~35 ms for core): a paired change edits the very files this serves.
 function loadSource(): Source | string {
   const loaded = loadCatalog();
   const root = process.env['OSS_SOURCE'] ?? (loaded ? findCoreSourceRoot(loaded.path) : null);
@@ -603,7 +597,6 @@ server.registerTool(
     if (typeof source === 'string') {
       return textReply(source);
     }
-    // A batch prints no more than one name could: its hits at maxLines each.
     const budget = SYMBOL_LOCATION_LIMIT * maxLines;
     let used = 0;
     const sections = [...new Set(names)].map((name) => {
@@ -907,8 +900,6 @@ server.registerTool(
 
 let builtGraph: DepGraph | null = null;
 
-// The repo's own graph: a prebuilt dep-graph.json at the root wins (CI writes one), else built
-// once per server process - a full cruise takes seconds, not milliseconds.
 function localGraph(rebuild: boolean): DepGraph {
   const prebuilt = join(process.cwd(), 'dep-graph.json');
   if (!rebuild && existsSync(prebuilt)) {
@@ -920,8 +911,6 @@ function localGraph(rebuild: boolean): DepGraph {
   return builtGraph;
 }
 
-// Shipped with the package (built by the platform's publish job), so a consumer repo can follow
-// a platform file into its own code without a platform checkout.
 function platformGraph(): DepGraph | null {
   const shipped = join(here, '..', 'docs', 'dep-graph.json');
   return existsSync(shipped) ? (JSON.parse(readFileSync(shipped, 'utf8')) as DepGraph) : null;

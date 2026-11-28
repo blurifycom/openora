@@ -43,7 +43,6 @@ export {
   WalletReconciliationFindingStatusSchema,
 };
 
-// Deposit/withdraw amounts must be strictly positive; balances/thresholds may be zero.
 const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {
   message: 'must be greater than zero',
 });
@@ -54,10 +53,6 @@ const WalletCurrencyInputSchema = CurrencyTickerInputSchema;
 
 const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperCase());
 
-// One shape for both the saved address and the payout target: the whitelist check matches
-// them with an exact string equality, so an untrimmed paste on either side would look like
-// an address the player never saved. Deliberately no case transform - base58 rails (BTC
-// legacy, TRC20, Solana) are case-sensitive, so lowercasing would corrupt the address.
 const WalletAddressInputSchema = z.string().trim().min(8).max(128);
 
 const BASE58_LEGACY = '[a-km-zA-HJ-NP-Z1-9]{25,39}';
@@ -74,9 +69,6 @@ const ADDRESS_PATTERN_BY_NETWORK: Record<string, RegExp> = {
   SOLANA: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
 };
 
-// Human-readable parts whose bech32 branch in the table above carries a BIP-173/350
-// checksum. The same chains also accept a base58 address, which does not, so the form is
-// told apart by prefix rather than by network.
 const BECH32_HRPS_BY_NETWORK: Record<string, readonly string[]> = {
   SEGWIT: ['bc', 'tb', 'bcrt'],
   LITECOIN: ['ltc', 'tltc'],
@@ -104,18 +96,6 @@ function bech32Polymod(values: readonly number[]): number {
   return checksum;
 }
 
-/**
- * BIP-173/350 checksum, the one thing a character-shape pattern cannot see. Bech32 carries
- * it precisely so a mistyped or truncated payout address is caught before it is used, and
- * the custodian rejects an address that fails it - late, as an opaque vendor error, after
- * the player was told the address looked fine.
- *
- * Witness version 0 is encoded with bech32 and every later version with bech32m; the two
- * differ only in the constant the polymod must land on, so an address accepted under the
- * wrong one is a different address than the player meant, not a typo. Version 0 is also the
- * only one with a fixed program size - 20 bytes (P2WPKH) or 32 (P2WSH), 32 or 52 data
- * characters - which the length bound in the pattern is far too wide to pin down.
- */
 function hasValidBech32Checksum(address: string, hrp: string): boolean {
   const data = Array.from(address.slice(hrp.length + 1), (char) => BECH32_CHARSET.indexOf(char));
   if (data.includes(-1) || data.length <= BECH32_CHECKSUM_CHARS) {
@@ -138,11 +118,6 @@ function hasValidBech32Checksum(address: string, hrp: string): boolean {
   return bech32Polymod(expanded) === (witnessVersion === 0 ? BECH32_CHECKSUM : BECH32M_CHECKSUM);
 }
 
-/**
- * Format check for a payout destination, per chain, looked up by `network.toUpperCase()`.
- * A network with no entry in the table is ACCEPTED, falling back to the shared length
- * bound (8-128 chars trimmed) instead of being rejected.
- */
 export function isWalletAddressValidForNetwork(address: string, network: string): boolean {
   const key = network.toUpperCase();
   const pattern = ADDRESS_PATTERN_BY_NETWORK[key];
@@ -161,13 +136,8 @@ export function isWalletAddressValidForNetwork(address: string, network: string)
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
-  // Present when a bonus module is loaded: the real money live bonuses hold back from a swap or
-  // transfer, and from a withdrawal in `block` mode; `free` is `balance` minus it, never below 0.
-  // In the default `forfeit` mode any withdrawal is paid in full and forfeits every live bonus.
   locked: MoneyAmountSchema.optional(),
   free: MoneyAmountSchema.optional(),
-  // What the bonus lock alone holds back. An unmet turnover requirement (ADR-0065) can make
-  // `locked` the whole balance but never stops a swap; only this amount does.
   bonusLocked: MoneyAmountSchema.optional(),
 });
 
@@ -176,17 +146,11 @@ export const WalletBalancesSchema = z.object({
   balances: z.array(WalletBalanceSchema),
 });
 
-// A change *signal*, never the balance itself: carrying `{ currency, balance }` on the
-// stream would make the stream a money surface - a dropped or reordered event leaves a
-// stale number on screen with no self-correction. This shape only tells the client WHAT
-// changed; the client re-fetches getBalance(s)/listTransactions, which is cheap and
-// always internally consistent.
 export const WalletBalanceChangeReasonSchema = z.enum([
   'deposit',
   'withdrawal',
   'adjustment',
   'swap',
-  // Any WALLET_COMMANDS move (bet/win, gift/rain/donation, bonus credit, ...) - see wallet.balance.changed.
   'gameplay',
 ]);
 export type WalletBalanceChangeReason = z.infer<typeof WalletBalanceChangeReasonSchema>;
@@ -202,8 +166,6 @@ export const SetActiveCurrencyInputSchema = z.object({ currency: WalletCurrencyC
 
 export const ActiveCurrencySchema = z.object({ activeCurrency: WalletCurrencyCodeSchema });
 
-// Shared by a manual adjustment's input direction and a transaction row's recorded
-// direction - a wallet move only ever goes one of these two ways.
 export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
 export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
 export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
@@ -215,21 +177,13 @@ export const WalletTransactionSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema.nullable(),
   status: WalletTransactionStatusSchema,
-  // Which way this leg moved money - derived server-side from what the operation IS,
-  // never a caller input. Nullable: rows written before this column existed (and any
-  // row whose `type` never carried a recoverable direction, eg a pre-migration gift/
-  // rain leg) have no direction on record.
   direction: ManualAdjustmentDirectionSchema.nullable(),
-  // Withdrawal rows: the network fee kept from `amount`; the payout was `amount - fee`.
-  // Null on every other row and on a withdrawal without a fee.
   fee: MoneyAmountSchema.nullable(),
   createdAt: TimestampSchema,
   reviewReason: z.string().nullable(),
   product: WagerProductSchema.nullable(),
 });
 
-// A ledger row's value in the player's reference currency when it was written. Never
-// recalculated, so the rate and its timestamp are what an auditor reproduces it from.
 export const WalletReferenceConversionSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   amount: MoneyAmountSchema,
@@ -242,9 +196,7 @@ export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedBy: UuidSchema.nullable(),
   reviewedAt: TimestampSchema.nullable(),
   balanceAfter: MoneyAmountSchema.nullable(),
-  // Null on row types that carry no conversion, and on rows written before it was recorded.
   reference: WalletReferenceConversionSchema.nullable(),
-  // The rakeback claim a `cashback` credit paid.
   claimId: UuidSchema.nullable(),
 });
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
@@ -256,10 +208,6 @@ export const DepositInputSchema = z.object({
   idempotencyKey: UuidSchema,
 });
 
-// Bounded but otherwise unvalidated, like the address: each tag chain has its own format (an
-// XRP tag is a uint32, an XLM memo can be text or a hash), and the bound adapter is the only
-// thing that knows which. Tightening this here would break every chain but the one it was
-// tightened for; the adapter rejects a malformed tag at payout time.
 export const DestinationTagInputSchema = z.string().trim().min(1).max(64);
 
 export const WithdrawInputSchema = z
@@ -271,8 +219,6 @@ export const WithdrawInputSchema = z
     idempotencyKey: UuidSchema,
     destinationAddress: WalletAddressInputSchema.optional(),
     destinationTag: DestinationTagInputSchema.optional(),
-    // Required when the account has a Withdrawal PIN; the service refuses a missing one, so
-    // a client that skips the field cannot skip the check.
     withdrawalPin: WithdrawalPinSchema.optional(),
   })
   .superRefine((data, ctx) => {
@@ -328,9 +274,6 @@ export const WITHDRAWAL_SORT_BY_VALUES = [
 export const WithdrawalSortBySchema = z.enum(WITHDRAWAL_SORT_BY_VALUES).default('createdAt');
 export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
 
-// Every filter narrows the whole history in SQL before paging, so `total` always agrees with
-// what the filters match. `search` matches a transaction id by prefix (what a player copies off
-// a receipt is often truncated), or a provider reference or tx hash exactly.
 export const WalletTransactionListQuerySchema = PageQuerySchema.extend({
   sortBy: WalletTransactionSortBySchema.optional(),
   sortOrder: SortOrderSchema.default('desc').optional(),
@@ -361,7 +304,6 @@ export const WithdrawalQueueItemSchema = z.object({
   playerId: UuidSchema.nullable(),
   username: z.string(),
   amount: MoneyAmountSchema,
-  // The network fee kept from `amount`; the payout sent to the provider is `amount - fee`.
   fee: MoneyAmountSchema.nullable(),
   currency: WalletCurrencyCodeSchema,
   network: WalletNetworkSchema.nullable(),
@@ -369,21 +311,15 @@ export const WithdrawalQueueItemSchema = z.object({
   status: WalletTransactionStatusSchema,
   kycStatus: KycStatusSchema.nullable(),
   riskTags: z.array(z.string()),
-  /** The player carries the `withdrawal_lock` hold: this withdrawal cannot be approved until it is released. */
   withdrawalLocked: z.boolean(),
-  /** A module holds the player's withdrawals (e.g. an unpaid debt): approval is refused until it releases the hold. */
   withdrawalHeld: z.boolean(),
   requestedAt: TimestampSchema,
   destinationAddress: z.string().nullable(),
-  // An approver on a tag chain is releasing funds to an address shared by many accounts, so
-  // the tag is part of what they are approving, not a detail behind it.
   destinationTag: z.string().nullable(),
   txHash: z.string().nullable(),
 });
 export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
 
-// `search` matches a user id or a destination address exactly, or an email or username by
-// fragment. It narrows the list and the summary alike, so the header agrees with the rows.
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   search: z.string().trim().min(1).max(128).optional(),
   status: WalletTransactionStatusSchema.optional(),
@@ -399,8 +335,6 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
 });
 export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
 
-// The queue's headline figures describe every withdrawal the filters match, so they drop the
-// page, sort and status: the counts split by status themselves.
 export const WithdrawalQueueSummaryFilterSchema = WithdrawalQueueFilterSchema.omit({
   page: true,
   limit: true,
@@ -413,7 +347,6 @@ export type WithdrawalQueueSummaryFilter = z.infer<typeof WithdrawalQueueSummary
 export const WithdrawalQueueSummarySchema = z.object({
   pendingCount: z.number().int().nonnegative(),
   onHoldCount: z.number().int().nonnegative(),
-  // One total per currency: amounts in different currencies are never summed together.
   queuedTotals: z.array(
     z.object({ currency: WalletCurrencyCodeSchema, amount: MoneyAmountSchema }),
   ),
@@ -440,8 +373,6 @@ export const SetAutoWithdrawalRuleInputSchema = z.object({
 
 export const AutoWithdrawalRuleKeySchema = z.object({ userId: UuidSchema });
 
-// `null` count = velocity check off. The upper bounds only keep a typo out of the counting
-// query; a 32-bit overflow is the only thing the column itself rules out.
 const VelocityCountSchema = z.number().int().positive().max(1000);
 const VelocityWindowHoursSchema = z.number().int().positive().max(720);
 
@@ -458,10 +389,6 @@ export const WalletAutoWithdrawalConfigSchema = z.object({
 });
 export type WalletAutoWithdrawalConfig = z.infer<typeof WalletAutoWithdrawalConfigSchema>;
 
-// wallet_auto_withdrawal_config.{fiatThreshold,cryptoThreshold} are decimal(18,8) - 10
-// integer digits max. Bounded here (not in the shared MoneyAmountSchema, which also backs
-// decimal(18,2) columns with a different integer-digit budget) so an out-of-range value is
-// a 4xx at the contract boundary instead of a DB overflow 500.
 const WalletAutoWithdrawalThresholdSchema = MoneyAmountSchema.refine(
   (v) => (v.split('.').at(0) ?? '').length <= 10,
   { message: 'must have at most 10 integer digits' },
@@ -476,7 +403,6 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
 });
 
 export const TurnoverEntriesQuerySchema = z.object({
-  /** The last entry id of the previous page. */
   cursor: UuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -515,25 +441,16 @@ export const TurnoverConfigViewSchema = z.object({
   countAtSettle: z.array(WagerProductSchema),
   dustThreshold: MoneyAmountSchema,
   pivotCurrency: z.string(),
-  /** The percent each product counts at: the config's, overridden by staff. */
   productPercent: z.record(WagerProductSchema, TurnoverPercentSchema),
-  /** Staff overrides only; a product absent here uses the platform config. */
   overrides: z.partialRecord(WagerProductSchema, TurnoverPercentSchema),
 });
 export type TurnoverConfigView = z.infer<typeof TurnoverConfigViewSchema>;
 
 export const UpdateTurnoverConfigInputSchema = z.object({
-  /** `null` drops the override, so the product counts at the platform config's percent again. */
   productPercent: z.partialRecord(WagerProductSchema, TurnoverPercentSchema.nullable()),
 });
 export type UpdateTurnoverConfigInput = z.infer<typeof UpdateTurnoverConfigInputSchema>;
 
-// Kept only for `schema/index.ts` to type the now-unused `wallet_bonus_credit` /
-// `wallet_bonus_rollover_config` tables and their enums. Chat gifts and rain read and write
-// through `promo/bonus` now (see `WalletCommandsService.credit`); nothing in this module reads
-// or writes these two tables any more. The tables themselves stay for one more release - an old
-// instance mid-rolling-deploy can still hit them - and a follow-up migration drops both once a
-// release has fully rolled out.
 export const BONUS_CREDIT_SOURCE_TYPES = ['gift', 'rain'] as const;
 export const BonusCreditSourceTypeSchema = z.enum(BONUS_CREDIT_SOURCE_TYPES);
 export type BonusCreditSourceType = z.infer<typeof BonusCreditSourceTypeSchema>;
@@ -549,7 +466,6 @@ export const RejectWithdrawalInputSchema = z.object({
   reason: z.string().min(1),
 });
 
-// A vendor quote id is the vendor's own string, not a uuid we mint - bounded, never parsed.
 const SwapQuoteIdSchema = z.string().trim().min(1).max(128);
 
 export const SwapQuoteInputSchema = z.object({
@@ -558,8 +474,6 @@ export const SwapQuoteInputSchema = z.object({
   fromAmount: PositiveMoneyAmountSchema,
 });
 
-// `toAmount` is what the player receives, net of `fee`, and is the only binding number -
-// `rate` is informational and must never be multiplied out to reach an amount.
 export const SwapQuoteSchema = z.object({
   quoteId: SwapQuoteIdSchema,
   fromCurrency: WalletCurrencyCodeSchema,
@@ -574,7 +488,6 @@ export const SwapQuoteSchema = z.object({
 });
 
 export const SwapInputSchema = SwapQuoteInputSchema.extend({
-  // Optional: a vendor that does not hold quotes prices the swap at execution time.
   quoteId: SwapQuoteIdSchema.optional(),
   idempotencyKey: UuidSchema,
 });
@@ -582,7 +495,6 @@ export const SwapInputSchema = SwapQuoteInputSchema.extend({
 export const SwapResultSchema = z.object({
   transactionId: UuidSchema,
   status: WalletTransactionStatusSchema,
-  // Null until the vendor reports a fill - an async desk settles by webhook.
   toAmount: MoneyAmountSchema.nullable(),
 });
 
@@ -593,8 +505,6 @@ export const OnRampQuoteInputSchema = z.object({
   network: WalletNetworkInputSchema,
 });
 
-// No delivery address: the server always sends the vendor one it issued to this player.
-// `acknowledged` is the player's confirmation that a third party takes the payment.
 export const OnRampCheckoutInputSchema = OnRampQuoteInputSchema.extend({
   idempotencyKey: UuidSchema,
   acknowledged: z.literal(true),
@@ -602,7 +512,6 @@ export const OnRampCheckoutInputSchema = OnRampQuoteInputSchema.extend({
 
 export const OnRampCheckoutSchema = z.object({
   purchaseId: UuidSchema,
-  // The client navigates to it, so nothing but https gets through.
   checkoutUrl: z.url({ protocol: /^https$/ }),
 });
 export type OnRampCheckoutResponse = z.infer<typeof OnRampCheckoutSchema>;
@@ -622,10 +531,6 @@ export type OnRampOrder = z.infer<typeof OnRampOrderSchema>;
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
 
-// The vendor's raw JSON body plus the path-carried `provider` key (oRPC merges a route's
-// path params into the same top-level input object as the body). `provider` is never
-// attacker-trusted for routing to a signature key - the route resolves it against the
-// bound PaymentProviderRegistry and 404/401s identically to a bad signature on a miss.
 export const PaymentWebhookProviderInputSchema = z
   .object({ provider: z.string().min(1) })
   .catchall(z.unknown());
@@ -641,8 +546,6 @@ export const DepositAddressSchema = z.object({
   tag: z.string().optional(),
 });
 
-// Bounded to the column's integer-digit budget so an oversized value is a 4xx at the
-// contract boundary instead of a DB overflow 500.
 const WalletAssetAmountSchema = MoneyAmountSchema.refine(
   (v) => (v.split('.').at(0) ?? '').length <= MONEY_PRECISION - MONEY_SCALE,
   { message: `must have at most ${MONEY_PRECISION - MONEY_SCALE} integer digits` },
@@ -659,13 +562,9 @@ export const PublicWalletAssetSchema = z.object({
 });
 export type PublicWalletAsset = z.infer<typeof PublicWalletAssetSchema>;
 
-// Admin-only, same treatment as providerAssetId: which vendor settles a pair and its
-// sweep/pool policy are operational detail, never surfaced on the public catalog.
 export const WalletAssetSchema = PublicWalletAssetSchema.extend({
   id: UuidSchema,
   providerAssetId: z.string(),
-  // Null means the default single binding (PAYMENT_ADAPTER / PAYMENT_WEBHOOK_VERIFIER),
-  // never a vendor's name to parse - core treats this as an opaque operator-chosen key.
   providerName: z.string().nullable(),
   sweepDustThreshold: MoneyAmountSchema.nullable(),
   sweepFeeCeiling: MoneyAmountSchema.nullable(),
@@ -689,9 +588,6 @@ export const CreateWalletAssetInputSchema = z.object({
   withdrawalFee: WalletAssetAmountSchema,
   depositEnabled: z.boolean().default(true),
   withdrawalEnabled: z.boolean().default(true),
-  // Validated against the bound PaymentProviderRegistry's names() at write time - an
-  // unvalidated typo would fall back to the default adapter, attempting eg a crypto
-  // payout through a PSP. Absent = the default single binding.
   providerName: z.string().trim().min(1).optional(),
   sweepDustThreshold: WalletAssetAmountSchema.optional(),
   sweepFeeCeiling: WalletAssetAmountSchema.optional(),
@@ -699,11 +595,6 @@ export const CreateWalletAssetInputSchema = z.object({
 });
 export type CreateWalletAssetInput = z.infer<typeof CreateWalletAssetInputSchema>;
 
-// The (currency, network) key is not mutable: renaming a pair is a delete plus a create,
-// so an in-flight vendor reference can't be rewritten out from under a pending
-// transaction. providerName is immutable the same way - it is deliberately absent here,
-// not merely optional; changing it is only possible via delete + re-create, which the
-// service blocks while a pending/processing transaction exists for the pair.
 export const UpdateWalletAssetInputSchema = WalletAssetKeySchema.extend({
   providerAssetId: z.string().trim().min(1).optional(),
   minDeposit: WalletAssetAmountSchema.optional(),
@@ -717,8 +608,6 @@ export const UpdateWalletAssetInputSchema = WalletAssetKeySchema.extend({
 });
 export type UpdateWalletAssetInput = z.infer<typeof UpdateWalletAssetInputSchema>;
 
-// Shared by both cron-style admin triggers - the caller gets back the id of the
-// wallet_job_run row it claimed, nothing else, since the work itself runs async.
 export const JobRunResultSchema = z.object({ runId: UuidSchema });
 
 export const WalletReconciliationFindingSchema = z.object({
@@ -751,18 +640,6 @@ export const ListReconciliationFindingsInputSchema = PageQuerySchema.extend({
 });
 export type ListReconciliationFindingsInput = z.infer<typeof ListReconciliationFindingsInputSchema>;
 
-// Every way to close a finding carries its evidence: a credit (credited), the held deposit
-// itself credited after a fresh policy check (released), the on-chain transaction that sent
-// the money back and how much it sent (refunded), or a mandatory note explaining why it is
-// a non-issue (dismissed). Never a bare status flip with no evidence. A ledger finding closes
-// only by re-baselining its wallet at the balance it holds now (rebaselined), with a note on why
-// that balance is the right one, or by a dismissal once its pair checks clean again; both take a
-// super admin.
-//
-// `credited` means two things by finding kind. A deposit finding names no transaction: the
-// resolution credits the deposit itself, after the deposit hold policy, and `userId` is the
-// player an unattributed deposit belongs to (every other deposit finding derives it). Any
-// other finding names the `manual_credit` already made for it in `transactionId`.
 export const ReconciliationResolutionSchema = z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('credited'),
@@ -798,7 +675,6 @@ export const WithdrawalAddressSchema = z.object({
   address: z.string(),
   destinationTag: z.string().nullable(),
   createdAt: TimestampSchema,
-  /** When the address may first be paid to: 24 hours after it was saved. */
   usableFrom: TimestampSchema,
 });
 export type WithdrawalAddress = z.infer<typeof WithdrawalAddressSchema>;
@@ -824,13 +700,10 @@ const refineWithdrawalAddress = (
   }
 };
 
-// What the service stores. The proof below never reaches it: the router checks it first.
 export const CreateWithdrawalAddressInputSchema = z
   .object(CreateWithdrawalAddressFields)
   .superRefine(refineWithdrawalAddress);
 
-// What the client sends: the same proof as setting a Withdrawal PIN - the password, plus the
-// 2FA code when the account has 2FA. A stolen session otherwise adds its own payout address.
 export const CreateWithdrawalAddressRequestSchema = z
   .object({
     ...CreateWithdrawalAddressFields,
@@ -1001,7 +874,6 @@ export const walletContract = {
     },
   },
 
-  // Unauthenticated by design - which assets exist is not secret.
   listAssets: oc
     .route({ method: 'GET', path: '/wallet/assets' })
     .output(z.array(PublicWalletAssetSchema)),
@@ -1027,8 +899,6 @@ export const walletContract = {
       .output(z.boolean()),
   },
 
-  // Player-owned and player-scoped: an address book is personal data, never listed for
-  // an admin, so there is no admin counterpart to these three routes.
   withdrawalAddresses: {
     list: oc
       .route({ method: 'GET', path: '/wallet/withdrawal-addresses' })
@@ -1064,16 +934,12 @@ export const walletContract = {
       .input(SwapInputSchema)
       .output(SwapResultSchema),
 
-    // Unauthenticated like the payment webhook, and verified by its own SWAP_WEBHOOK_VERIFIER
-    // - a swap desk signs with a different key than the PSP.
     webhook: oc
       .route({ method: 'POST', path: '/wallet/swap/webhook' })
       .input(PaymentWebhookInputSchema)
       .output(PaymentWebhookOutputSchema),
   },
 
-  // Buying crypto with fiat from a third-party vendor; the coins land on the player's own
-  // deposit address and are credited by the ordinary deposit path, never by these routes.
   onRamp: {
     options: oc
       .route({
@@ -1097,7 +963,6 @@ export const walletContract = {
       .input(OnRampCheckoutInputSchema)
       .output(OnRampCheckoutSchema),
 
-    // The player's own order only; another player's answers NOT_FOUND like an unknown id.
     order: oc
       .route({
         method: 'GET',
@@ -1107,7 +972,6 @@ export const walletContract = {
       .input(OnRampOrderInputSchema)
       .output(OnRampOrderSchema),
 
-    // Unauthenticated, verified by its own ON_RAMP_WEBHOOK_VERIFIER.
     webhook: oc
       .route({ method: 'POST', path: '/wallet/on-ramp/webhook' })
       .input(PaymentWebhookInputSchema)
@@ -1119,8 +983,6 @@ export const walletContract = {
     .input(PaymentWebhookInputSchema)
     .output(PaymentWebhookOutputSchema),
 
-  // Routes an inbound webhook to the named provider's adapter/verifier pair instead of
-  // the single default binding - see docs/adapters/payment.md "Multi-provider routing".
   webhookForProvider: oc
     .route({ method: 'POST', path: '/wallet/webhook/{provider}' })
     .input(PaymentWebhookProviderInputSchema)

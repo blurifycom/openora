@@ -2,19 +2,11 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 
-/**
- * Who imports what, per repo-relative file, built from the repo's own dependency-cruiser config
- * (the one its boundary check runs). Answers "what else can this change break" without reading
- * the code: walk `dependents` up from a changed file.
- */
 export type DepGraph = {
   generatedAt: string;
   commit: string | null;
-  /** file -> files that import it */
   dependents: Record<string, string[]>;
-  /** file -> `@openora/*` specifiers it imports from outside the repo (consumer repos only) */
   platform: Record<string, string[]>;
-  /** source file -> the public `@openora/*` specifier it is published as (platform repo only) */
   entryPoints: Record<string, string>;
 };
 
@@ -38,7 +30,6 @@ function cruise(cwd: string, targets: string[]): CruiseModule[] {
   return (JSON.parse(out.toString()) as { modules: CruiseModule[] }).modules;
 }
 
-// A consumer repo keeps one config per workspace; the platform repo keeps one at the root.
 function cruiseRuns(root: string): { dir: string; targets: string[] }[] {
   const workspaces = WORKSPACE_ROOTS.filter((r) => existsSync(join(root, r))).flatMap((r) =>
     readdirSync(join(root, r))
@@ -57,7 +48,6 @@ function cruiseRuns(root: string): { dir: string; targets: string[] }[] {
   return [{ dir: '.', targets: WORKSPACE_ROOTS.filter((r) => existsSync(join(root, r))) }];
 }
 
-// `exports` point at dist; the graph speaks source, so map each entry back to its src file.
 function publishedEntryPoints(root: string): Record<string, string> {
   const entries: Record<string, string> = {};
   const packagesDir = join(root, 'packages');
@@ -100,7 +90,6 @@ export function buildDepGraph(root: string): DepGraph {
   const platform: Record<string, Set<string>> = {};
   for (const { dir, targets } of cruiseRuns(root)) {
     const toRepoPath = (source: string) => posix.normalize(`${dir}/${source}`);
-    // Linked or installed @openora/* resolve outside the repo; the graph covers the repo's own files.
     const isInternal = (
       d: Pick<CruiseDependency, 'coreModule' | 'couldNotResolve'>,
       path: string,
@@ -138,7 +127,6 @@ export function buildDepGraph(root: string): DepGraph {
   };
 }
 
-/** Transitive importers of `file`, up to `maxDepth` hops, nearest first. */
 function importersOf(graph: DepGraph, file: string, maxDepth: number): string[] {
   const depth = new Map([[file, 0]]);
   const queue = [file];
@@ -161,17 +149,10 @@ function importersOf(graph: DepGraph, file: string, maxDepth: number): string[] 
 export type Impact = {
   file: string;
   importers: string[];
-  /** platform repo only: the public specifiers the change reaches */
   specifiers: string[];
-  /** consumer files importing one of those specifiers, when a consumer graph is given */
   consumerFiles: string[];
 };
 
-/**
- * What a change to `file` can break. With a consumer graph, a platform file is followed through
- * the public entry points it reaches into the consumer files that import them - the cross-repo
- * half that no single-repo graph shows.
- */
 export function impactOf(
   graph: DepGraph,
   file: string,
@@ -179,7 +160,6 @@ export function impactOf(
   consumer?: DepGraph,
 ): Impact {
   const importers = importersOf(graph, file, maxDepth);
-  // Nearest first: a change reaches its own entry point before the barrels that re-export it.
   const specifiers = [...new Set([file, ...importers].flatMap((f) => graph.entryPoints[f] ?? []))];
   const rank = (specs: string[]) =>
     Math.min(...specs.map((s) => specifiers.indexOf(s)).filter((i) => i >= 0));

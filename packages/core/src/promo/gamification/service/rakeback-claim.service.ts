@@ -73,7 +73,6 @@ const NOTIFY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const AUTO_PAYOUT_CHECK_CONCURRENCY = 10;
 
 type RakebackPaid = RakebackCurrencyAmount & {
-  /** Null on a replayed claim: the balance already moved and was already announced. */
   transactionId: string | null;
 };
 
@@ -93,16 +92,6 @@ type RakebackClaimDeps = {
   identity: IdentityReader;
 };
 
-/**
- * Pays a player's accrued rakeback out, one `cashback` credit per currency, in a single
- * transaction. The `(userId, idempotencyKey)` claim row makes a retry return the first result;
- * flipping exactly the rows that were read from `accrued` to `claimed` makes two claims with
- * different keys pay each row once - the loser finds fewer rows than it credited and rolls back.
- *
- * Rows are read without a lock and only locked by that flip, after each currency's wallet credit:
- * a rollback locks the balance before the round's rows, so taking them in the other order here
- * would deadlock against it.
- */
 export class RakebackClaimService {
   constructor(private readonly deps: RakebackClaimDeps) {}
 
@@ -128,12 +117,6 @@ export class RakebackClaimService {
     );
   }
 
-  /**
-   * Pays everything a player has accrued once they can no longer claim it themselves - a
-   * self-exclusion or a closed account - below the minimum and past every block. Null when
-   * nothing was left, so running it twice pays once, and when the player is no longer due, such
-   * as an account reopened before the job ran.
-   */
   async autoPay(userId: Uuid): Promise<RakebackClaimed | null> {
     try {
       return await this.deps.drizzle.db.transaction(async (tx) =>
@@ -164,12 +147,6 @@ export class RakebackClaimService {
     return rows.filter((_, index) => due[index]).map((row) => row.userId);
   }
 
-  /**
-   * Tells each player whose unclaimed rakeback has reached the minimum, at most once a day and
-   * never one who could not claim it. The timestamp is written before `announce` runs, so a crash
-   * between them drops one reminder rather than repeating it. A player found below the minimum is
-   * priced again only once newer rakeback accrues.
-   */
   async notifyClaimable(
     announce: (claimable: DomainEventPayload<'promo.rakeback.claimable'>) => void,
     now = new Date(),
@@ -355,7 +332,6 @@ export class RakebackClaimService {
       paid.push({ currency, amount, transactionId: credited.transactionId });
     }
     await this.deps.audit.recordInTransaction(tx, {
-      // No player profile: keep the user id so a player entry always has an actor.
       actorId:
         outcome === 'claimed'
           ? ((await this.deps.identity.getPlayerIdByUserId(userId, tx)) ?? userId)

@@ -66,11 +66,6 @@ function reasonCount(row: GrantsSummaryCurrency, reason: BonusForfeitReason, tot
   }
 }
 
-/**
- * The operator's bonus grants per currency: what was granted and how grants ended in a range, read
- * off the grants themselves and the bonus ledger entries that closed them, and what the live ones
- * still hold now.
- */
 export class GrantsSummaryService {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -106,7 +101,6 @@ export class GrantsSummaryService {
           status: grant.status,
           reason: grant.forfeitReason,
           count: sql<number>`count(distinct ${grant.id})`.mapWith(Number),
-          // A closing entry is negative: the bonus balance that left the grant.
           amount: sumMoney(sql`-${entry.bonusAmount}`),
         })
         .from(grant)

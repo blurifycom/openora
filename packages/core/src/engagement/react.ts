@@ -1,4 +1,3 @@
-// `@openora/core/engagement/react` - domain-owned hooks, keeping the base @openora/core/react SDK domain-agnostic.
 export {
   useNotifications,
   useUnreadNotificationCount,

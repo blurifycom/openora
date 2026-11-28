@@ -29,16 +29,11 @@ export const RankChallengeLadderCurrencyHeldError = createDomainError(
 export const RankChallengeLadderVersionConflictError = createDomainError(
   'RankChallengeLadderVersionConflictError',
   () => 'the ladder changed since it was loaded; reload it and apply the edit again',
-  // Lets a client tell this apart from the currency-held conflict on the same route.
   { reason: 'stale_version' },
 );
 
 const LADDER_LOCK_KEY = 'promo_rank_challenge_ladder';
 
-/**
- * The ladder has no row of its own to carry a version counter, so its version is a digest of
- * every tier's stored config: any edit, insert or removal changes it, a claim does not.
- */
 export const ladderVersion = (rows: readonly object[]) =>
   createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 
@@ -101,15 +96,6 @@ const claimsQuery = (db: DrizzleDb | DrizzleTx) =>
       eq(promoRankChallengeTier.id, promoRankChallengeClaim.tierId),
     );
 
-/**
- * The operator's side of the Rank Challenge: read/replace the ladder, list winner records, and
- * run the physical-prize fulfilment queue. Prospective by construction - a claim snapshots its
- * own `cashAmount`/`physicalItem` at the moment it is won, so editing or even removing a tier's
- * config afterward can never change what a past winner was granted (see `promoRankChallengeClaim`
- * in schema/index.ts). No "held" guard like `RankAdminService`'s tier-removal check is needed for
- * that reason; the only thing still enforced is the ladder-currency lock once anyone has wagered,
- * the same rule `RankAdminService.set` applies.
- */
 export class RankChallengeAdminService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -121,10 +107,6 @@ export class RankChallengeAdminService {
     return this.named(await this.drizzle.db.transaction((tx) => toLadder(tx, 'USD')));
   }
 
-  /**
-   * Replaces the whole ladder, so it refuses a save built on a ladder another admin has changed
-   * since (`input.version` no longer matches) rather than silently dropping their tiers.
-   */
   async setLadder(
     adminId: Uuid,
     input: SetRankChallengeLadderInput,
@@ -224,11 +206,6 @@ export class RankChallengeAdminService {
     return (await withUsernames(this.identity, rows)).map(toClaim);
   }
 
-  /**
-   * Keyed by `tierId`, not the claim's own row id: `promoRankChallengeClaim.tierId` is unique
-   * per claim, and it is the one identifier `RankChallengeClaimSchema` actually exposes to the
-   * admin UI (see contract/index.ts).
-   */
   async markFulfilled(adminId: Uuid, tierId: Uuid, note: string): Promise<RankChallengeClaim> {
     const row = await this.drizzle.db.transaction(async (tx) => {
       const [claim] = await tx

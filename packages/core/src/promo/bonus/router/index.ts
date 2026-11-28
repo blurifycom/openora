@@ -19,7 +19,6 @@ import {
 } from '@openora/core/contracts';
 import { bonusContract, type BonusBalanceUpdate } from '../contract/index.js';
 
-/** One channel per player: a bonus position is never another player's business. */
 export function bonusBalanceChannel(userId: Uuid): string {
   return `promo:balance:${userId}`;
 }
@@ -53,10 +52,8 @@ import {
   WeightService,
 } from '../service/weight.service.js';
 
-// Anonymous and read-only, so throttled per address like the anonymous geo-check.
 const PUBLIC_OFFERS_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
 
-// Forfeiting is also a player-account action, so support staff who manage players may do it.
 const FORFEIT_PERMISSIONS = [
   { resource: 'bonus', action: 'cancel' },
   { resource: 'bonus', action: 'view' },
@@ -90,7 +87,6 @@ export function createBonusRouter({
   realtime: RealtimeTransport;
   adminGuard: AdminGuard;
   limiter: RateLimiterAdapter<RateLimitKey>;
-  /** Absent when no compliance plugin is loaded, in which case there is no country rule. */
   geoCheck?: GeoCheckCommands;
 }) {
   const os = implement(bonusContract).$context<OssContext>();
@@ -99,8 +95,6 @@ export function createBonusRouter({
     offers: {
       list: os.offers.list.handler(({ context }) => offers.listForPlayer(getUserId(context))),
 
-      // A visitor from a country the operator refuses cannot register, so they are not marketed
-      // to either: an empty catalogue rather than an error, so the page renders the same way.
       listPublic: os.offers.listPublic.handler(async ({ context }) => {
         const { ip } = context.clientMeta;
         await assertRateLimit(
@@ -108,8 +102,6 @@ export function createBonusRouter({
           makeRateLimitKey(RATE_LIMIT_KEYS.PROMO_PUBLIC_OFFERS_IP, ip ?? 'unknown'),
           PUBLIC_OFFERS_RATE_LIMIT,
         );
-        // Browsing, not an enforcement point: the deduped visitor check keeps a blocked visitor's
-        // page loads from writing an audit row each.
         const decision = geoCheck?.visitorGeoCheck
           ? await geoCheck.visitorGeoCheck(ip)
           : await geoCheck?.checkAccess(ip);
@@ -129,7 +121,6 @@ export function createBonusRouter({
 
     admin: {
       players: {
-        // Real-money balances, so the wallet's own read permission as well as the bonus one.
         funds: os.admin.players.funds.handler(async ({ input, context }) => {
           await adminGuard.assert(context, 'transaction', 'view');
           await adminGuard.assert(context, 'bonus', 'view');
@@ -151,10 +142,6 @@ export function createBonusRouter({
           return mapErrors(
             {
               CONFLICT: GrantNotForfeitableError,
-              // The lifecycle service's not-found (the forfeit target itself) and the reader's
-              // (the post-commit read-back) are separate classes built from separate
-              // `makeNotFoundError('Grant')` calls, so both need naming here or the read-back's
-              // 404 falls through unmapped to a 500.
               NOT_FOUND: [GrantNotForfeitableNotFoundError, GrantNotFoundError],
             },
             async () => {
@@ -186,7 +173,6 @@ export function createBonusRouter({
               () => conversion.convert(input, { id: userId, meta: context.clientMeta }),
             );
             if (!input.dryRun) {
-              // A refetch signal only: a dropped one leaves the next balance read correct.
               for (const grant of result.converted) {
                 await Promise.resolve(
                   realtime.publish(bonusBalanceChannel(grant.userId), {

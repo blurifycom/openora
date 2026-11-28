@@ -169,7 +169,6 @@ export class GameProviderService {
         ? or(ilike(gameProvider.name, likeContains(q)), ilike(gameProvider.slug, likeContains(q)))
         : undefined,
       isActive === undefined ? undefined : eq(gameProvider.isActive, isActive),
-      // inArray on an empty list is `false`, so `ids: []` matches nothing.
       ids ? inArray(gameProvider.id, ids) : undefined,
     );
     const [rows, [{ n }]] = await Promise.all([
@@ -296,7 +295,6 @@ export class GameProviderService {
     aggregatorMappings,
     ...patchInput
   }: UpdateProviderInput & CatalogActor) {
-    // The only writer of `custom_logo_url`; any new write path must repeat this host check.
     if (patchInput.customLogoUrl !== undefined && patchInput.customLogoUrl !== null) {
       const host = new URL(patchInput.customLogoUrl).hostname;
       if (!isAllowedHost(host, this.allowedLogoHosts)) {
@@ -340,9 +338,6 @@ export class GameProviderService {
           };
         }
         if (replaceMappings) {
-          // A game on a dropped aggregator would stay playable yet sit in the unmapped
-          // state updateGame rejects. The provider row lock above conflicts with the
-          // FOR SHARE updateGame takes, so no game can move onto the pair mid-check.
           const retained = new Set(aggregatorMappings.map((mapping) => mapping.aggregator));
           const removed = existingMappings
             .map((mapping) => mapping.aggregator)
@@ -366,9 +361,6 @@ export class GameProviderService {
             .returning(),
           new GameProviderNotFoundError(id),
         );
-        // An isActive flip moves the playable/unplayable split in every category
-        // containing one of this provider's games - pins are placed relative to it, so
-        // those categories must re-rank. See docs/modules/gaming.md.
         if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
           await markCategoriesRankDirtyForProviders(tx, [id]);
         }
@@ -396,8 +388,6 @@ export class GameProviderService {
         };
       })
       .catch((error: unknown) => {
-        // Translate only the index that actually fired: a vendor-id collision must
-        // never surface as a slug conflict, and an unknown 23505 must not lie at all.
         if (isMappingConstraint(uniqueConstraintName(error))) {
           throw new GameProviderVendorIdTakenError();
         }

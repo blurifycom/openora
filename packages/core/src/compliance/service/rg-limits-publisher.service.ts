@@ -1,6 +1,3 @@
-// Compliance owns every deposit and wager limit, so it is the only writer of the ledger's limits
-// projection. Every limit writer calls `publish` in its own transaction, after its change; the
-// backfill repairs what a writer that skipped it left behind, through `publish` too.
 import { sql, and, asc, count, gt, gte, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { createLogger, type DrizzleDb, type DrizzleTx, type EventBus } from '@openora/core/server';
 import {
@@ -19,7 +16,6 @@ type Db = DrizzleDb | DrizzleTx;
 type ProjectedLimit = RgLimitsSnapshot['limits'][number];
 const LimitSchema = RgLimitsSnapshotSchema.shape.limits.element;
 
-/** The effective deposit and wager limits of `userIds`, as of this statement. */
 async function readLimits(db: Db, userIds: readonly User['id'][]) {
   return db
     .select({
@@ -44,11 +40,6 @@ async function readLimits(db: Db, userIds: readonly User['id'][]) {
 
 type LimitRow = Awaited<ReturnType<typeof readLimits>>[number];
 
-/**
- * A row the snapshot contract rejects (a currency or amount written around the API) is projected
- * with no currency, which refuses every move it gates, so the snapshot always validates and no
- * bad row can block the write of a player lowering a limit.
- */
 export function projectedLimit(row: LimitRow): ProjectedLimit {
   const limit = {
     limitId: row.limitId,
@@ -79,11 +70,6 @@ export class RgLimitsPublisher {
     private readonly events: Pick<EventBus, 'emitInTransaction'> | null,
   ) {}
 
-  /**
-   * Bumps the user's version, then projects their limits as this transaction sees them. The bump
-   * comes first: it locks the version row, so a concurrent writer of the same user waits here and
-   * reads the limits only after this one commits. A failed write fails the caller's change.
-   */
   async publish(
     tx: DrizzleTx,
     userId: User['id'],
@@ -111,16 +97,10 @@ export class RgLimitsPublisher {
 export type BackfillRgLimitsOptions = {
   batchSize?: number;
   signal?: AbortSignal;
-  /** Only users with a limit row updated since then; a removed limit waits for a full run. */
   changedSince?: Date;
-  /** Emits `compliance.rg_limits.changed` for each repair; a seed passes none. */
   events?: Pick<EventBus, 'emitInTransaction'> | null;
 };
 
-/**
- * The users to compare, in batches. A full run walks `rg_limit_version` by its primary key; a heal
- * reads its window once off `user_limit_updated_at_idx`.
- */
 async function* userBatches(
   db: DrizzleDb,
   batchSize: number,
@@ -161,10 +141,6 @@ async function versionedUsers(
   return rows.map((row) => row.userId);
 }
 
-/**
- * `userIds`' committed limits snapshots, versions and rows read on one snapshot: a version read
- * after a newer commit than the limits would label older limits with the newer version.
- */
 export async function readSnapshots(
   db: DrizzleDb,
   userIds: readonly User['id'][],
@@ -189,7 +165,6 @@ export async function readSnapshots(
   );
 }
 
-/** Up to `limit` users' committed limits in user id order, after `after` when given. */
 export async function rgLimitsPage(
   db: DrizzleDb,
   after: User['id'] | null,
@@ -198,13 +173,6 @@ export async function rgLimitsPage(
   return readSnapshots(db, await versionedUsers(db, after, limit));
 }
 
-/**
- * Brings the ledger's limits projection up to date: compares each user's limits with the ledger
- * in keyset batches of short reads, and re-publishes every user that drifted, each in its own
- * short transaction under a fresh version. Never overwrites at an equal version, so a late
- * outbox delivery cannot undo a repair. Idempotent; safe at every boot and from a seed. Returns
- * how many users it repaired.
- */
 export async function backfillRgLimits(
   db: DrizzleDb,
   ledger: Pick<RgLimitLedgerPort, 'write' | 'drifted'>,
@@ -212,8 +180,6 @@ export async function backfillRgLimits(
 ): Promise<number> {
   const publisher = new RgLimitsPublisher(ledger, events);
   if (!changedSince) {
-    // A limit written by a replica from before ADR-0057 has no version row; give it one, so the
-    // walk below reaches it. Existing rows are left alone, unlocked.
     await db.execute(sql`
       insert into ${rgLimitVersion} (user_id, version)
       select distinct ${userLimit.userId}, 0 from ${userLimit}

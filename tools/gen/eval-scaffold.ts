@@ -1,17 +1,4 @@
 #!/usr/bin/env node
-/**
- * Scaffold-and-verify eval (WS5).
- *
- * Proves the v1 AC: scaffold a new module -> regen -> verify is green end-to-end.
- * Non-interactive; safe to run in CI (exits non-zero on any failure).
- *
- * Usage:
- *   pnpm test:scaffold          # scaffold, verify, clean up
- *   pnpm test:scaffold --keep   # leave generated files in place
- *
- * Requires a clean working tree (or --keep). On a dirty tree the cleanup step
- * prints a warning and skips; use `git status` to inspect.
- */
 
 import { spawnSync, execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';

@@ -40,7 +40,7 @@ above) if this repo has no UI apps.
   imperative accumulation loops.
 - Explicit over magic: no decorators, no auto-discovery, no reflection. Every wiring point is a
   greppable typed call (`ctx.provide(TOKEN, factory)`).
-- Self-documenting: clear names beat comments (`percentChange`, not `d` + a comment).
+- Self-documenting: the name carries the meaning (`percentChange`, not `d`).
 - YAGNI then DRY: don't build for imagined futures; abstract on the third occurrence, not the
   first.
 - Boring and consistent: match the surrounding code's idiom, naming, and density.
@@ -64,9 +64,15 @@ above) if this repo has no UI apps.
   in `docs/standards/database.md`.
 - Silent catches - log with context and rethrow. `ORPCError.message` rendered to a player - UI copy
   keys off `.code` + typed `.data` through `t()`.
-- Comments, unless one states a fact the code cannot contain (an external system's behaviour, a
-  spec constraint); a reason goes in the commit or PR, never inline. Never in tests. Detail:
-  `docs/standards/comments.md`.
+- Comments of any kind in code, tests or config: inline, block, JSDoc, `TODO`, `FIXME`, `mock:`.
+  Meaning goes into names, types and tests; a reason goes into the commit, the PR or an ADR. Only
+  machine-read directives survive. Detail: `docs/standards/comments.md`.
+- Workarounds: a call-site guard, retry, sleep, cast, flag or swallowed error that leaves the cause
+  in place. Fix the root cause where every caller goes through, in the same change; a bug in
+  `@openora/*` is fixed in core through a paired OSS change, never patched in the overlay. Cannot
+  fix it now: stop and ask.
+- Code in docs: no fenced blocks, snippets, example payloads or config excerpts. A doc describes
+  the behaviour and references the file, function or script that implements it.
 - An in-process test that mocks the database, a repository, or a sibling service - found one in
   the diff, delete it and replace it with the API E2E; never add to it.
 

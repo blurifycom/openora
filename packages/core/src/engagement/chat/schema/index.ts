@@ -37,17 +37,14 @@ export const chatRoom = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     name: text().notNull(),
     slug: text().notNull(),
-    // Global chat is represented by the __global room with no category.
     category: chatRoomCategory(),
     isPublic: boolean().notNull().default(true),
-    // Set only for private rooms; null for public/admin-created rooms.
     joinCode: text(),
-    creatorId: uuid(), // bare id - cross-module (user from pam/identity), no FK
+    creatorId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp({ withTimezone: true }),
     scheduledDeletionAt: timestamp({ withTimezone: true }),
     kind: chatRoomKind().notNull().default('standard'),
-    // The caller's own key for a context room, e.g. the id of the thing the room is about.
     contextRef: text(),
   },
   (t) => [
@@ -75,13 +72,10 @@ export const chatMessage = pgTable(
     username: text().notNull(),
     content: text().notNull(),
     type: chatMessageType().notNull().default('user'),
-    // Not zodJsonb: `sanitizeCommandMetadata` repairs legacy money strings on read, so this
-    // column is parsed after that repair rather than before it. See `toSystemMessage`.
     metadata: jsonb().$type<CommandMetadata>(),
     attachment: zodJsonb(ChatAttachmentSchema, 'chat_message.attachment')(),
     isDeleted: boolean().notNull().default(false),
     deletedAt: timestamp({ withTimezone: true }),
-    // A system card's generation (CHAT_SYSTEM_MESSAGE_VERSION); 1 on every other message.
     version: integer().notNull().default(1),
     createdAt: timestamp({ withTimezone: true })
       .notNull()
@@ -95,12 +89,6 @@ export const chatMessage = pgTable(
   ],
 );
 
-// A directional mute: `blockerId` no longer sees messages from `blockedId`.
-// Scoped to the blocker only - the blocked player is unaffected (ABC-45 AC11).
-// Soft-deleted: unblock sets removedAt rather than deleting the row, so the pair's
-// block history survives. The unique pair index is partial (active rows only) so a
-// block -> unblock -> re-block cycle inserts a new active row instead of conflicting
-// with the removed one - see chat.service.ts blockUser/unblockUser.
 export const chatUserBlock = pgTable(
   'chat_user_block',
   {
@@ -115,17 +103,12 @@ export const chatUserBlock = pgTable(
       .on(t.blockerId, t.blockedId)
       .where(sql`${t.removedAt} IS NULL`),
     index('chat_user_block_blocker_idx').on(t.blockerId),
-    // Reverse lookup (who blocks this user): the pair key leads with blockerId.
     index('chat_user_block_blocked_idx')
       .on(t.blockedId)
       .where(sql`${t.removedAt} IS NULL`),
   ],
 );
 
-// A directional soft-mute: `ignorerId` no longer sees messages from `ignoredId`.
-// A separate relationship from chatUserBlock (not an alias) - same message-hiding
-// effect for now, but block vs ignore may diverge further later. Soft-deleted the
-// same way as chatUserBlock - see the comment there.
 export const chatUserIgnore = pgTable(
   'chat_user_ignore',
   {
@@ -150,10 +133,8 @@ export const chatRoomMember = pgTable(
     roomId: uuid()
       .notNull()
       .references(() => chatRoom.id, { onDelete: 'cascade' }),
-    userId: uuid().notNull(), // bare id - cross-module (user from pam/identity), no FK
+    userId: uuid().notNull(),
     role: chatRoomRole().notNull().default('member'),
-    // Null for plain members; set when a role above `member` is granted, cleared on revoke.
-    // Ownership transfer picks the successor by the earliest assignment among moderators.
     roleAssignedAt: timestamp({ withTimezone: true }),
     accountClosedAt: timestamp({ withTimezone: true }),
     joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -236,8 +217,8 @@ export const chatRoomBan = pgTable(
     roomId: uuid()
       .notNull()
       .references(() => chatRoom.id, { onDelete: 'cascade' }),
-    userId: uuid().notNull(), // banned user - bare id
-    bannedBy: uuid().notNull(), // moderator who banned - bare id
+    userId: uuid().notNull(),
+    bannedBy: uuid().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
@@ -333,7 +314,7 @@ export const chatMute = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
-    roomId: uuid(), // null = global chat; public room ids are channel-scoped mutes
+    roomId: uuid(),
     scope: chatModerationScope().notNull().default('__global'),
     mutedBy: uuid().notNull(),
     reason: text().notNull(),
@@ -391,7 +372,6 @@ export const chatPlayerCooldown = pgTable(
     index('chat_player_cooldown_active_scope_idx')
       .on(t.scope, t.expiresAt)
       .where(sql`${t.liftedAt} IS NULL`),
-    // Matches the sweep's scan, so a row lifted before its expiry leaves the index.
     index('chat_player_cooldown_expiry_due_idx')
       .on(t.expiresAt)
       .where(

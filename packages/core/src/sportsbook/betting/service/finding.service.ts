@@ -30,7 +30,6 @@ export const SportsbookFindingResolvedError = makeConflictError(
 
 export type SportsbookFindingArgs = {
   kind: SportsbookFindingKind;
-  /** One open finding per key: filing it again while open is a no-op. */
   dedupeKey: string;
   provider?: string | null;
   betId?: SportsbookFindingRow['betId'];
@@ -58,7 +57,6 @@ function toFinding(
   };
 }
 
-/** Files a finding, inside the ledger transaction when one is passed. */
 export async function fileFinding(
   db: DrizzleDb | DrizzleTx,
   { kind, dedupeKey, provider, betId, userId, detail }: SportsbookFindingArgs,

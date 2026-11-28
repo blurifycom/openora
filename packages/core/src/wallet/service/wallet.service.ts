@@ -157,8 +157,6 @@ import {
 
 const logger = createLogger('wallet');
 
-// Filed under the player so the player-scoped audit view finds it; `after.transactionId`
-// keeps the withdrawal link. Falls back to the withdrawal when no player backs the wallet.
 function withdrawalAuditSubject(
   playerId: Player['id'] | null,
   transactionId: WalletTransaction['id'],
@@ -201,22 +199,17 @@ export const KycRequiredError = makeConflictError(
   'KYC verification required before withdrawal',
 );
 
-// An operator hold on the player's payouts (the `withdrawal_lock` tag), e.g. during an
-// investigation. The player can still log in; only money leaving the platform is refused.
 export const WithdrawalLockedError = makeConflictError(
   'WithdrawalLockedError',
   'Withdrawals are on hold for this account. Please contact support',
   { reason: 'withdrawal_locked' },
 );
 
-// A module-owned hold (`wallet_withdrawal_hold`), e.g. while the player owes the platform money.
 export const WithdrawalHeldError = makeConflictError(
   'WithdrawalHeldError',
   'Withdrawals are on hold for this account. Please contact support',
   { reason: 'withdrawal_held' },
 );
-// The four below carry per-request data (attempts left, the end of a lock), which the
-// static-data `createDomainError` cannot, so the client reads `data` to say how long to wait.
 export class WithdrawalPinRequiredError extends Error {
   readonly data = { reason: 'withdrawal_pin_required' };
   constructor() {
@@ -243,9 +236,6 @@ export class WithdrawalPinLockedError extends Error {
   }
 }
 
-// A saved address is usable from `createdAt + 24h`. One that was never saved has no such date:
-// it is refused the same way, because a destination the player can name at withdrawal time
-// would walk around the wait.
 export class DestinationAddressCoolingDownError extends Error {
   readonly data: { reason: string; usableFrom?: string };
   constructor(usableFrom: Date | null) {
@@ -287,15 +277,11 @@ export const HeldDepositNotFoundError = makeConflictError(
   'The deposit is not on hold and cannot be released or refunded',
 );
 
-// The policy that held the deposit still holds it: the player is restricted, or crediting it
-// would breach their deposit limit. It can be refunded, or released once the reason lifts.
 export const DepositStillHeldError = createDomainError<[reason: string]>(
   'DepositStillHeldError',
   (reason) => `The deposit policy still holds this deposit: ${reason}`,
 );
 
-// The ledger already carries this vendor deposit (the webhook landed after all), so crediting
-// or refunding it by hand now would move the same money twice.
 export const DepositAlreadyOnLedgerError = makeConflictError(
   'DepositAlreadyOnLedgerError',
   'This deposit is already on the ledger and cannot be credited or refunded by hand',
@@ -413,12 +399,8 @@ const AmbiguousDepositAddressError = createDomainError(
     `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
 );
 
-// A saved-address book, not a payout allowlist: the cap only stops one account turning
-// the table into unbounded free storage. Not operator-configurable until someone asks.
 const WITHDRAWAL_ADDRESS_LIMIT = 50;
 
-// A new payout address cannot be paid to for this long, so a stolen session cannot add its own
-// address and empty the wallet before the owner sees the mail.
 const WITHDRAWAL_ADDRESS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddress {
@@ -434,17 +416,10 @@ function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddr
   };
 }
 
-// Mirrors the `wallet.currency` column default: what a player without a wallet row
-// reads as their active currency before one is created on first deposit, unless
-// `platformConfig.wallet.defaultCurrency` overrides it.
 const DEFAULT_WALLET_CURRENCY = 'USD';
 
-// Per-user throttle on money mutations - guards a runaway/misbehaving client, not
-// fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
-// RATE_LIMITER to change the backend, not this policy.
 const WALLET_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 
-/** The catalog fields a payout decision needs - a structural subset of a wallet_asset row. */
 type WithdrawalAsset = {
   network: string;
   minWithdrawal: string;
@@ -452,16 +427,6 @@ type WithdrawalAsset = {
   withdrawalEnabled: boolean;
 };
 
-/**
- * Pins the chain a payout settles on. With one payable network the choice is implied; with
- * several an explicit network is mandatory, because picking one silently would send a
- * player's USDT over a chain their receiving wallet may not support.
- *
- * `assets` is every catalog row for the currency, enabled or not, so the two empty cases
- * stay distinguishable: no rows at all means the operator never configured this currency
- * (a fiat PSP), and the caller's choice passes through unchecked; rows that are all
- * withdrawal-disabled is a deliberate operator decision and fails closed.
- */
 export function resolveWithdrawalNetwork(
   assets: readonly WithdrawalAsset[],
   currency: string,
@@ -488,12 +453,6 @@ export function resolveWithdrawalNetwork(
   return wanted;
 }
 
-/**
- * Rejects a payout worth less than the operator's per-network floor. The floor is per chain,
- * not per currency: moving USDT costs cents on BEP20 and dollars on ERC20, so one
- * currency-wide minimum is either too high for the cheap chain or below the fee on the
- * expensive one.
- */
 export function assertAboveMinimumWithdrawal(
   assets: readonly WithdrawalAsset[],
   amount: string,
@@ -512,10 +471,6 @@ function payableAsset(assets: readonly WithdrawalAsset[], network: string | null
   );
 }
 
-/**
- * The network fee kept from a withdrawal: the player is debited `amount` and the provider pays
- * out `amount - fee`, so the operator never funds the fee. `null` when the network charges none.
- */
 export function withdrawalFeeFor(
   assets: readonly WithdrawalAsset[],
   amount: string,
@@ -532,11 +487,6 @@ export function withdrawalFeeFor(
   return fee;
 }
 
-/**
- * Refuses a withdrawal the vendor could not pay out exactly: the payout is `amount - fee`, so
- * both must fit the asset's on-chain precision. Rounding either would pay a different amount
- * than the ledger debits.
- */
 export function assertPayablePrecision(
   decimals: number | null,
   amounts: readonly (string | null)[],
@@ -560,7 +510,6 @@ type DepositAsset = {
   depositEnabled: boolean;
 };
 
-/** `block` mode with no module binding the lock would let every withdrawal through, so it fails the boot. */
 export function requireBonusFundLocks(
   platformConfig: PlatformConfig | undefined,
   locks: BonusFundLockCommands | undefined,
@@ -579,10 +528,6 @@ export function assertDepositAllowed(
   network?: string,
 ): void {
   if (assets.length === 0) {
-    // No catalog row at all means the operator never configured this currency (a fiat
-    // PSP), and a currency-level request passes through unchecked. A request naming a
-    // network does not: the pair it names does not exist - either a typo or a catalog
-    // row deleted while this request was in flight - so it fails closed.
     if (network !== undefined) {
       throw new UnsupportedNetworkError(currency, network.toUpperCase());
     }
@@ -649,9 +594,6 @@ async function openWallet(txn: DrizzleDb, userId: Wallet['userId'], currency: st
   );
 }
 
-// Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
-// wallet. Every read and write of wallet_balance funnels through these three helpers,
-// so normalizing the key here is enough to keep one row per wallet+currency.
 export const balanceKey = (currency: string) => currency.toUpperCase();
 
 export function creditWalletBalance(
@@ -692,7 +634,6 @@ export function debitWalletBalance(
     .returning({ amount: walletBalance.amount });
 }
 
-/** Sets the balance a ledger row's money move left behind; the trigger lets balance_after be set once. */
 export async function stampBalanceAfter(
   txn: DrizzleDb,
   transactionId: WalletTransaction['id'],
@@ -704,7 +645,6 @@ export async function stampBalanceAfter(
     .where(eq(walletTransaction.id, transactionId));
 }
 
-/** `creditWalletBalance`, then stamps the resulting balance on the ledger row that records the credit. */
 async function creditAndStampBalance(
   txn: DrizzleDb,
   transactionId: WalletTransaction['id'],
@@ -718,10 +658,6 @@ async function creditAndStampBalance(
   }
 }
 
-/**
- * Takes min(balance, amount) in one statement and never overdraws. The CTE's row lock makes a
- * concurrent collection wait and then read the balance the first one left.
- */
 export async function collectWalletBalance(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -758,11 +694,6 @@ export async function readWalletBalance(
   return row?.amount ?? '0';
 }
 
-/**
- * The balance read a debit decides on, taken under a row lock. The `wallet` row lock above a
- * debit does not cover `wallet_balance`, and a withdrawal or an admin adjustment writes that row
- * directly - so an unlocked read can be stale by the time the debit acts on it.
- */
 export async function readWalletBalanceForUpdate(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -813,8 +744,6 @@ export async function resolveWalletBalance(
   };
 }
 
-// The balance and the grants from one snapshot, so a bet or withdrawal committing between the two
-// reads cannot pair the old balance with the new grants. Takes no row lock.
 const SNAPSHOT_READ = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const;
 
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
@@ -883,7 +812,6 @@ export function isAddressCurrencyMismatch(
   );
 }
 
-/** An on-chain deposit an admin settles by hand from a reconciliation finding. */
 export type HandDeposit = {
   userId: User['id'];
   adminId: User['id'];
@@ -891,20 +819,15 @@ export type HandDeposit = {
   currency: string;
   network: string | null;
   providerName: string;
-  /** The vendor's deposit id, or null when another ledger row already carries it. */
   providerRefId: string | null;
   address: string | null;
   tag: string | null;
   txHash: string | null;
 };
 
-/** Serialises one player's PSP deposits, so an RG reservation cannot be spent twice. */
 export const depositSlotKey = (userId: User['id']) => `wallet-deposit:${userId}`;
 
-// An on-ramp order the vendor has not opened yet counts toward the deposit limit this long.
 const UNOPENED_ON_RAMP_HOLD = '15 minutes';
-// A completed on-ramp order counts until the player's credit with its tx hash lands, but at most
-// this long after it completed, so one whose hash never matches cannot hold the limit forever.
 const UNCREDITED_ON_RAMP_HOLD = '1 day';
 
 const heldReason = (deposit: Pick<WalletTransaction, 'status' | 'reviewReason'>) =>
@@ -912,8 +835,6 @@ const heldReason = (deposit: Pick<WalletTransaction, 'status' | 'reviewReason'>)
 
 const MANUAL_ADJUSTMENT_TYPES: ReadonlySet<string> = new Set(['manual_credit', 'manual_debit']);
 
-// Columns of the history UNION in `getTransactions`, as the driver returns them: numerics as
-// strings, timestamps as Postgres text.
 type TransactionHistoryRow = {
   id: string;
   type: WalletTransactionType;
@@ -980,23 +901,13 @@ export function namespacedIdempotencyKey(namespace: string, rawKey: string): str
 
 const EVM_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
-// ponytail: a flat threshold - a starter heuristic, not a compliance risk engine. Auto-approval
-// reads it in the fx pivot; the review-queue tag still compares the raw amount, so it is only
-// a display hint there. Revisit with a real risk service if/when one exists.
 const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
-// A withdrawal that paid nothing out is not a cash-out, so a vendor failure or a cancellation
-// must not send the player's next small withdrawal to the manual queue. An admin rejection
-// still counts: it is a human judgement on this player and leaves no risk tag behind. The
-// wallet reader counts a player's withdrawal requests by the same rule, so a reader of that
-// count sees what the velocity check sees.
 export const VELOCITY_IGNORED_STATUSES = [
   'failed',
   'cancelled',
 ] as const satisfies readonly WalletTransactionStatus[];
 
-// A held deposit reaches the balance when an operator releases it, which stamps reviewedAt;
-// every other completed deposit has no reviewedAt.
 export const depositedAt = () =>
   sql<Date>`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`;
 
@@ -1011,12 +922,10 @@ const ACTIVITY_TRANSACTION_TYPES = ['deposit', 'withdrawal', 'bet', 'win', 'win_
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
-/** A duration in hours to one decimal, never below zero. */
 const hoursIn = (ms: number) => Math.round((Math.max(0, ms) / HOUR_MS) * 10) / 10;
 
 const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-// Also the marker the cumulative-cap query reads back to identify auto-approved payouts - keep write and read in lockstep.
 const AUTO_APPROVED_REASON = 'auto-approved';
 
 function assertWithdrawalIn(
@@ -1043,18 +952,14 @@ type AutoApprovalDecision = {
   kycStatus: KycStatus | null;
   riskTagsEvaluated: TagKey[];
   effectiveExcludeTags: TagKey[];
-  // The withdrawal's value in `pivotCurrency`, the unit of `threshold`, the daily amount cap
-  // and `cumulativeAmountUsed`. `amount` and `currency` in the audit row stay the raw request.
   pivotAmount: string;
   pivotCurrency: string;
   dailyCapAmount: string | null;
   dailyCapCount: number | null;
-  // null when a trailing payout has no stored pivot value, so the total is unknown.
   cumulativeAmountUsed: string | null;
   cumulativeCountUsed: number;
 };
 
-// The pre-lock portion of the decision, resolvable without the advisory-locked cap read.
 type AutoApprovalGates = Pick<
   AutoApprovalDecision,
   | 'threshold'
@@ -1153,51 +1058,28 @@ export type WalletServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   payment: PaymentAdapter;
-  // Required: always bound (wallet/plugin.ts wraps the default single PAYMENT_ADAPTER/
-  // PAYMENT_WEBHOOK_VERIFIER tokens under DEFAULT_PAYMENT_PROVIDER), and the asset
-  // catalog's providerName write path needs it to fail closed on an unregistered name.
   paymentProviders: PaymentProviderRegistry;
   identityReader: IdentityReader;
   directory?: AdminUserDirectory;
   platformConfig?: PlatformConfig;
   limiter?: RateLimiterAdapter<RateLimitKey>;
-  // The three withdrawal controls (ADR-0059): required, so a missing module refuses boot instead
-  // of skipping its check. Bound by the tag module, compliance and identity.
   riskTags: PlayerTags;
-  // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
   rgLimits?: RgLimitsPort;
-  // Optional: bound by the fx module. Auto-approval thresholds and caps are denominated in
-  // the fx pivot; without a reader, a withdrawal in any other currency is never auto-approved.
   rates?: ExchangeRateReader;
   kycPolicy: KycWithdrawalPolicy;
   withdrawalSecurity: WithdrawalSecurity;
-  // Optional: bound by mail. Absent = the new-address notice is skipped, never the address.
   mailDispatch?: MailDispatchPort;
-  // Optional: bound by an operator. Absent = every attributed on-chain deposit is credited.
   depositHold?: DepositHoldPolicy;
-  // Optional: bound by an operator. Absent = every player PLAY_ELIGIBILITY admits may deposit.
   depositAdmission?: DepositAdmissionPolicy;
-  // Optional for unit wiring only: the plugin always binds it. Absent = no account-state deposit gate.
   playEligibility?: PlayEligibilityPort;
-  // Optional: bound by the bonus module. Absent = the player's history is the ledger alone.
   grantLedger?: BonusGrantLedgerReader;
-  // Optional: bound by the bonus module. Absent = no bonus locks funds or is forfeited by a withdrawal.
   bonusFundLocks?: BonusFundLockCommands;
-  // Optional: forfeits on a withdrawal only when no module binds `bonusFundLocks` (a custom bonus engine).
   bonusLifecycle?: BonusLifecycleCommands;
   depositBonus?: BonusDepositCommands;
   turnover?: TurnoverService;
 };
 
-/**
- * Owns all wallet balance mutations and the withdrawal review/auto-approval
- * pipeline. Every balance change is a transactional, idempotent-keyed ledger
- * write (never a bare balance update) - `amount` is always a decimal string,
- * mutated via SQL numeric arithmetic, never a JS float. Domain events emit only
- * AFTER the owning transaction commits, and only for the non-replay branch of
- * an idempotent call.
- */
 export class WalletService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -1274,10 +1156,6 @@ export class WalletService {
     this.turnover = turnover;
   }
 
-  /**
-   * Every completed deposit ends here, so its bonus and turnover requirement commit with the
-   * credit or not at all.
-   */
   private async depositCompleted(
     txn: DrizzleTx,
     deposit: DomainEventPayload<'wallet.deposit.completed'>,
@@ -1298,8 +1176,6 @@ export class WalletService {
     await this.events.emitInTransaction(txn, 'wallet.deposit.completed', deposit);
   }
 
-  // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
-  // both to tell "never configured" from "deliberately disabled".
   private assetsForCurrency(currency: string) {
     return this.drizzle.db
       .select({
@@ -1323,18 +1199,10 @@ export class WalletService {
       .where(eq(walletAsset.currency, currency.toUpperCase()));
   }
 
-  // `for('share')` blocks a concurrent deleteWalletAsset (which takes `for('update')` on
-  // the same rows) from removing the pair while a deposit is being gated against it.
   private depositAssetsForCurrency(currency: string, db: DrizzleDb = this.drizzle.db) {
     return this.selectDepositAssets(currency, db).for('share');
   }
 
-  /**
-   * `network` is optional because not every deposit path knows one: `deposit()` takes a
-   * PSP amount and currency only, so it is gated currency-wide (any enabled network
-   * clears it). Per-network gating applies where a network is actually chosen, ie
-   * `getOrCreateDepositAddress`, which is the path that hands a player a chain address.
-   */
   private async assertDepositable(
     currency: string,
     amount?: string,
@@ -1348,11 +1216,6 @@ export class WalletService {
     }
   }
 
-  /**
-   * The player's deposit limit, judged on `amount` plus their on-ramp orders whose coins have not
-   * been credited yet, so a card deposit and a crypto purchase cannot spend the same headroom.
-   * The caller holds `depositSlotKey(userId)`.
-   */
   async assertWithinRgDepositLimit(
     tx: DrizzleDb | DrizzleTx,
     userId: User['id'],
@@ -1382,12 +1245,6 @@ export class WalletService {
     );
   }
 
-  /**
-   * On-ramp orders not yet credited, in `currency`: processing ones of any age, pending ones until
-   * their checkout expires or, unopened, for `UNOPENED_ON_RAMP_HOLD`, and completed ones until a
-   * deposit credited to the same player carries their tx hash. Another fiat is converted; with no rate, the limit
-   * cannot be judged and the move is refused.
-   */
   private async uncreditedOnRampTotal(
     tx: DrizzleDb | DrizzleTx,
     userId: User['id'],
@@ -1455,11 +1312,6 @@ export class WalletService {
     return railFor(currency, this.platformConfig?.wallet?.cryptoCurrencies);
   }
 
-  // The concrete vendor a transaction/deposit-address settles through: the catalog row
-  // for the exact (currency, network) pair names the bound provider. Reconciliation
-  // scopes its diff by this column, so a null network (an unconfigured pair - no
-  // catalog row could ever match it) and a configured-but-null providerName column both
-  // resolve to the single default binding rather than leaving the column null.
   private async providerNameFor(currency: string, network: string | null): Promise<string> {
     if (network === null) {
       return DEFAULT_PAYMENT_PROVIDER;
@@ -1471,10 +1323,6 @@ export class WalletService {
     return row?.providerName ?? DEFAULT_PAYMENT_PROVIDER;
   }
 
-  // Fails closed on a named provider that is no longer registered (removed or
-  // misconfigured after the catalog row was written). Falling back to the default
-  // adapter would pay a withdrawal out through the wrong vendor while still recording
-  // the old provider name - money moved somewhere the ledger does not describe.
   private async paymentAdapterFor(currency: string, network: string | null) {
     const providerName = await this.providerNameFor(currency, network);
     if (providerName === DEFAULT_PAYMENT_PROVIDER) {
@@ -1487,11 +1335,6 @@ export class WalletService {
     return { providerName, adapter };
   }
 
-  /**
-   * The ledger row's value in the player's reference currency, at a rate that is fresh now.
-   * Fails closed: without a rate the reader will vouch for, the row is not written at all
-   * rather than written without its conversion.
-   */
   private async referenceSnapshot(
     tx: DrizzleDb | DrizzleTx,
     userId: User['id'],
@@ -1522,8 +1365,6 @@ export class WalletService {
       : Promise.resolve();
   }
 
-  // `kyc.gateWithdrawals` is the operator's master switch; once on, the compliance policy
-  // decides per withdrawal. Runs before any debit, so a refused withdrawal moves no funds.
   private async assertKycForWithdrawal(userId: User['id'], amount: string, currency: string) {
     if (await this.kycBlocksWithdrawal(userId, amount, currency)) {
       throw new KycRequiredError();
@@ -1546,11 +1387,6 @@ export class WalletService {
     return !isKycPassed(await this.autoApprovalKycStatus(userId));
   }
 
-  /**
-   * The request-time controls read again at approval and once more after the approval flip, right
-   * before the payout: a withdrawal_lock, a PIN lockout or a KYC requirement that landed while the
-   * withdrawal waited stops it. Null when none does. Holds are checked under the wallet lock instead.
-   */
   private async approvalBlock(
     userId: User['id'],
     { amount, currency }: Pick<WalletTransaction, 'amount' | 'currency'>,
@@ -1579,15 +1415,12 @@ export class WalletService {
     return this.kycPolicy.requiresKycForWithdrawal({ userId, pivotAmount, pivotCurrency });
   }
 
-  // Runs before any debit and again before any approval, so a lock placed while a withdrawal
-  // waits in the queue still stops the payout.
   private async assertWithdrawalsNotLocked(userId: User['id']) {
     if (await this.isWithdrawalLocked(userId)) {
       throw new WithdrawalLockedError();
     }
   }
 
-  // Every hold, whatever its source, blocks every withdrawal; the unique index's leading column serves it.
   private async isWithdrawalHeld(db: DrizzleDb, userId: User['id']): Promise<boolean> {
     return (await this.withdrawalHeldUserIds([userId], db)).has(userId);
   }
@@ -1657,10 +1490,6 @@ export class WalletService {
     }
   }
 
-  /**
-   * The saved row for this destination, or null when the player never saved it. Matched on
-   * address and tag exactly as the whitelist is, and on the network when one is known.
-   */
   private async findSavedWithdrawalAddress(
     userId: User['id'],
     currency: string,
@@ -1686,7 +1515,6 @@ export class WalletService {
     return row ?? null;
   }
 
-  // Refuses a destination that is not saved, or was saved less than 24 hours ago.
   private async assertDestinationAddressMatured(
     userId: User['id'],
     currency: string,
@@ -1790,7 +1618,6 @@ export class WalletService {
     );
   }
 
-  /** A player without a wallet reads as empty rather than as an error. */
   async getActivity({ userId, windowDays }: { userId: User['id']; windowDays: number }) {
     const since = new Date(Date.now() - windowDays * DAY_MS);
     const [{ activeCurrency, balances }, totals, openWithdrawals] = await Promise.all([
@@ -1814,7 +1641,6 @@ export class WalletService {
         withdrawals: sumOf('withdrawal'),
         withdrawalCount: countOf('withdrawal'),
         bets: sumOf('bet'),
-        // A reversal can land in a later window than the win it takes back, so the net is floored.
         wins: sql<string>`greatest(${sumOf('win')} - ${sumOf('win_reversal')}, 0)`,
       })
       .from(walletTransaction)
@@ -1854,9 +1680,6 @@ export class WalletService {
     return rows.map(({ createdAt, ...row }) => ({ ...row, requestedAt: createdAt.toISOString() }));
   }
 
-  // TODO: validate `currency` against a canonical supported-currency list once one
-  // exists - `platformConfig.wallet.cryptoCurrencies` classifies rails, it is not an
-  // allowlist, so today any non-empty string is accepted and persisted.
   async setActiveCurrency(userId: User['id'], currency: string) {
     const updated = await this.drizzle.db
       .update(wallet)
@@ -1870,22 +1693,6 @@ export class WalletService {
     return { activeCurrency: record.currency };
   }
 
-  /**
-   * `idempotencyKey` (when supplied) makes a retried deposit a no-op: a replay
-   * returns the original committed result WITHOUT calling the PSP again or
-   * crediting the balance twice, and rejects if the same key is reused with a
-   * different amount/currency (`IdempotencyKeyReuseError`). A GENUINE
-   * concurrent race (two first-attempts, same key, landing at once) can both
-   * reach the PSP, but the ledger insert's unique-index conflict still
-   * guarantees only one balance credit - the loser's write becomes a replay
-   * read of the winner's row.
-   *
-   * Deposit gating is network-aware when a network is known (e.g. via
-   * `getOrCreateDepositAddress`), but here we gate on "any network for this
-   * currency is enabled" because `provider` routing may resolve a specific
-   * network inside `processDeposit`. A fiat PSP (no networks) passes through
-   * unchecked; an explicit network route checks that specific network only.
-   */
   async deposit({
     userId,
     amount,
@@ -1902,10 +1709,6 @@ export class WalletService {
     await this.rateLimit(userId);
     await this.assertDepositable(currency, amount);
 
-    // Short-circuit a replay BEFORE the PSP call - the common retry case (client
-    // resends after a timeout) must not re-charge. A genuine concurrent race (two
-    // first-attempts for the same key landing here at once) can still both reach the
-    // PSP; the ledger write itself is guaranteed not to double-credit (see below).
     let preResolvedWallet: Wallet | undefined;
     if (idempotencyKey) {
       const found = await this.findDepositReplay({ userId, idempotencyKey, amount, currency });
@@ -1921,9 +1724,6 @@ export class WalletService {
     }
     await this.assertDepositAdmitted(userId);
 
-    // Reserve the RG headroom BEFORE charging the PSP: the check and the pending row that
-    // consumes it commit together under the player's deposit lock, so a second concurrent
-    // deposit reads the first one's reservation instead of spending the same headroom.
     const reservation = await this.drizzle.db.transaction(async (txn) => {
       let walletRecord = preResolvedWallet;
       if (!walletRecord) {
@@ -1983,8 +1783,6 @@ export class WalletService {
     }
 
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-    // The status guard is the settle-once lock: only the update that moves the row out of
-    // `pending` credits the balance, so a retry that races here reads a replay instead.
     const { transactionId } = await this.drizzle.db.transaction(async (txn) => {
       const [settled] = await txn
         .update(walletTransaction)
@@ -2115,10 +1913,6 @@ export class WalletService {
         );
       }
       await stampBalanceAfter(txn, row.id, balance.amount);
-      // Derived from the row the update returned, never read separately beforehand. The
-      // wallet row is locked here but the deposit credit path does not take that lock, so
-      // a deposit can commit between a pre-read and this update - and `before` is going
-      // into an append-only audit record that cannot be corrected later.
       const balanceBefore =
         direction === 'credit'
           ? moneySubtract(balance.amount, amount)
@@ -2142,9 +1936,6 @@ export class WalletService {
         ip,
         userAgent,
       });
-      // Every other balance-mutating path on this service emits; without this one an admin
-      // correction moves a real balance while responsible-gaming monitoring, analytics and
-      // any operator subscriber see nothing at all.
       await this.events.emitInTransaction(txn, 'wallet.manual_adjustment.created', {
         userId,
         playerId,
@@ -2161,13 +1952,6 @@ export class WalletService {
     });
   }
 
-  // Pre-PSP replay check for deposit; also returns the resolved wallet so the transaction
-  // below can skip re-selecting it. Throws IdempotencyKeyReuseError on an amount/currency mismatch.
-  /**
-   * Frees a reservation the PSP never charged. Failure to release only leaves the player's
-   * own headroom held until the row is reconciled, so it is logged rather than raised over
-   * the PSP error that caused it.
-   */
   private async releaseDepositReservation(transactionId: WalletTransaction['id']): Promise<void> {
     try {
       await this.drizzle.db
@@ -2211,9 +1995,6 @@ export class WalletService {
     return { walletRecord, replay: { transactionId: existing.id, status: existing.status } };
   }
 
-  // Replay comparison only (not a ledger write). moneyEquals avoids a false mismatch between
-  // an unnormalized caller string (eg "10") and the DB's fixed-scale value ("10.00") while
-  // staying exact - a float compare would let two amounts differing past the 15th digit pass.
   private assertReplayMatches(existing: WalletTransaction, amount: string, currency: string): void {
     if (
       !moneyEquals(existing.amount, amount) ||
@@ -2249,9 +2030,6 @@ export class WalletService {
     this.assertReplayMatches(existing, amount, currency);
   }
 
-  // Two concurrent requests with the same key can both pass the pre-insert check and race
-  // on the unique index; onConflictDoNothing makes the loser's insert a no-op so it re-reads
-  // the winner's committed row and returns it as a replay instead of aborting the transaction.
   private async insertIdempotentTransaction(
     txn: DrizzleTx,
     {
@@ -2269,9 +2047,6 @@ export class WalletService {
       rawIdempotencyKey: string | undefined;
       amount: string;
       currency: string;
-      // `direction` is nullable on the column (historical rows predate it) but every
-      // new insert must set it explicitly - narrowed to required+non-null here so a
-      // caller that forgets it fails to typecheck instead of writing another NULL row.
       values: Omit<
         typeof walletTransaction.$inferInsert,
         'idempotencyKey' | 'direction' | keyof ReferenceSnapshot
@@ -2296,8 +2071,6 @@ export class WalletService {
       return { row, replayed: false };
     }
 
-    // Only the keyed (onConflictDoNothing) branch above can return an empty `returning()`
-    // - the plain-insert branch always yields exactly one row.
     if (!idempotencyKey) {
       throw new Error(`wallet ${namespace}: insert returned no row`);
     }
@@ -2311,16 +2084,6 @@ export class WalletService {
     return { row: winner, replayed: true };
   }
 
-  /**
-   * Creates a PENDING withdrawal and HOLDS the funds immediately (balance
-   * debited at request time, not on approval) - funds are returned on
-   * reject/PSP-failure. The debit is a conditional `UPDATE ... WHERE balance
-   * >= amount`, atomic with the row lock (`FOR UPDATE`) taken on the wallet,
-   * so two concurrent withdrawals can't both pass a balance check and
-   * double-spend. `idempotencyKey` replay semantics mirror `deposit()`. May
-   * return an already-`completed`/`processing` result if the request
-   * qualifies for (and passes) auto-approval - see `maybeAutoApprove`.
-   */
   async withdraw({
     userId,
     amount,
@@ -2343,9 +2106,6 @@ export class WalletService {
     withdrawalPin?: string;
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
-    // A retry of a withdrawal that already committed answers with it: the original request passed
-    // the PIN and the address wait, and a retry must not be refused by a lock or a deleted
-    // address that came after, or the player resubmits under a new key and is paid twice.
     const committed = await this.findCommittedWithdrawal({
       userId,
       idempotencyKey,
@@ -2355,8 +2115,6 @@ export class WalletService {
     if (committed) {
       return committed;
     }
-    // Ahead of every other check, the operator hold included, so every guess is counted and a
-    // client cannot probe the PIN through the errors of a request that was never going to pass.
     await this.assertWithdrawalPin(userId, withdrawalPin, { ip, userAgent });
     await this.assertWithdrawalsNotLocked(userId);
     await this.assertKycForWithdrawal(userId, amount, currency);
@@ -2392,16 +2150,13 @@ export class WalletService {
       );
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-    // Its own transaction, so a price found here survives the refusal the gate below may answer.
     await this.turnover?.pricePendingNow(userId);
 
     return this.drizzle.db.transaction(async (txn) => {
-      // FOR UPDATE serializes concurrent withdrawals against a double-debit TOCTOU under READ COMMITTED.
       const current = findOneOrThrow(
         await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
         new WalletNotFoundError(userId),
       );
-      // Replay of an already-committed key: return the original untouched. The new-key race is caught by the insert below.
       if (idempotencyKey) {
         const existing = await this.findByIdempotencyKey(
           txn,
@@ -2413,7 +2168,6 @@ export class WalletService {
           return { transactionId: existing.id, status: existing.status };
         }
       }
-      // Read after the wallet row lock, which `placeWithdrawalHold` also takes.
       if (await this.isWithdrawalHeld(txn, userId)) {
         throw new WithdrawalHeldError();
       }
@@ -2453,9 +2207,6 @@ export class WalletService {
         );
       }
       await stampBalanceAfter(txn, row.id, debited.amount);
-      // After the balance lock, so a bet cannot move the bonus between the debit and this check,
-      // and the lock order matches a bet's. Either refuses money a bonus locks, rolling the
-      // debit back, or forfeits every live bonus; a rejected withdrawal does not bring it back.
       const forfeitContext = {
         actor: { id: userId, isAdmin: false },
         note: `withdrawal ${row.id}`,
@@ -2475,11 +2226,8 @@ export class WalletService {
             reason: 'withdrawal_while_active',
             ...forfeitContext,
           }));
-      // Last lock taken; a refusal rolls back the debit and any forfeit above with it.
       await this.turnover?.assertOutflow(txn, { userId, outflow: 'withdrawal' });
 
-      // Screening runs in the tag module off this event, never in this transaction; only its
-      // verdict lets the withdrawal be auto-approved (autoApproveScreenedWithdrawal, ADR-0059).
       await this.events.emitInTransaction(txn, 'wallet.withdrawal.requested', {
         userId,
         playerId,
@@ -2494,14 +2242,6 @@ export class WalletService {
     });
   }
 
-  /**
-   * The wallet's half of screening: runs auto-approval once the tag module's verdict arrives. A
-   * verdict that asks for a review, or predates `reviewRequired`, leaves the row for a human
-   * whatever tags the player holds by now, while `withdrawal_review` is in the effective
-   * `excludeRiskFlags` (see `evaluateAutoApproval`). A withdrawal no longer pending, or not this user's, is left alone, so a redelivered verdict is
-   * a no-op. Once the row is read, any failure leaves it for the manual queue; a failure of that
-   * first read throws, and the handler's event is redelivered.
-   */
   async autoApproveScreenedWithdrawal({
     userId,
     transactionId,
@@ -2534,12 +2274,6 @@ export class WalletService {
     return this.maybeAutoApprove({ userId, transactionId, reviewRequired, ...row, rail: row.rail });
   }
 
-  /**
-   * One search term against the three things an admin pastes into the queue: a user id or a
-   * destination address (both exact, so both stay on an index), or an email or username
-   * fragment resolved through the directory to a capped userId set. EVM addresses are hex, so
-   * their case carries no meaning and is ignored; every other chain's address is case-sensitive.
-   */
   private async withdrawalSearchCondition(search: string): Promise<SQL> {
     const sameAddressIgnoringCase = sql`lower(${walletTransaction.destinationAddress}) = ${search.toLowerCase()}`;
     const matches = [
@@ -2557,12 +2291,6 @@ export class WalletService {
     return sql`(${sql.join(matches, sql` or `)})`;
   }
 
-  /**
-   * The withdrawal-type + status/search/currency/rail/amount/date conditions shared by the queue
-   * list and its summary. Excludes the KYC filter: that one needs the player directory, so
-   * each caller resolves it against its own data shape (row-level for the list, a bounded
-   * userId set for the summary's SQL aggregate).
-   */
   private async withdrawalConditions(
     filters: WithdrawalQueueSummaryFilter & Pick<WithdrawalQueueFilter, 'status'>,
     statuses?: readonly WalletTransaction['status'][],
@@ -2598,12 +2326,6 @@ export class WalletService {
     return conditions;
   }
 
-  /**
-   * Every withdrawal the queue filters match, KYC filter included. Backs the paged list,
-   * which needs every matching row anyway to enrich, KYC-filter and paginate in memory.
-   * `statuses` narrows the read in SQL; the directory is only consulted when the caller needs
-   * player enrichment or the KYC filter does, since it is one lookup per distinct player.
-   */
   private async matchingWithdrawals(
     filters: WithdrawalQueueSummaryFilter &
       Pick<WithdrawalQueueFilter, 'status' | 'sortBy' | 'sortOrder'>,
@@ -2615,8 +2337,6 @@ export class WalletService {
     const db = this.drizzle.db;
     const conditions = await this.withdrawalConditions(filters, statuses);
 
-    // Bounded queue: fetch all SQL-matching rows, then enrich + kycStatus-filter + paginate in memory,
-    // else DB-side pagination makes `total` wrong once kycStatus prunes.
     const wdSortBy = filters.sortBy ?? 'createdAt';
     const wdDir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
     const WD_SORT_COLS = {
@@ -2640,11 +2360,6 @@ export class WalletService {
       this.directory && needsPlayers ? await this.directory.lookupPlayers(userIds) : [];
     const byUserId = new Map(summaries.map((s) => [s.userId, s]));
 
-    // Normalize both sides before comparing: the ADMIN_USER_DIRECTORY port's return type
-    // still permits the deprecated `verified` value (it aliases `approved`), and this
-    // module cannot assume every bound implementation already normalized it at its own
-    // read boundary - a raw `===` here would silently hide every legacy-verified player
-    // from the queue the moment an admin filters by the canonical `approved`.
     const kycStatusFilter = filters.kycStatus ? normalizeKycStatus(filters.kycStatus) : undefined;
     const matching = kycStatusFilter
       ? rows.filter((r) => {
@@ -2658,8 +2373,6 @@ export class WalletService {
     return { matching, byUserId };
   }
 
-  // The empty result for a bounded-out or unreachable KYC filter - never invented, always
-  // "found nothing in the pending/on-hold queue".
   private static readonly EMPTY_WITHDRAWAL_SUMMARY: WithdrawalQueueSummary = {
     pendingCount: 0,
     onHoldCount: 0,
@@ -2667,19 +2380,12 @@ export class WalletService {
     avgPendingWaitSeconds: null,
   };
 
-  /**
-   * Aggregates in SQL rather than materializing the queue: the header this backs refreshes
-   * far more often than an admin opens the list, so it must stay cheap however deep the
-   * pending/on-hold queue grows. The KYC filter has no SQL representation in this module (KYC
-   * lives in pam), so it resolves to a bounded userId set first and narrows the aggregate by it.
-   */
   async summarizeWithdrawals(
     filters: WithdrawalQueueSummaryFilter,
   ): Promise<WithdrawalQueueSummary> {
     const db = this.drizzle.db;
     let kycUserIds: string[] | undefined;
     if (filters.kycStatus) {
-      // No directory bound => cannot verify KYC => fail closed to an empty (not all-matching) queue.
       if (!this.directory) {
         return WalletService.EMPTY_WITHDRAWAL_SUMMARY;
       }
@@ -2771,11 +2477,6 @@ export class WalletService {
     return { items, total: matching.length, page, limit };
   }
 
-  /**
-   * The queue's headline figures across every player and the withdrawals waiting longest for a
-   * decision, oldest first, without the addresses, hashes, names or review notes the admin
-   * queue shows.
-   */
   async withdrawalQueueOverview(
     { status, limit }: WithdrawalsQueueInput,
     now = new Date(),
@@ -2845,13 +2546,9 @@ export class WalletService {
     });
   }
 
-  /** The queue's risk tags of each withdrawal, keyed by its id. */
   private async withdrawalRiskTags(
     withdrawals: readonly Pick<WalletTransaction, 'id' | 'walletId' | 'amount' | 'currency'>[],
   ): Promise<Map<WalletTransaction['id'], WithdrawalRiskTag[]>> {
-    // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
-    // The tag is a display hint, so an unseeded install (no config row) just drops it rather
-    // than failing the queue - the auto-approval read path is the one that fails closed.
     const frequentWalletIds = await this.frequentWithdrawalWalletIds(
       this.drizzle.db,
       [...new Set(withdrawals.map((w) => w.walletId))],
@@ -2860,9 +2557,6 @@ export class WalletService {
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const tags = await mapConcurrent(withdrawals, 5, async (w) => {
       const riskTags: WithdrawalRiskTag[] = [];
-      // The queue tag is priced in the fx pivot, same as auto-approval - a raw compare let a
-      // 5000 DOGE withdrawal read as "large" next to a 5000 BTC one that dwarfs it. No rate
-      // for the coin flags it anyway: never let a compliance total quietly undercount.
       const pivotAmount = await this.toPivotAmount(w.amount, w.currency, pivotCurrency);
       if (pivotAmount === null || moneyCompare(pivotAmount, LARGE_WITHDRAWAL_THRESHOLD) >= 0) {
         riskTags.push('large_amount');
@@ -2875,11 +2569,6 @@ export class WalletService {
     return new Map(tags);
   }
 
-  /**
-   * Approve: Pending -> Processing (commit + emit), send to the vendor, then Completed on
-   * success, Failed + refund on a PaymentRejectedError, or held in Processing when the
-   * outcome is unknown (reconciliation settles it).
-   */
   async approveWithdrawal(
     adminId: User['id'],
     withdrawalId: WalletTransaction['id'],
@@ -2894,10 +2583,6 @@ export class WalletService {
     if (await this.isWithdrawalHeld(this.drizzle.db, ownerId)) {
       throw new WithdrawalHeldError();
     }
-    // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
-    // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
-    // `approved` is admin-attributed and committed with the flip; the system auto path skips
-    // it - its trail is the AUDIT_WRITER entry plus the shared `completed` event.
     const { queued, flipped } = await this.drizzle.db.transaction(async (txn) => {
       if (await this.isWithdrawalHeldLocked(txn, ownerId)) {
         throw new WithdrawalHeldError();
@@ -2928,10 +2613,6 @@ export class WalletService {
     return this.settleApproved(flipped, queued, adminId);
   }
 
-  // Phase one: the flip to processing under a FOR UPDATE lock. Extracted so the auto path can run it
-  // inside its advisory-locked cap-check transaction, committing the marker atomically. Never call the PSP here.
-  // `from` has no default: the auto path must never inherit the admin path's on_hold and pay out a
-  // withdrawal someone held for review.
   private async flipToProcessing({
     txn,
     withdrawalId,
@@ -2955,7 +2636,6 @@ export class WalletService {
         .for('update'),
       new WithdrawalNotFoundError(withdrawalId),
     );
-    // Only a withdrawal still awaiting a decision can be approved, so a concurrent or repeated approve can't double-send to the PSP.
     assertWithdrawalIn(current, from);
     const flipped = findOneOrThrow(
       await txn
@@ -2974,18 +2654,11 @@ export class WalletService {
     return { queued: current, flipped };
   }
 
-  // A hold is placed under a wallet row lock that conflicts with this share lock, so a hold that
-  // has not committed yet is waited for and then seen, never paid through.
   private async isWithdrawalHeldLocked(txn: DrizzleTx, userId: User['id']): Promise<boolean> {
     await txn.select({ id: wallet.id }).from(wallet).where(eq(wallet.userId, userId)).for('share');
     return this.isWithdrawalHeld(txn, userId);
   }
 
-  // The approval controls are read before the flip's transaction, so a lock, PIN lockout or KYC
-  // requirement landing right after it would otherwise reach the PSP. Re-read them once the flip
-  // has committed - the payout step's check. Holds are re-checked at dispatch instead. A control
-  // that throws is a block too: the row goes back to the queue with its trail rather than sitting
-  // in `processing` with no vendor call, and the admin path rethrows the port's error.
   private async revertFlipIfBlocked(userId: User['id'], queued: WalletTransaction) {
     const blocked = await this.approvalBlock(userId, queued).catch((err: unknown) => {
       logger.error({ err, transactionId: queued.id }, 'withdrawal control check failed after flip');
@@ -3004,13 +2677,6 @@ export class WalletService {
     return blocked;
   }
 
-  /**
-   * Sends an approved withdrawal that no vendor was ever asked to pay back to the queue as
-   * `pending` (ADR-0059), with reason `never_dispatched`, so the approval controls run again
-   * when a person approves it. Only a row still `processing` with no provider and approved before
-   * `approvedBefore` moves; returns whether it did. A dispatch racing it loses on the provider
-   * stamp and never calls the vendor.
-   */
   async requeueNeverDispatched(
     transactionId: WalletTransaction['id'],
     approvedBefore: Date,
@@ -3053,8 +2719,6 @@ export class WalletService {
     });
   }
 
-  // The approval's audit row and event already went out, so the way back to the queue leaves its own.
-  // Only a row no vendor was handed moves: once the provider is stamped, the payout may be out.
   private async restoreQueued(
     txn: DrizzleTx,
     queued: WalletTransaction,
@@ -3102,8 +2766,6 @@ export class WalletService {
     return true;
   }
 
-  // Phase two: settle a `processing` withdrawal via the vendor (see approveWithdrawal for the outcomes).
-  // Runs OUTSIDE the hold/flip transaction so the external PSP call never holds a DB lock.
   private async settleApproved(
     tx: WalletTransaction,
     queued: WalletTransaction,
@@ -3114,12 +2776,6 @@ export class WalletService {
     const amount = tx.amount;
 
     const { providerName, adapter } = await this.paymentAdapterFor(tx.currency, tx.network);
-    // Stamped before the call: if its response is lost, reconciliation must ask THIS vendor,
-    // not the default one, or "no record there" could be mistaken for "never paid".
-    // The stamp is the dispatch point: a hold commits before it and puts the row back as queued,
-    // or waits on the wallet lock until it has committed and applies from the next withdrawal.
-    // Guarded on no provider yet: a row reconciliation sent back to the queue, or one another
-    // dispatch already stamped, changes nothing here and is never handed to the vendor.
     const dispatch = await this.drizzle.db.transaction(async (txn) => {
       if (await this.isWithdrawalHeldLocked(txn, userId)) {
         await this.restoreQueued(txn, queued, { userId, playerId, reason: 'withdrawal_hold' });
@@ -3148,7 +2804,6 @@ export class WalletService {
 
     let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
-      // The fee stays with the operator: the player was debited `amount`, the payout is net of it.
       result = await adapter.processWithdrawal(payoutAmount(tx), tx.currency, {
         transactionId: tx.id,
         userId,
@@ -3156,23 +2811,14 @@ export class WalletService {
         adminId,
         destinationAddress: tx.destinationAddress,
         destinationTag: tx.destinationTag,
-        // The provider-side whitelisted destination for that address, when the bound adapter
-        // whitelists at all. Absent for an address that predates whitelisting or was never in
-        // the book, and such an adapter is expected to refuse rather than pay out to the raw
-        // address - the whitelist is the control, so bypassing it would defeat the point.
         ...(tx.destinationWalletId ? { destinationWalletId: tx.destinationWalletId } : {}),
-        // Pinned at request time; without it an adapter cannot tell ERC20 USDT from TRC20.
         network: tx.network,
       });
     } catch (err) {
       if (err instanceof PaymentRejectedError) {
-        // The vendor refused it, so no payout exists - mark failed and return the held funds.
         await this.finalizeFailedWithdrawal({ tx, adminId, userId, playerId, amount });
         throw err;
       }
-      // A timeout or dropped connection looks exactly like a lost response to a payout the
-      // vendor accepted. Refunding here could pay the player twice, so the withdrawal stays
-      // `processing` and reconciliation finds it by `transactionId` (findWithdrawalByReference).
       logger.error(
         { err, transactionId: tx.id, providerName },
         'withdrawal outcome unknown - held in processing for reconciliation',
@@ -3207,8 +2853,6 @@ export class WalletService {
       return { transactionId: tx.id, status: 'processing' };
     }
 
-    // Guarded on `processing`: a vendor webhook can settle the row before this line runs, and
-    // overwriting a webhook-driven `failed` would leave the refund standing next to a payout.
     const completed = await this.drizzle.db.transaction(async (txn) => {
       const updated = await txn
         .update(walletTransaction)
@@ -3269,9 +2913,6 @@ export class WalletService {
         return;
       }
       await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
-      // In the same transaction as the credit, not left to the `wallet.withdrawal.failed`
-      // subscriber below: that fires only after commit, so a crash or a dead subscriber
-      // between the two would return the funds with no audit row behind the movement.
       await this.audit.recordInTransaction(txn, {
         actorType: adminId ? 'admin' : 'system',
         actorId: adminId,
@@ -3279,7 +2920,6 @@ export class WalletService {
         ...withdrawalAuditSubject(playerId, tx.id),
         after: { userId, transactionId: tx.id, amount, currency: tx.currency, reason: null },
       });
-      // Emitted on every path that returns held funds, not just the admin-reviewed one.
       await this.events.emitInTransaction(txn, 'wallet.withdrawal.failed', {
         userId,
         playerId,
@@ -3351,8 +2991,6 @@ export class WalletService {
     }
   }
 
-  // Evaluates the auto-approval gates and settles the payout if all pass; returns undefined to
-  // leave the row pending for the manual queue. NEVER throws: any error fails closed to manual.
   private async maybeAutoApprove(args: {
     userId: User['id'];
     amount: string;
@@ -3369,17 +3007,11 @@ export class WalletService {
     try {
       const cfg = this.platformConfig.autoWithdrawal;
 
-      // Threshold/KYC/risk/velocity gates and the fx conversion run outside any lock; only the cap check
-      // below needs serializing, and it reads stored pivot values, never the rate reader.
       const gates = await this.evaluateAutoApproval(args);
       if (!gates) {
         return undefined;
       }
 
-      // Serialize the cap-check-and-flip per user with an advisory lock: without it two concurrent
-      // withdrawals read the same daily-cap usage and both auto-approve, bypassing the cap. The cap read
-      // and the flip that writes the marker commit together, so a blocked caller re-reads current usage.
-      // PSP settlement runs AFTER, outside the lock.
       const decided = await this.drizzle.db.transaction((txn) =>
         withAdvisoryXactLock(txn, args.userId, async () => {
           const caps = await this.autoApprovalCaps(
@@ -3431,7 +3063,6 @@ export class WalletService {
         cumulativeCountUsed: decided.caps.countUsed,
       };
 
-      // Record the decision BEFORE settling: a later PSP failure must not erase the AML trail of why we auto-approved.
       try {
         await this.audit.record({
           actorType: 'system',
@@ -3450,8 +3081,6 @@ export class WalletService {
           },
         });
       } catch (err) {
-        // The flip already committed; an audit-write failure must not strand the row `processing`
-        // with no PSP attempt, so revert to `pending` before rethrowing (held funds are unaffected).
         await this.drizzle.db
           .update(walletTransaction)
           .set({
@@ -3468,8 +3097,6 @@ export class WalletService {
       try {
         return await this.settleApproved(decided.tx, decided.queued, null);
       } catch (err) {
-        // Refused by the vendor: settleApproved already failed and refunded the row, so report
-        // that instead of falling through to `pending` for a withdrawal nobody can approve now.
         if (err instanceof PaymentRejectedError) {
           return { transactionId: args.transactionId, status: 'failed' };
         }
@@ -3483,14 +3110,11 @@ export class WalletService {
         throw err;
       }
     } catch (err) {
-      // Fail closed: any thrown gate leaves the withdrawal pending for a human rather than paying out.
       logger.error({ err, transactionId: args.transactionId }, 'auto-withdrawal evaluation failed');
       return undefined;
     }
   }
 
-  // Pre-lock gates: threshold, KYC, risk flags, velocity. Returns the gate values on a pass, null to
-  // route to manual. The daily-cap check is NOT here - it runs under the advisory lock (see maybeAutoApprove).
   private async evaluateAutoApproval({
     userId,
     amount,
@@ -3508,7 +3132,6 @@ export class WalletService {
     rail: WalletRail;
     reviewRequired: boolean | undefined;
   }): Promise<AutoApprovalGates | null> {
-    // Every gate fails closed; the log names the one that did, so a manual-queue withdrawal is explainable.
     const skip = (gate: string): null => {
       logger.info({ userId, walletId, gate }, 'auto-withdrawal skipped');
       return null;
@@ -3521,16 +3144,12 @@ export class WalletService {
     if (!threshold || moneyCompare(threshold.value, '0') <= 0) {
       return skip('no_threshold');
     }
-    // One threshold serves every currency on the rail, so it is read in the fx pivot. A raw
-    // comparison let 0.4 BTC clear a threshold of 1 that was written with a stablecoin in mind.
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const pivotAmount = await this.toPivotAmount(amount, currency, pivotCurrency);
     if (pivotAmount === null || moneyCompare(pivotAmount, threshold.value) > 0) {
       return skip('over_threshold');
     }
 
-    // Independent of kyc.gateWithdrawals: auto-approval follows the compliance policy even when
-    // the request itself was not gated, so a required-but-missing KYC always goes to a human.
     const kycRequired = await this.withdrawalNeedsKyc(userId, pivotAmount, pivotCurrency);
     const kycStatus = await this.autoApprovalKycStatus(userId);
     if (kycRequired && !isKycPassed(kycStatus)) {
@@ -3538,21 +3157,14 @@ export class WalletService {
     }
 
     const effectiveExcludeTags = threshold.config.excludeRiskFlags;
-    // The verdict's review decision stands in for the tag, so a tag cleared before the verdict
-    // is consumed cannot let this withdrawal through. Missing (an older producer) counts as a
-    // review. An operator who took withdrawal_review out of the list auto-approves either way.
     if (reviewRequired !== false && effectiveExcludeTags.includes('withdrawal_review')) {
       return skip('review_required');
     }
 
     const riskTags = await this.autoApprovalRiskTags(userId);
-    // Not a configurable exclusion: a hold placed after the request passed its own check
-    // still keeps the payout for a human.
     if (riskTags.includes(WITHDRAWAL_LOCK_TAG)) {
       return skip('withdrawal_lock');
     }
-    // A request cannot name an address inside its first 24 hours, so this only catches one that
-    // slipped past `withdraw()`; it keeps the payout for a human whatever path created the row.
     if (await this.destinationIsUnmatured(transactionId, userId, currency)) {
       return skip('new_address');
     }
@@ -3589,9 +3201,6 @@ export class WalletService {
     source: 'per-player' | 'global';
     config: WalletAutoWithdrawalConfig;
   } | null> {
-    // Always read the global singleton first, even when a per-player override may end up
-    // winning below - an unseeded install (missing row) must fail closed for EVERY player,
-    // not just those without an override. getAutoWithdrawalConfig() throws when absent.
     const config = await this.getAutoWithdrawalConfig();
     const [rule] = await this.drizzle.db
       .select()
@@ -3604,11 +3213,6 @@ export class WalletService {
     return { value: global, source: 'global', config };
   }
 
-  // The row always exists in a properly-seeded install (seeded once) - a
-  // missing row is an unexpected failure mode on the READ path, not a normal
-  // "unconfigured" state, so this throws rather than silently defaulting.
-  // maybeAutoApprove's outer try/catch handles that thrown error the same as any
-  // other unexpected error: fail closed to pending.
   async getAutoWithdrawalConfig(): Promise<WalletAutoWithdrawalConfig> {
     const config = await this.getAutoWithdrawalConfigOrNull();
     if (!config) {
@@ -3617,8 +3221,6 @@ export class WalletService {
     return config;
   }
 
-  // Non-throwing variant for callers that need to tell "missing" from "found"
-  // without a try/catch (eg the router's audit `before` read).
   async getAutoWithdrawalConfigOrNull(): Promise<WalletAutoWithdrawalConfig | null> {
     const [row] = await this.drizzle.db
       .select()
@@ -3627,14 +3229,6 @@ export class WalletService {
     return row ? toAutoWithdrawalConfigDto(row) : null;
   }
 
-  // Upsert, not a plain UPDATE: the WRITE path lets a Super Admin self-heal a
-  // missing singleton row (eg an install that skipped the seed step) through the
-  // existing route with zero new surface. The READ path (getAutoWithdrawalConfig,
-  // resolveAutoThreshold) still throws on a missing row and stays fail-closed -
-  // a withdrawal must never silently create config.
-  //
-  // Update + audit write run in one transaction: an audit-write failure must roll back
-  // the threshold change too, or the config could change with no audit trail.
   async setAutoWithdrawalConfig(
     adminId: User['id'],
     {
@@ -3735,8 +3329,6 @@ export class WalletService {
     return row ? toWalletAssetDto(row) : null;
   }
 
-  // The catalog is operator-editable, so an admin can name a pair the bound vendor has
-  // never heard of. Reject at write time rather than at a player's deposit request.
   private assertAdapterSupports(currency: string, network: string, providerName?: string) {
     const adapter =
       (providerName ? this.paymentProviders.get(providerName)?.adapter : undefined) ?? this.payment;
@@ -3745,9 +3337,6 @@ export class WalletService {
     }
   }
 
-  // Same discipline as assertAdapterSupports, for the provider key itself: an
-  // unvalidated typo silently falls back to the default adapter, which means eg a
-  // crypto payout attempted through a PSP. Undefined (the default binding) always passes.
   private assertProviderNameValid(providerName: string | undefined) {
     if (providerName !== undefined && !this.paymentProviders.names().includes(providerName)) {
       throw new WalletAssetUnknownProviderError();
@@ -3763,7 +3352,6 @@ export class WalletService {
     this.assertAdapterSupports(input.currency, input.network, input.providerName);
     return this.drizzle.db.transaction(async (txn) => {
       const rows = await txn.insert(walletAsset).values(input).onConflictDoNothing().returning();
-      // Empty => the (currency, network) unique index rejected it.
       const asset = toWalletAssetDto(findOneOrThrow(rows, new WalletAssetAlreadyExistsError()));
       await this.audit.recordInTransaction(txn, {
         actorId: adminId,
@@ -3779,8 +3367,6 @@ export class WalletService {
     });
   }
 
-  // Deliberately touches only the catalog row: a withdrawal already pending or processing
-  // in this currency keeps its own terms and is never cancelled by disabling the pair.
   async updateWalletAsset(
     adminId: User['id'],
     { currency, network, ...changes }: UpdateWalletAssetInput,
@@ -3791,9 +3377,6 @@ export class WalletService {
         .select()
         .from(walletAsset)
         .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
-        // Held until commit, so an address issuance that already gated against this row
-        // (see depositAssetsForCurrency) commits its address first and is then seen by
-        // the in-use count below, instead of slipping in behind the delete.
         .for('update');
       if (!before) {
         throw new WalletAssetNotFoundError(`${currency}/${network}`);
@@ -3834,16 +3417,10 @@ export class WalletService {
         .select()
         .from(walletAsset)
         .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
-        // Held until commit, so an address issuance that already gated against this row
-        // (see depositAssetsForCurrency) commits its address first and is then seen by
-        // the in-use count below, instead of slipping in behind the delete.
         .for('update');
       if (!before) {
         return false;
       }
-      // wallet_balance is keyed by currency only (no network column), so this guard is
-      // necessarily currency-wide: removing one network of a currency players still hold
-      // is blocked even if their balance arrived over another network. Fails safe.
       const held = await txn
         .select({ id: walletBalance.id })
         .from(walletBalance)
@@ -3864,11 +3441,6 @@ export class WalletService {
       if ((issued?.n ?? 0) > 0) {
         throw new WalletAssetHasIssuedAddressesError();
       }
-      // Renaming a pair is a delete plus a create (the (currency, network) key AND
-      // providerName are immutable), so this delete is the only way providerName ever
-      // effectively changes. Block it while a pending/on-hold/processing transaction exists for
-      // this exact (currency, network) pair - otherwise the vendor reference an in-flight
-      // payout is settling through gets rewritten out from under it.
       const [inFlight] = await txn
         .select({ n: count() })
         .from(walletTransaction)
@@ -3899,8 +3471,6 @@ export class WalletService {
     });
   }
 
-  // True when the withdrawal pays an address saved less than 24 hours ago, or one never saved.
-  // A fiat withdrawal has no address and is never held by this.
   private async destinationIsUnmatured(
     transactionId: WalletTransaction['id'],
     userId: User['id'],
@@ -3928,7 +3498,6 @@ export class WalletService {
   }
 
   private async autoApprovalKycStatus(userId: User['id']): Promise<KycStatus | null> {
-    // No directory bound => cannot verify KYC => fail closed.
     if (!this.directory) {
       return null;
     }
@@ -3936,7 +3505,6 @@ export class WalletService {
     return summary?.kycStatus ?? null;
   }
 
-  // Active tag keys, read even with no exclusions configured so the withdrawal lock is always seen.
   private async autoApprovalRiskTags(userId: User['id']): Promise<TagKey[]> {
     const byUser = await this.riskTags.getActiveTagKeys([userId]);
     return byUser.get(userId) ?? [];
@@ -3958,9 +3526,6 @@ export class WalletService {
     };
   }
 
-  // Wallets with >= the configured count of withdrawals in the trailing window, via one
-  // grouped-count query (no N+1). Single source of the velocity check, shared by the review
-  // queue tag and the auto-approval heuristic. A null count (or no config row) means off.
   private async frequentWithdrawalWalletIds(
     db: DrizzleDb | DrizzleTx,
     walletIds: string[],
@@ -3992,12 +3557,6 @@ export class WalletService {
     return frequent;
   }
 
-  // Sum + count of this wallet's auto-approved payouts in the trailing 24h; `exceeded` when this withdrawal
-  // would breach a configured amount or count cap (an unconfigured cap never blocks).
-  // The amount cap is in the fx pivot and sums the value each payout was approved at, so a rate
-  // move since cannot shrink it and no rate is read under the lock. A trailing payout with no
-  // stored value (approved before the column existed) leaves the total unknown: `amountUsed` is
-  // null and a configured amount cap counts as exceeded.
   private async autoApprovalCaps(
     {
       walletId,
@@ -4036,7 +3595,6 @@ export class WalletService {
     return { exceeded: amountExceeded || countExceeded, amountUsed, countUsed };
   }
 
-  // A withdrawal already in the pivot needs no rate, so it is valued even without the fx module.
   private async toPivotAmount(
     amount: string,
     currency: string,
@@ -4137,7 +3695,6 @@ export class WalletService {
     return { transactionId: tx.id, status: 'rejected' };
   }
 
-  /** The status of the player's own withdrawal, or null when no withdrawal of theirs has that id. */
   async getPlayerWithdrawalStatus({
     userId,
     withdrawalId,
@@ -4153,12 +3710,6 @@ export class WalletService {
     return row?.status ?? null;
   }
 
-  /**
-   * Holds the player's pending withdrawal for manual review, on an agent proposal an admin
-   * approved. No money moves: the funds were held when the withdrawal was requested, and an admin
-   * later approves or rejects it. A withdrawal already on hold is left as it is and reported as
-   * `changed: false`, so a replayed proposal holds it once.
-   */
   async holdWithdrawal({
     adminId,
     userId,
@@ -4210,12 +3761,6 @@ export class WalletService {
     });
   }
 
-  /**
-   * The player's history: their ledger rows and, when `includeGrants`, the bonus grants they
-   * received (a bonus, gift, rain or donation credit lands on a grant, never on the ledger). Both
-   * halves are one UNION ALL, so every filter, the sort and the page apply to the whole history in
-   * SQL.
-   */
   async getTransactions({
     userId,
     page,
@@ -4252,7 +3797,6 @@ export class WalletService {
         ${t.balanceAfter} as balance_after, ${t.metadata} as metadata
       from ${t}
       where ${t.walletId} in (select ${wallet.id} from ${wallet} where ${wallet.userId} = ${userId})`;
-    // The port hands back a Drizzle SQL fragment typed `unknown` (contracts cannot import drizzle).
     const grantQuery =
       includeGrants && this.grantLedger
         ? (this.grantLedger.ledgerRowsQuery(userId) as SQL)
@@ -4301,7 +3845,6 @@ export class WalletService {
       const rates = await this.amountSortRates(history, amountCurrency);
       source = sql`${history} left join unnest(${sql.param(rates.map((r) => r.currency))}::text[],
         ${sql.param(rates.map((r) => r.rate))}::numeric[]) as r(currency, rate) using (currency)`;
-      // The sign a player sees: a debit reads negative, a row without a direction unsigned.
       orderBy = sql`(case when direction = 'debit' then -amount else amount end) * rate ${dir} nulls last`;
     }
 
@@ -4322,7 +3865,6 @@ export class WalletService {
         status: tx.status,
         direction: tx.direction,
         fee: tx.fee,
-        // Internal only: the player's own statement is not the balance record.
         balanceAfter: includeInternal ? tx.balance_after : null,
         createdAt: new Date(tx.created_at).toISOString(),
         reviewedBy: includeInternal ? tx.reviewed_by : null,
@@ -4331,7 +3873,6 @@ export class WalletService {
         reviewReason:
           includeInternal || MANUAL_ADJUSTMENT_TYPES.has(tx.type) ? tx.review_reason : null,
         product: wagerProductOfProviderName(tx.provider_name),
-        // Internal only: a reference currency is never shown to the player.
         reference: includeInternal
           ? toReferenceDto({
               referenceCurrency: tx.reference_currency,
@@ -4340,7 +3881,6 @@ export class WalletService {
               referenceRateAsOf: tx.reference_rate_as_of ? new Date(tx.reference_rate_as_of) : null,
             })
           : null,
-        // Only the claim id leaves the row: the metadata can carry a provider's raw response.
         claimId: includeInternal && tx.type === 'cashback' ? claimIdOf(tx.metadata) : null,
       })),
       total: counted[0]?.n ?? 0,
@@ -4349,11 +3889,6 @@ export class WalletService {
     };
   }
 
-  /**
-   * The current rate into `target` for every currency in the history: the same reader that
-   * prices the player's display currency, so the order matches the converted amounts shown.
-   * `target` is checked first, since an unknown code would otherwise buy a vendor call.
-   */
   private async amountSortRates(history: SQL, target: string) {
     if (!resolveDisplayCurrencies(this.platformConfig?.displayCurrencies).includes(target)) {
       throw new UnsupportedAmountCurrencyError(target);
@@ -4417,9 +3952,6 @@ export class WalletService {
     }
     const issued = await adapter.issueDepositAddress(userId, currency, network);
 
-    // Re-gate inside the transaction that writes the row: the catalog pair can be
-    // disabled or deleted while the vendor call is in flight, and this is what makes
-    // deleteWalletAsset's in-use check race-free.
     const [row] = await this.drizzle.db.transaction(async (txn) => {
       await this.assertDepositable(currency, undefined, network, txn);
       return txn
@@ -4447,12 +3979,6 @@ export class WalletService {
     return toDepositAddressResult(winner);
   }
 
-  /**
-   * `providerName` is the vendor the webhook route already resolved (verifier + adapter
-   * came from the same registry entry) - it is only used to label a finding when this
-   * deposit can't be attributed, never to look anything up. Defaults to the single
-   * default binding for callers (tests, a poller with no named provider) that don't care.
-   */
   async creditDepositByAddress(
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
     providerName: string = DEFAULT_PAYMENT_PROVIDER,
@@ -4460,9 +3986,6 @@ export class WalletService {
     assertRecordableDeposit(event);
     const depositAddress = await this.findDepositAddressByAddress(event);
     if (!depositAddress) {
-      // A known vendor defect hits this live: a token deposit reported under a sibling
-      // token's asset id never resolves to a row. Never let it survive only as a log
-      // line - file a finding so an operator can attribute and manually credit it.
       logger.warn(
         { address: event.address, network: event.network, tag: event.tag },
         'payment webhook: no wallet_deposit_address for inbound deposit',
@@ -4488,8 +4011,6 @@ export class WalletService {
       return;
     }
     if (isAddressCurrencyMismatch(event, depositAddress)) {
-      // Same "do not silently drop" discipline as the no-address branch above - this is
-      // the push-path counterpart to the poll-path's currency_mismatch finding.
       logger.warn(
         {
           address: event.address,
@@ -4522,12 +4043,9 @@ export class WalletService {
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId);
     const credit = await this.drizzle.db.transaction(async (txn) => {
       await lockVendorDeposit(txn, depositAddress.providerName, event.externalId);
-      // Refunded from a finding before this delivery: settled, never a credit. Read under the
-      // lock, so a refund committing concurrently is either seen here or waits for this credit.
       if (await isRefundedDeposit(txn, depositAddress.providerName, event.externalId)) {
         return null;
       }
-      // A redelivery of a credited deposit must not depend on a rate being available now.
       const [credited] = await this.findDepositByProviderRef(
         txn,
         depositAddress.providerName,
@@ -4550,9 +4068,6 @@ export class WalletService {
       if (!walletRecord) {
         walletRecord = await openWallet(txn, depositAddress.userId, event.currency);
       }
-      // Throws when no fresh rate exists. The funds are on chain, so the deposit is not
-      // dropped: nothing commits, the webhook answers an error and the vendor redelivers it,
-      // and reconciliation files it as a missing deposit if the redeliveries run out.
       const reference = await this.referenceSnapshot(
         txn,
         depositAddress.userId,
@@ -4572,8 +4087,6 @@ export class WalletService {
           reviewReason: holdReason,
           direction: 'credit',
           rail: this.resolveRail(event.currency),
-          // Prefer the chain the vendor reported; fall back to the one the address was
-          // issued on, which is the only network an address-only webhook can imply.
           network: event.network ?? depositAddress.network,
           providerName: depositAddress.providerName,
           providerRefId: event.externalId,
@@ -4653,8 +4166,6 @@ export class WalletService {
     }
     const { transactionId, holdReason, refunded } = credit;
 
-    // An admin refunded this deposit on chain from its finding; the redelivery is not money
-    // the player still has coming, and not a credit the deposit limit should be asked about.
     if (refunded) {
       logger.warn(
         { userId: depositAddress.userId, transactionId, externalId: event.externalId },
@@ -4671,21 +4182,6 @@ export class WalletService {
       return;
     }
 
-    // The funds are already on chain, so the player's deposit limit cannot refuse this
-    // credit the way it refuses a PSP charge. It is asked anyway, and a breach becomes a
-    // finding so a human can act on the excess.
-    //
-    // Asked AFTER the credit commits, never before: the gate counts the player's window
-    // out of the database, so a pre-credit read judges every deposit against the same
-    // stale snapshot and two that land together are each allowed on their own while the
-    // window closes over the limit. The attempted move is `0` for that same reason - the
-    // committed deposit row is already inside the window, so asking with `event.amount`
-    // would count this deposit twice.
-    //
-    // Deliberately run on a replay too: this write failing is what makes the vendor
-    // retry the webhook, and the retry sees the credit as a replay. The (kind, providerName, externalId)
-    // unique index is what keeps a replay from filing the finding twice, so the retry
-    // fills a gap instead of duplicating a row.
     const rgDecision = await rgDecisionForLandedCredit(
       this.drizzle.db,
       this.rgLimits,
@@ -4714,12 +4210,6 @@ export class WalletService {
     }
   }
 
-  /**
-   * Audits that a vendor saw a deposit or reported it failed. Moves no money. A no-op once
-   * the deposit is credited, refunded or refused below minimum, and for a detection after the
-   * failure. An event no single player can be named for, or in another currency than its
-   * address, is only logged, and a malformed one throws so the vendor retries it.
-   */
   async recordDepositStatus(event: DepositStatusEvent): Promise<void> {
     assertRecordableDeposit(event);
     const depositAddress = await this.findAttributableDepositAddress(event);
@@ -4751,11 +4241,6 @@ export class WalletService {
     });
   }
 
-  /**
-   * Whether a polled deposit missing from the ledger is one the minimum refuses, auditing it
-   * the first time. One no single player can be named for answers false, as does one the
-   * webhook path would have filed as a currency mismatch, so both still reach a finding.
-   */
   async recordDepositIfBelowMinimum(event: DepositEvent): Promise<boolean> {
     const depositAddress = await this.findAttributableDepositAddress(event);
     if (!depositAddress || isAddressCurrencyMismatch(event, depositAddress)) {
@@ -4784,7 +4269,6 @@ export class WalletService {
     }
     const network = await this.reportedNetwork(event, txn);
     const assets = await this.selectDepositAssets(event.currency, txn);
-    // A network the catalog has no row for falls back to the currency's lowest minimum.
     const floor = depositFloor(assets, network ?? undefined) ?? depositFloor(assets);
     const refused =
       !isPositiveMoney(event.amount) ||
@@ -4890,13 +4374,6 @@ export class WalletService {
     });
   }
 
-  /**
-   * Credits a held on-chain deposit to the player, in the caller's transaction, after asking
-   * the deposit policy again: the player must no longer be restricted and the deposit must fit
-   * their limit window now, and with no policy bound it is not released at all. The row itself turns `completed`, so the deposit window counts it
-   * from `reviewedAt` (the moment it reached the balance), not from when it landed on chain.
-   * The caller announces it with `announceDepositCompleted` in the same transaction.
-   */
   async releaseHeldDeposit(
     txn: DrizzleTx,
     depositId: WalletTransaction['id'],
@@ -4922,8 +4399,6 @@ export class WalletService {
     if (!held) {
       throw new HeldDepositNotFoundError();
     }
-    // Fails closed: with the policy that held it unbound, nothing can say the reason lifted.
-    // The deposit stays refundable.
     if (!this.depositHold) {
       throw new DepositStillHeldError('no deposit hold policy is bound to re-check it');
     }
@@ -4933,22 +4408,12 @@ export class WalletService {
     }
     await txn
       .update(walletTransaction)
-      // The database clock, the one the deposit window's upper bound reads: an app clock
-      // running ahead would keep the released deposit out of the player's spend.
       .set({ status: 'completed', reviewedBy: adminId, reviewedAt: sql`now()` })
       .where(eq(walletTransaction.id, depositId));
     await creditAndStampBalance(txn, depositId, held.walletId, held.currency, held.amount);
     return { userId: held.userId, amount: held.amount, currency: held.currency };
   }
 
-  /**
-   * Credits an on-chain deposit an admin attributed from a reconciliation finding, in the
-   * caller's transaction. The deposit policy is asked BEFORE anything is written, so a player
-   * it would hold gets nothing and the caller's transaction rolls back clean. The row is a
-   * `deposit`, not a `manual_credit`: the player's deposit-limit window counts it, and when
-   * it is keyed on the vendor id a later webhook redelivery replays it instead of crediting.
-   * The caller announces it with `announceDepositCompleted` in the same transaction.
-   */
   async creditDepositByHand(
     txn: DrizzleTx,
     deposit: HandDeposit,
@@ -4981,10 +4446,6 @@ export class WalletService {
     };
   }
 
-  /**
-   * Records a deposit an admin refunded on chain as a terminal `refunded` deposit row keyed on
-   * the vendor id, so a webhook redelivery of it replays instead of crediting. Moves no balance.
-   */
   async recordRefundedDeposit(
     txn: DrizzleTx,
     deposit: HandDeposit & { providerRefId: string },
@@ -4993,7 +4454,6 @@ export class WalletService {
     return row.id;
   }
 
-  /** The player a deposit address was issued to, or undefined when it is nobody's. */
   async depositAddressOwner(target: DepositAddressTarget): Promise<User['id'] | undefined> {
     return (await this.findDepositAddressByAddress(target))?.userId;
   }
@@ -5048,11 +4508,6 @@ export class WalletService {
     });
   }
 
-  /**
-   * Why the deposit policy would hold a deposit of `deposit` for this player right now, or
-   * null. Taken under the player's deposit slot lock, so a concurrent deposit cannot spend
-   * the same limit headroom between the check and the caller's write.
-   */
   async depositHoldReason(
     txn: DrizzleTx,
     userId: User['id'],
@@ -5175,11 +4630,6 @@ export class WalletService {
     );
   }
 
-  /**
-   * The player's own payout address book. Every method here is scoped on `userId` - a
-   * saved address is personal data with no admin read path, so there is
-   * deliberately no variant of these that takes an arbitrary user id.
-   */
   async listWithdrawalAddresses(userId: Uuid, currency?: string): Promise<WithdrawalAddress[]> {
     const rows = await this.drizzle.db
       .select()
@@ -5199,15 +4649,8 @@ export class WalletService {
     input: CreateWithdrawalAddressInput,
     meta?: Partial<ClientMeta>,
   ): Promise<WithdrawalAddress> {
-    // Shares the wallet mutation budget with deposit/withdraw: the row cap alone does
-    // not bound writes, since deleting frees a slot and lets a client churn forever.
     await this.rateLimit(userId);
 
-    // The slot is taken durably BEFORE the vendor call. Whitelisting first let every request
-    // past the cap reach the provider and create a destination there that no local row would
-    // ever describe, because the cap check only ran afterwards. The row is the reservation, and
-    // it is deleted again if the vendor refuses, so a rejected or unreachable provider still
-    // leaves the player no address they would believe they can withdraw to.
     const reserved = await this.drizzle.db.transaction((txn) =>
       withAdvisoryXactLock(txn, `withdrawal-address-cap:${userId}`, async () => {
         const [existing] = await txn
@@ -5230,9 +4673,6 @@ export class WalletService {
       }),
     );
 
-    // The port is required to be idempotent, so releasing and retrying cannot orphan a
-    // destination. A row left behind by a failed release carries no providerWalletId, which
-    // the payout path re-registers rather than trusts - it is never a whitelist bypass.
     let whitelisted: Awaited<ReturnType<typeof this.whitelistWithdrawalAddress>>;
     try {
       whitelisted = await this.whitelistWithdrawalAddress(userId, input);
@@ -5256,14 +4696,9 @@ export class WalletService {
       action: 'wallet.withdrawal_address.created',
       resourceType: 'wallet_withdrawal_address',
       resourceId: row.id,
-      // The address string is deliberately absent: the audit log is admin-readable and
-      // a player's saved addresses are not. The row id is enough to correlate.
       after: { label: row.label, currency: row.currency, network: row.network },
       ...meta,
     });
-    // The row is committed, so a failed enqueue must not fail the save: a retry would meet
-    // WithdrawalAddressAlreadyExistsError and the owner would never be told. Keyed on the row,
-    // so a re-run mails once.
     try {
       await this.mailDispatch?.toUser({
         userId,
@@ -5283,15 +4718,6 @@ export class WalletService {
     return toWithdrawalAddressDto(row);
   }
 
-  /**
-   * Refuses a payout to a destination the provider has not approved. A no-op for an adapter that
-   * does not whitelist, and for a fiat rail, which has no address at all.
-   *
-   * The tag is matched as strictly as the address. On a tag chain one exchange address is shared
-   * by every account behind it, so an address-only check would let a player whitelist their own
-   * account at that exchange and then pay out to a stranger's tag at the same address - an
-   * auto-approved withdrawal would do it with nobody looking.
-   */
   private async requireWhitelistedWalletId(
     userId: Uuid,
     currency: string,
@@ -5315,12 +4741,6 @@ export class WalletService {
     return walletId;
   }
 
-  /**
-   * The approved destination saved for this (address, tag) pair, or null. Matched on the pair
-   * itself rather than an id on the transaction, because a withdrawal is requested by address
-   * and may name one the player never saved. An absent tag matches only a row saved without
-   * one: a tagged payout against an untagged whitelist row is a different beneficiary.
-   */
   private async whitelistedWalletId(
     userId: Uuid,
     currency: string,
@@ -5356,10 +4776,6 @@ export class WalletService {
     if (!row) {
       return null;
     }
-    // An id minted by a different provider names nothing in the current one, and a row
-    // saved while no whitelisting adapter was bound has no id at all. Both re-register
-    // with the provider that will actually settle, rather than failing a payout on a
-    // saved address the player cannot fix themselves.
     if (row.providerWalletId && row.providerName === providerName) {
       return row.providerWalletId;
     }
@@ -5377,7 +4793,6 @@ export class WalletService {
     return providerWalletId;
   }
 
-  /** Frees a reserved slot the vendor refused. Idempotent: a row already gone is a no-op. */
   private async releaseWithdrawalAddressSlot(id: WithdrawalAddress['id']): Promise<void> {
     try {
       await this.drizzle.db
@@ -5388,12 +4803,6 @@ export class WalletService {
     }
   }
 
-  /**
-   * Delegates to the bound payment adapter when it whitelists destinations, and returns nothing
-   * to store when it does not. A vendor failure propagates rather than being swallowed: saving
-   * the address anyway would produce a row that looks usable and fails only once the player has
-   * committed to a payout.
-   */
   private async whitelistWithdrawalAddress(
     userId: Uuid,
     input: CreateWithdrawalAddressInput,
@@ -5414,8 +4823,6 @@ export class WalletService {
     };
   }
 
-  /** False when the row does not exist OR belongs to someone else - the caller cannot
-   * tell the two apart, which is what stops the id space being probed. */
   async deleteWithdrawalAddress(
     userId: Uuid,
     id: WithdrawalAddress['id'],

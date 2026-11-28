@@ -7,21 +7,6 @@ import {
   type PlatformConfigInput,
 } from '@openora/core/contracts';
 
-/**
- * Load + validate a PlatformConfig from a file at boot. Used by `createApp` to
- * seed the `PLATFORM_CONFIG` Container token, and by consumers' frontends to
- * seed the slot evaluation context.
- *
- * Supported file shapes:
- * - `.json`  - parsed with JSON.parse
- * - `.yaml` / `.yml` - parsed with a tiny KV reader (no nested structures
- *   beyond what PlatformConfig actually needs). For richer YAML, parse it
- *   yourself with `yaml`/`js-yaml` and call `definePlatformConfig(obj)`.
- *
- * If `path` is omitted or the file does not exist, returns `defaultPlatformConfig`.
- *
- * On parse / schema failure, throws an Error with the offending paths.
- */
 export function loadPlatformConfig(path?: string): PlatformConfig {
   if (!path) {
     return defaultPlatformConfig;
@@ -49,10 +34,6 @@ export function loadPlatformConfig(path?: string): PlatformConfig {
   return definePlatformConfig(parsed as PlatformConfigInput);
 }
 
-/**
- * Resolve the platform config path from env, defaulting to
- * `./platform-config.{yaml,json}` in cwd. Returns undefined if nothing is found.
- */
 export function resolvePlatformConfigPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {

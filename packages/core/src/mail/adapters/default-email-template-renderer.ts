@@ -44,8 +44,6 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
     subject: 'Verify your email',
     text: `Your email verification code is: ${data.otp}`,
   }),
-  // The second factor itself for an account on the `email` method, so the copy has to
-  // work both as a sign-in code and as the enrolment code that activates the method.
   twoFactorOtp: (data) => ({
     subject: 'Your verification code',
     text: `Your two-factor authentication code is: ${data.otp}`,
@@ -137,7 +135,6 @@ const PLAIN_EMAIL_TEMPLATES: { [K in EmailTemplateKey]: PlainTemplate<K> } = {
       `Transaction: ${data.transactionId}\nDate: ${formatEmailDate(data.occurredAt, locale)}`,
   }),
   kycResubmissionRequested: (data) => {
-    // An advanced request's reason is internal and never rendered.
     return data.tier === 'advanced'
       ? {
           subject: 'Additional verification required',

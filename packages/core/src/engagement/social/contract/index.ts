@@ -3,12 +3,6 @@ import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from '@openora/core/contracts';
 import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 
-// Canonical request/response shapes for the Social module. This is the
-// single source of truth - the router validates against it, live OpenAPI + the typed
-// client are emitted from it. Derive related shapes with .pick()/.omit()/.extend()
-// rather than re-typing fields. Promote anything shared across domains to
-// @openora/core/contracts. This dir is isomorphic: Zod + @openora/core/contracts only.
-
 export const SendFriendRequestInputSchema = z.object({
   targetUserId: UuidSchema,
 });
@@ -24,10 +18,6 @@ export const FriendshipSchema = z.object({
 });
 export type Friendship = z.infer<typeof FriendshipSchema>;
 
-// Per-target relationship state for a batch lookup (eg rendering a friends-list /
-// player-search page without one request per row). `unavailable` covers every case
-// the caller must never be able to distinguish from "target doesn't exist" - a
-// missing/suspended/closed player, or a target who has blocked the caller.
 export const RELATIONSHIP_STATUSES = [
   'none',
   'pending_outgoing',
@@ -57,7 +47,6 @@ export const FriendListEntrySchema = z.object({
   userId: UuidSchema,
   friendshipId: UuidSchema,
   username: z.string(),
-  // Both null when the friend turned `showOnlineStatusToFriends` off.
   status: z.enum(['online', 'offline']).nullable(),
   lastSeenAt: TimestampSchema.nullable(),
   isIgnored: z.boolean(),
@@ -100,7 +89,6 @@ export const socialContract = {
     .input(SendFriendRequestInputSchema)
     .output(FriendshipSchema),
 
-  // POST is deliberate - this is a batch lookup, not a single-resource GET.
   getRelationships: oc
     .route({ method: 'POST', path: '/social/relationships' })
     .input(GetRelationshipsInputSchema)

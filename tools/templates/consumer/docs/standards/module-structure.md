@@ -21,17 +21,5 @@ Read this before creating a package, an overlay add-on, or wiring a new module's
   migration folder across packages.
 - Pin exact dependency versions in every package; a package never depends on an app.
 - Add a dependency deliberately - std lib or a few lines often beat a tree.
-
-```ts
-// bad - a service reaches into the container and hides what it depends on
-export class WalletService {
-  constructor(private readonly container: Container) {}
-}
-// good - deps are constructor params of their port type; plugin.ts does the resolving
-export class WalletService {
-  constructor(
-    private readonly db: DrizzleService,
-    private readonly payments: PaymentAdapter,
-  ) {}
-}
-```
+- A service never takes the container: its dependencies are constructor parameters typed as their
+  port, and `plugin.ts` does the resolving through `@openora/core/server`.

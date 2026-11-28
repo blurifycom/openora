@@ -45,22 +45,12 @@ const UnusableWeightProfileError = makeConflictError(
   'This weight profile has no positive weight, so no wager could ever progress a grant on it',
 );
 
-// A requirement of zero converts the moment it is created, and a multiplier in the thousands is
-// a fat finger rather than an offer. Both are refused before anything reaches the ledger.
 const MAX_WAGERING_MULTIPLIER = '1000';
 
-// Past this, `days => N` still fits `make_interval`'s int4 argument, but nothing this platform
-// grants runs longer than a decade; a bigger value is a fat finger, not an offer.
 const MAX_EXPIRY_DAYS = 3650;
 
-/** The profile a grant scores against when its caller has no offer to name one. */
 export const DEFAULT_WEIGHT_PROFILE_NAME = 'default';
 
-/**
- * What a grant with no offer behind it is created under - a chat gift, a rain drop, a donation. One
- * turnover of the gifted amount, a month to do it in. An operator narrows both from the
- * backoffice; the point is that gifted money is never withdrawable the instant it lands.
- */
 const DEFAULT_GRANT_TERMS = { wageringMultiplier: '1', expiryDays: 30 } as const;
 
 const grantArgsSchema = z
@@ -86,8 +76,6 @@ const grantArgsSchema = z
         ),
         expiryDays: z.number().int().positive().max(MAX_EXPIRY_DAYS),
         weightProfileId: UuidSchema.optional(),
-        // Zod strips what it does not declare, so a limit missing from this schema is a limit
-        // silently dropped on the way to the snapshot the engine enforces against.
         maxBet: MoneyAmountSchema.refine(isPositiveMoney, 'must be greater than zero')
           .nullable()
           .optional(),
@@ -125,8 +113,6 @@ const grantArgsSchema = z
     message: 'a manual grant must name the admin who issued it, and no other source may name one',
     path: ['actor'],
   })
-  // Each input fits `numeric(38,18)` on its own, but their product need not: the requirement
-  // would overflow at the insert instead of being refused here.
   .refine((a) => MoneyAmountSchema.safeParse(requirementOf(a)).success, {
     message: 'wagering requirement is too large to store',
     path: ['amount'],
@@ -140,10 +126,6 @@ function requirementOf(args: {
   return args.wageringRequired ?? moneyScaleBy(args.amount, args.terms.wageringMultiplier);
 }
 
-/**
- * Creates the bonuses a player holds. Bound to BONUS_GRANTS, and always called on the caller's
- * transaction handle so the grant commits with whatever earned it.
- */
 export class GrantService implements BonusGrantCommands {
   constructor(
     private readonly audit: AuditWritePort,
@@ -164,8 +146,6 @@ export class GrantService implements BonusGrantCommands {
   ): Promise<BonusGrantOutcome> {
     const wageringRequired = requirementOf(args);
 
-    // A retry resolves before any live configuration is read, so a profile deleted since the
-    // first call cannot turn an exact replay into an error.
     const replayed = await this.findReplay(tx, args, wageringRequired);
     if (replayed) {
       return replayed;
@@ -181,8 +161,6 @@ export class GrantService implements BonusGrantCommands {
     };
     const buckets = args.buckets ?? { linked: '0', unlinked: '0' };
 
-    // The unique index is the idempotency guard. A read-then-write check would let two
-    // concurrent replays of the same deposit both pass and grant the bonus twice.
     const [inserted] = await tx
       .insert(promoGrant)
       .values({
@@ -198,7 +176,6 @@ export class GrantService implements BonusGrantCommands {
         linkedCash: buckets.linked,
         unlinkedCash: buckets.unlinked,
         status,
-        // A pending grant's window is its claim window; activation restarts it.
         expiresAt: sql`now() + make_interval(days => ${args.terms.expiryDays})`,
         activatedAt: status === 'active' ? sql`now()` : null,
       })
@@ -206,7 +183,6 @@ export class GrantService implements BonusGrantCommands {
       .returning({ id: promoGrant.id });
 
     if (!inserted) {
-      // Lost the race to a concurrent replay; the unique index held, the winner's row is there.
       const winner = await this.findReplay(tx, args, wageringRequired);
       if (!winner) {
         throw new GrantConflictError();
@@ -214,8 +190,6 @@ export class GrantService implements BonusGrantCommands {
       return winner;
     }
 
-    // The opening ledger row. Written only on the created path, so a replay leaves the ledger
-    // alone and the sum of a grant's entries still equals its bonus balance.
     await tx.insert(promoGrantEntry).values({
       grantId: inserted.id,
       userId: args.userId,
@@ -255,11 +229,6 @@ export class GrantService implements BonusGrantCommands {
     return { ok: true, grantId: inserted.id, created: true, status };
   }
 
-  /**
-   * A replay resolves to the grant that already exists - but only if it is the same grant. Two
-   * different payouts sharing one source reference would otherwise return success while crediting
-   * nothing, and the caller would record a payout that never happened.
-   */
   private async findReplay(
     tx: DrizzleTx,
     args: z.infer<typeof grantArgsSchema>,
@@ -294,10 +263,6 @@ export class GrantService implements BonusGrantCommands {
     return { ok: true, grantId: existing.id, created: false, status: existing.status };
   }
 
-  /**
-   * The dust threshold in the grant's own currency, fixed at grant time like every other term. No
-   * rate means no threshold: the grant depletes only once it is exactly empty.
-   */
   private async dustThreshold(
     tx: DrizzleTx,
     funds: BonusFundSettings | undefined,
@@ -313,8 +278,6 @@ export class GrantService implements BonusGrantCommands {
     return (await this.rates?.convert(usd, 'USD', currency, tx)) ?? '0';
   }
 
-  // One statement, so a profile deleted or edited mid-grant yields either its old rows or a
-  // missing profile, never a half-read set of weights.
   private async snapshotTerms(
     tx: DrizzleTx,
     terms: NonNullable<BonusGrantArgs['terms']>,

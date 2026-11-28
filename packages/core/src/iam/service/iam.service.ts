@@ -46,7 +46,6 @@ import {
   adminInvitation,
   type AdminRole,
 } from '../schema/index.js';
-// Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
 import { user } from '@openora/core/pam/schema/identity';
 import type {
   EffectivePermissions,
@@ -73,7 +72,6 @@ export const InvalidGrantError = createDomainError(
   'InvalidGrantError',
   () => 'Unknown module or level',
 );
-// Privilege escalation guard: mapped to FORBIDDEN in the router.
 export const GrantEscalationError = createDomainError(
   'GrantEscalationError',
   () => 'Cannot grant or assign permissions you do not hold',
@@ -83,7 +81,6 @@ export const NotSuperAdminError = createDomainError(
   () => 'Super-admin access required',
 );
 export const AdminUserNotFoundError = makeNotFoundError('AdminUser');
-// Guards against assigning a backoffice role to a player account (privilege escalation).
 export const NotAnAdminUserError = createDomainError(
   'NotAnAdminUserError',
   () => 'Roles can only be assigned to admin users',
@@ -92,7 +89,6 @@ export const ProtectedRoleError = makeConflictError(
   'AdminRole',
   'This role is protected and cannot be modified or deleted',
 );
-// Removing the final active super-admin's assignment would lock out admin management.
 export const LastSuperAdminError = makeConflictError(
   'AdminRole',
   'Cannot remove the last active super-admin',
@@ -100,8 +96,6 @@ export const LastSuperAdminError = makeConflictError(
 
 type Caller = { userId: User['id']; role: string } & ClientMeta;
 
-// The `admin` module is NOT operator-assignable: granting `admin: read_write` to a
-// custom role would pass the router's adminGuard - it must come ONLY from `isSuperAdmin`.
 const NON_ASSIGNABLE_MODULES: ReadonlySet<string> = new Set(['admin']);
 
 function buildCatalog() {
@@ -120,7 +114,6 @@ function buildCatalog() {
 export function validateGrants(grants: ReadonlyArray<{ resource: string; level: string }>): void {
   for (const g of grants) {
     const known = actionsOf(g.resource);
-    // `admin` grants are super-admin-only (A6) and must not be assignable via the matrix.
     if (!known || NON_ASSIGNABLE_MODULES.has(g.resource)) {
       throw new InvalidGrantError();
     }
@@ -164,29 +157,20 @@ function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect) {
   return serializeRow(row, { dateFields: ['createdAt'] });
 }
 
-// The token hash never leaves the service: the only copy of a redeemable link is the
-// invitee's mail, so no list or create response can hand one to another staff member.
 function toInvitationDto({ tokenHash: _tokenHash, ...row }: typeof adminInvitation.$inferSelect) {
   return serializeRow(row, { dateFields: ['expiresAt', 'acceptedAt', 'createdAt'] });
 }
 
-// Every redemption attempt from one client address spends this budget; a successful one
-// refunds it, so in effect it counts wrong attempts. Fails closed: an unthrottled window is
-// worse than a 429 on a route that turns a guessed token into an admin account.
 const ACCEPT_INVITATION_RATE_LIMIT = {
   limit: 5,
   windowMs: 60 * 60 * 1000,
   onUnavailable: 'deny',
 } as const;
 
-// Short TTL: grants are cached only to spare the DB on the per-request guard path,
-// so a stale entry means a revoked admin keeps access for at most this window. The
-// event-driven purge below normally beats the TTL; this is just the safety floor.
 const GRANTS_CACHE_TTL_MS = 10_000;
 const grantsCacheKey = (userId: User['id']) => `admin-grants:${userId}`;
 const superAdminCacheKey = (userId: User['id']) => `admin-super:${userId}`;
 
-/** Implements ADMIN_PERMISSION_RESOLVER; a user with no DB assignment holds no grants and is not a super admin. */
 export class DbAdminPermissionResolver implements AdminPermissionResolver {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -219,12 +203,10 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     return (await loadAdminGrants(this.drizzle.db, [userId])).get(userId) ?? [];
   }
 
-  /** Drop one user's cached grants - called on assign/revoke so revocation is instant. */
   async invalidateUser(userId: User['id']) {
     await invalidate(this.cache, [grantsCacheKey(userId), superAdminCacheKey(userId)]);
   }
 
-  /** Drop cached grants for every current holder of a role - for a role-wide permission change. */
   async invalidateRole(roleId: AdminRole['id']) {
     const holders = await this.drizzle.db
       .select({ userId: adminRoleAssignment.userId })
@@ -280,19 +262,12 @@ export class IamService {
     this.rateLimiter = rateLimiter;
   }
 
-  /**
-   * Runs a grant change in one transaction and, in it, revokes the MCP tokens of whichever of the
-   * users it names no longer hold `mcp-access:use`. The revocation lock is taken first, so grant
-   * changes run one at a time and each reads the grants every earlier one committed.
-   */
   private changeGrants<T>(
     caller: Caller,
     change: (tx: DrizzleTx) => Promise<{ result: T; affectedUserIds: readonly User['id'][] }>,
     { superAdminManagement = false }: { superAdminManagement?: boolean } = {},
   ) {
     return this.drizzle.db.transaction(async (tx) => {
-      // Lock order: super-admin management first, then the revocation table lock - the
-      // same order the account-update path takes them in, so the two cannot deadlock.
       if (superAdminManagement) {
         await lockSuperAdminManagement(tx);
       }
@@ -359,7 +334,6 @@ export class IamService {
     return rows.map((r) => ({ resource: r.resource, level: r.level as PermissionLevel }));
   }
 
-  // One batched query for a page of roles - avoids an N+1 rolePermissions() per row.
   private async rolePermissionsByRole(roleIds: AdminRole['id'][]) {
     const byRole = new Map<AdminRole['id'], { resource: string; level: PermissionLevel }[]>();
     if (roleIds.length === 0) {
@@ -439,7 +413,6 @@ export class IamService {
       new RoleNotFoundError(input.roleId),
     );
 
-    // The super-admin role bypasses authz and must never be renamed.
     if (existing.isSuperAdmin) {
       throw new ProtectedRoleError();
     }
@@ -478,9 +451,6 @@ export class IamService {
       throw new ProtectedRoleError();
     }
 
-    // The three child FKs are ON DELETE CASCADE, so deleting the role removes permission,
-    // assignment, and invitation rows automatically. Holder rows are read FOR UPDATE inside
-    // the tx so a concurrent assign cannot slip a row past the audit.
     const affectedUserIds = await this.changeGrants(input.caller, async (txn) => {
       const holders = await txn
         .select({ userId: adminRoleAssignment.userId })
@@ -494,7 +464,6 @@ export class IamService {
       return { result: holderIds, affectedUserIds: holderIds };
     });
 
-    // One revoke per affected admin so each lost-role is individually attributable in the audit log.
     for (const userId of affectedUserIds) {
       this.events.emit('iam.role.revoked', {
         roleId: input.roleId,
@@ -530,8 +499,6 @@ export class IamService {
 
     validateGrants(input.grants);
 
-    // No-escalation check retained for a future delegated-admin mode; today
-    // assertSuperAdmin already proved the caller holds all levels.
     const callerMap = grantsToLevelMap(await this.callerGrants(input.caller));
     for (const g of input.grants) {
       if (g.level === 'no_access') {
@@ -544,7 +511,6 @@ export class IamService {
       }
     }
 
-    // Replace in one transaction - a crash or concurrent call must not leave the role at no_access.
     const persist = input.grants.filter((g) => g.level !== 'no_access');
     const { before, after } = await this.changeGrants(input.caller, async (txn) => {
       const beforeRows = await txn
@@ -597,8 +563,6 @@ export class IamService {
       new RoleNotFoundError(input.roleId),
     );
 
-    // The target must be an admin account - the resolver grants admin access to anyone with
-    // an assignment row, so assigning to a player would silently escalate them.
     const target = findOneOrThrow(
       await this.drizzle.db.select({ role: user.role }).from(user).where(eq(user.id, input.userId)),
       new AdminUserNotFoundError(input.userId),
@@ -607,7 +571,6 @@ export class IamService {
       throw new NotAnAdminUserError();
     }
 
-    // Return the existing row rather than 500-ing on the unique (userId, roleId) index.
     const [existing] = await this.drizzle.db
       .select()
       .from(adminRoleAssignment)
@@ -621,7 +584,6 @@ export class IamService {
       return toAssignmentDto(existing);
     }
 
-    // A first assignment replaces the static role table's grants with the role's own.
     const row = await this.changeGrants(input.caller, async (txn) => ({
       result: findOneOrThrow(
         await txn
@@ -654,16 +616,10 @@ export class IamService {
       new RoleNotFoundError(input.roleId),
     );
 
-    // Count-then-delete must be atomic (TOCTOU). A super-admin role change takes the shared
-    // super-admin management lock, so it serialises with a concurrent unassign AND with a
-    // back-office disable or demotion of another super-admin - each reads who is left only
-    // after the other has committed.
     const deleted = await this.changeGrants(
       input.caller,
       async (txn) => {
         if (role.isSuperAdmin) {
-          // Only a holder who can still sign in to the back office keeps admin management
-          // reachable: a disabled or demoted account holding the role does not count.
           const remaining = (await activeSuperAdminHoldings(txn)).filter(
             (h) => !(h.userId === input.userId && h.roleId === input.roleId),
           );
@@ -687,7 +643,6 @@ export class IamService {
       { superAdminManagement: role.isSuperAdmin },
     );
 
-    // No-op unassign returns success but emits nothing - no ghost revocation in the audit log.
     if (deleted) {
       this.events.emit('iam.role.revoked', {
         roleId: input.roleId,
@@ -817,9 +772,6 @@ export class IamService {
   }
 
   async inviteAdmin(input: { email: string; roleId: AdminRole['id']; caller: Caller }) {
-    // Inviting to a role is a role grant by another name, so it is super-admin-only -
-    // consistent with assignRole. A non-super admin must not invite to a role
-    // exceeding their own (esp. super-admin).
     await this.assertSuperAdmin(input.caller);
     findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
@@ -865,14 +817,6 @@ export class IamService {
     return toInvitationDto(row);
   }
 
-  /**
-   * Redeems a pending invitation: creates the invitee's back-office account with the password
-   * they chose and assigns the invited role, all in one transaction. A spent, expired or unknown
-   * token throws `InvitationConflictError`; an email that already has an account rolls back
-   * with a `CONFLICT` whose `data.reason` is `email_taken`. Attempts are throttled per client
-   * address (`ACCEPT_INVITATION_RATE_LIMIT`), refunded on success; a missing address shares one
-   * `unknown` bucket so omitting it cannot switch the throttle off.
-   */
   async acceptInvitation(
     input: { token: string; name: string; password: string },
     meta?: ClientMeta,
@@ -883,9 +827,6 @@ export class IamService {
     );
     await assertRateLimit(this.rateLimiter, rateLimitKey, ACCEPT_INVITATION_RATE_LIMIT);
 
-    // Atomic conditional UPDATE: the DB evaluates pending + not-expired under row lock,
-    // so two concurrent accepts cannot both succeed. Public path - tenant is derived
-    // from the row, not the request, so no tenant predicate is needed.
     const now = new Date();
     const { row, userId } = await this.drizzle.db.transaction(async (tx) => {
       const row = findOneOrThrow(

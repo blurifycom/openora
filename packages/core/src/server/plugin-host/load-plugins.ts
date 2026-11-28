@@ -8,19 +8,8 @@ const logger = createLogger('plugin-host');
 
 export type PluginEntry = {
   id: string;
-  /**
-   * An absolute path. The plugin host `import()`s it from inside @openora/core, so a relative
-   * path or a bare package name resolves from core's location, not from the file that lists it.
-   */
   path: string;
-  // 'module' (default) = a domain module, selectable by a service manifest.
-  // 'infra' = a broker/queue driver overlay that always loads, even for a
-  // single-module service, because a standalone process still needs its
-  // durable transport. See applyServiceManifest.
   kind?: 'module' | 'infra';
-  // Set by a service manifest (`id:no-routes`): the module is required, not selected. It binds its
-  // ports, but mounts no router and consumes nothing: no event handler, trigger listener, job
-  // worker or schedule. See applyServiceManifest and ADR-0050.
   noRoutes?: boolean;
 };
 
@@ -52,7 +41,6 @@ export function validateEntries(entries: unknown): asserts entries is PluginEntr
   });
 }
 
-/** Ensures a registry entry resolves the plugin it names. */
 function assertEntryMatchesPlugin<C extends TokenCatalog>(
   entry: PluginEntry,
   plugin: Plugin<C>,
@@ -97,7 +85,6 @@ export function topoSort<C extends TokenCatalog>(plugins: Plugin<C>[]): Plugin<C
   return sorted;
 }
 
-/** Imports the plugin an entry names, checking it is one and carries the entry's id. */
 export async function importPlugin<C extends TokenCatalog>(entry: PluginEntry): Promise<Plugin<C>> {
   const mod = (await import(entry.path)) as { default?: Plugin<C> };
   const plugin = mod.default;
@@ -108,11 +95,6 @@ export async function importPlugin<C extends TokenCatalog>(entry: PluginEntry): 
   return plugin;
 }
 
-/**
- * Imports `entries`, registers them in dependency order and checks their ports. With
- * `requiredPorts: 'defer'` an unbound required port is left to the caller, which a
- * SERVICE_MANIFEST boot folds into one error with everything else the manifest leaves out.
- */
 export async function loadPlugins<C extends TokenCatalog>(
   entries: PluginEntry[],
   container: Container<C>,
@@ -153,11 +135,6 @@ export function portName(port: symbol) {
   return String(port.description ?? port);
 }
 
-/**
- * The optional and control ports no plugin bound. A plugin boots without one but skips what it
- * backs - a check, an audit record - so the boot logs each, typically when a SERVICE_MANIFEST
- * leaves out the module that binds it.
- */
 function unboundOptionalPorts<C extends TokenCatalog>(
   plugins: Plugin<C>[],
   container: Container<C>,
@@ -169,16 +146,6 @@ function unboundOptionalPorts<C extends TokenCatalog>(
   );
 }
 
-/**
- * Boot-time fail-fast for cross-domain ports (ADR-0024). A domain depends ONLY on
- * the foundation and reaches another domain through a port token the other domain
- * binds - never an import. So when a domain package is left out of the install, its
- * port is simply unbound; without this check the app would boot and only blow up on
- * the first request that resolves the token, with a generic "No provider" message.
- * Here we verify every declared `requiresPorts` token is bound right after
- * registration and throw one actionable error naming the plugin, the port, and the
- * likely-missing package.
- */
 function assertRequiredPorts<C extends TokenCatalog>(
   plugins: Plugin<C>[],
   container: Container<C>,

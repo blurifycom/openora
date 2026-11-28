@@ -131,8 +131,6 @@ export class LimitTwinCurrencyError extends Error {
   }
 }
 
-// Periods ordering is enforced over. `session` is a duration, not a money bound - never
-// part of this chain.
 const LIMIT_ORDERING_PERIODS = ['daily', 'weekly', 'monthly'] as const;
 type OrderingPeriod = (typeof LIMIT_ORDERING_PERIODS)[number];
 
@@ -155,13 +153,6 @@ export class LimitOrderingViolationError extends Error {
   }
 }
 
-/**
- * Enforces `daily <= weekly <= monthly` for a player's money limits (deposit/wager/loss),
- * comparing every sibling in the currency of the row being changed. Call inside the same
- * transaction/advisory lock that writes or parks `changedPeriod`, before that write - a
- * missing exchange rate refuses the whole operation with the same typed error rather than
- * silently skipping the check (see `RgRateUnavailableError` for the sibling pattern).
- */
 export async function assertLimitOrdering(
   tx: Tx,
   userId: User['id'],
@@ -192,8 +183,6 @@ export async function assertLimitOrdering(
 
   for (const row of siblingRows) {
     const period = row.period;
-    // A sibling with no currency refuses every move already, so no bound can cross it; skipping
-    // it lets the admin override repair one such row while another is still unpinned.
     if (
       !isOrderingPeriod(period) ||
       period === changedPeriod ||
@@ -248,7 +237,6 @@ function isOrderingPeriod(period: LimitRow['period']): period is OrderingPeriod 
 const HOUR_MS = 60 * 60 * 1000;
 
 export { limitSlotKey };
-// Serialises every change to a player's exclusions with the login block recomputed from them.
 const exclusionLockKey = (userId: User['id']) => `rg:exclusion:${userId}`;
 export const NO_PENDING_CHANGE = {
   pendingKind: null,
@@ -259,8 +247,6 @@ export const NO_PENDING_CHANGE = {
   pendingEffectiveAt: null,
   pendingExpiresAt: null,
 } as const;
-// Cap in-flight enforcement syncs per sweep tick so a large lapsed-cooling-off batch can't
-// exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
 const SWEEP_CONCURRENCY = 10;
 
 export class RgLimitCurrencyUnresolvedError extends Error {
@@ -270,12 +256,6 @@ export class RgLimitCurrencyUnresolvedError extends Error {
   }
 }
 
-/**
- * Narrows a money limit to its currency. Every writer sets one and compliance migration 0017
- * pinned the legacy rows to the player's currency; a row still without one (its player record
- * is gone, or its slot already held that currency) cannot be compared and throws
- * `RgLimitCurrencyUnresolvedError`. The admin override is its fix.
- */
 export function requireLimitCurrency(row: LimitRow): ResolvedLimitRow {
   if (row.currency === null) {
     throw new RgLimitCurrencyUnresolvedError(row.userId);
@@ -283,11 +263,6 @@ export function requireLimitCurrency(row: LimitRow): ResolvedLimitRow {
   return { ...row, currency: row.currency };
 }
 
-/**
- * The limit in one slot. A slot holds one row, except where 0017 left a NULL-currency twin beside
- * a pinned one; the NULL row comes first, so the admin override repairs it and a player is
- * refused on it, never on whichever row the planner happens to return.
- */
 export async function readLimitSlot(
   tx: Tx,
   userId: User['id'],
@@ -305,11 +280,6 @@ export async function readLimitSlot(
   return row;
 }
 
-/**
- * A limit in the currency it is compared in. A row with no currency is read in the player's
- * current currency, the one 0017 would have pinned, so the admin override that repairs it stays
- * reduce-only; null when the player record is gone.
- */
 async function comparableLimit(tx: Tx, row: LimitRow): Promise<ResolvedLimitRow | null> {
   if (row.currency !== null) {
     return requireLimitCurrency(row);
@@ -321,10 +291,6 @@ async function comparableLimit(tx: Tx, row: LimitRow): Promise<ResolvedLimitRow 
   return owner ? { ...row, currency: owner.currency } : null;
 }
 
-/**
- * Refuses to repair a NULL-currency row into a currency its slot already holds, which the unique
- * index would reject; the other row stays enforced, so the override picks another currency.
- */
 async function assertNoTwinIn(tx: Tx, row: LimitRow, currency: string): Promise<void> {
   const [twin] = await tx
     .select({ id: userLimit.id })
@@ -343,11 +309,6 @@ async function assertNoTwinIn(tx: Tx, row: LimitRow, currency: string): Promise<
   }
 }
 
-/**
- * Applies a limit immediately and clears any parked pending request. Caller must
- * already hold this limit's slot lock (`limitSlotKey`) inside their own transaction and
- * must pass the `existing` row read under it - the update pins to `existing.id`.
- */
 export async function writeLimitRow(
   tx: Tx,
   userId: User['id'],
@@ -418,19 +379,9 @@ export type RgServiceDeps = {
   mailDispatch?: MailDispatchPort | null;
   audit?: AuditWritePort | null;
   rates: ExchangeRateReader;
-  /** The ledger's limits projection, written in every limit change's own transaction. */
   limitsLedger: Pick<RgLimitLedgerPort, 'write' | 'remote'>;
 };
 
-/**
- * Owns player-facing and admin responsible-gambling controls: deposit/session
- * limits, cooling-off, and self-exclusion. Every mutation that changes the set
- * of active exclusions ends by recomputing login enforcement from scratch
- * (`syncEnforcement`) rather than patching it incrementally, so a lift/expiry
- * of one exclusion can never leave a stale block from another. Precedence:
- * an active self-exclusion always wins with an indefinite block; otherwise
- * the longest-expiring active cooling-off; otherwise unblocked.
- */
 export class RgService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -439,7 +390,6 @@ export class RgService {
   private readonly mailDispatch: MailDispatchPort | null;
   private readonly audit: AuditWritePort | null;
   private readonly rates: ExchangeRateReader;
-  /** Every writer of a deposit or wager limit publishes through this, in its transaction. */
   readonly limitsPublisher: RgLimitsPublisher;
 
   constructor(deps: RgServiceDeps) {
@@ -453,11 +403,6 @@ export class RgService {
     this.limitsPublisher = new RgLimitsPublisher(deps.limitsLedger, deps.events);
   }
 
-  /**
-   * Admin override: creates a player's first limit or lowers an existing one, effective
-   * immediately, with no cool-down. Reduce-only - raising a limit the player set for
-   * themselves throws `LimitRaiseNotAllowedError`.
-   */
   async setPlayerLimit(
     userId: User['id'],
     input: SetPlayerLimitInput,
@@ -474,7 +419,6 @@ export class RgService {
         }
         const resolvedExisting = existing && (await comparableLimit(tx, existing));
         if (existing && resolvedExisting === null) {
-          // Its player is gone, so no currency to compare in: only a zero limit is surely no raise.
           if (input.amount === null || moneyCompare(input.amount, '0') !== 0) {
             throw new LimitRaiseNotAllowedError(existing, input);
           }
@@ -484,8 +428,6 @@ export class RgService {
         ) {
           throw new LimitRaiseNotAllowedError(resolvedExisting, input);
         }
-        // Reduce-only doesn't exempt ordering: an admin can still drop e.g. weekly
-        // below an existing daily.
         if (input.type !== 'session' && input.amount !== null && input.currency !== null) {
           await assertLimitOrdering(
             tx,
@@ -627,12 +569,6 @@ export class RgService {
     return toExclusionDto(row);
   }
 
-  /**
-   * `isPermanent: true` stores `expiresAt: null` - a permanent exclusion has
-   * no time-based lapse and can only ever be cleared by an explicit
-   * `liftSelfExclusion` (which itself rejects lifting a permanent one). Only
-   * one active self-exclusion may exist per player at a time.
-   */
   async activateSelfExclusion(
     userId: User['id'],
     input: ActivateSelfExclusionInput,
@@ -697,13 +633,6 @@ export class RgService {
     return toExclusionDto(row);
   }
 
-  /**
-   * A permanent self-exclusion (`isPermanent`/`expiresAt: null`) can never be
-   * lifted through this path (`PermanentExclusionLiftError`) - by design,
-   * there is no self-service or admin override. A fixed-term exclusion can
-   * only be lifted once its minimum period has actually elapsed
-   * (`ExclusionPeriodNotElapsedError` otherwise), even for an admin actor.
-   */
   async liftSelfExclusion(
     userId: User['id'],
     input: LiftSelfExclusionInput,
@@ -742,8 +671,6 @@ export class RgService {
             .returning(),
           new ExclusionNotFoundError(existing.id),
         );
-        // Recompute from what remains - a still-active cooling-off keeps its own block
-        // rather than being cleared by this lift.
         await this.syncEnforcement(userId, tx);
         await this.events.emitInTransaction(tx, 'rg.self_exclusion.lifted', {
           userId,
@@ -766,12 +693,6 @@ export class RgService {
     return toExclusionDto(row);
   }
 
-  /**
-   * Ends an active cooling-off early. Unlike `liftSelfExclusion` there is no minimum
-   * period and no permanent variant to refuse - a cooling-off is a support action an
-   * admin must be able to reverse. `syncEnforcement` still recomputes the block from
-   * what remains, so a player who is ALSO self-excluded stays blocked after this lift.
-   */
   async liftCoolingOff(
     userId: User['id'],
     input: LiftCoolingOffInput,
@@ -825,10 +746,6 @@ export class RgService {
     return toExclusionDto(row);
   }
 
-  /**
-   * The exclusions in force for a player right now. A lapsed cooling-off row stays
-   * `active` until the sweep expires it, so it is filtered out here by its expiry.
-   */
   async getActiveExclusions(
     userId: User['id'],
     tx?: unknown,
@@ -850,8 +767,6 @@ export class RgService {
     };
   }
 
-  // Background hygiene: transition truly-lapsed cooling-off rows to `expired` and
-  // recompute enforcement for the affected players. Called by the rg-monitor sweep.
   async expireLapsedCoolingOffs(): Promise<void> {
     const now = new Date();
     const lapsedFilter = and(
@@ -859,8 +774,6 @@ export class RgService {
       eq(rgExclusion.status, 'active'),
       lte(rgExclusion.expiresAt, now),
     );
-    // Enrichment is resolved before the tx so the batched lookup never holds the tx open on a
-    // second pool connection; a row that lapses in between just goes out with a null playerId.
     const candidates = await this.drizzle.db
       .selectDistinct({ userId: rgExclusion.userId })
       .from(rgExclusion)
@@ -889,8 +802,6 @@ export class RgService {
       return expired;
     });
     const lapsedUserIds = [...new Set(lapsed.map((r) => r.userId))];
-    // One transaction per player, under the lock every activate and lift takes: the block is
-    // recomputed from what is committed once any racing change to that player's exclusions is.
     await mapConcurrent(lapsedUserIds, SWEEP_CONCURRENCY, (userId) =>
       this.drizzle.db.transaction((tx) =>
         withAdvisoryXactLock(tx, exclusionLockKey(userId), () => this.syncEnforcement(userId, tx)),
@@ -925,11 +836,6 @@ export class RgService {
       });
   }
 
-  // The single source of truth for the login block: derive it from the STRONGEST
-  // remaining active exclusion. An active self-exclusion (permanent or fixed-term)
-  // wins with an indefinite block; otherwise the longest active cooling-off; else clear.
-  // Callers hold `exclusionLockKey(userId)`, so no other change to the player's exclusions commits
-  // between this read and the block it writes on `tx`.
   private async syncEnforcement(userId: User['id'], tx: Tx): Promise<void> {
     const now = new Date();
     const active = await tx
@@ -961,8 +867,6 @@ export class RgService {
       eq(rgExclusion.kind, kind),
       eq(rgExclusion.status, 'active'),
     ];
-    // A lapsed-but-not-yet-swept cooling-off must not block a fresh one; a self-exclusion
-    // has no time-based lapse (only an explicit lift clears it).
     if (kind === 'cooling_off') {
       conditions.push(gt(rgExclusion.expiresAt, now));
     }

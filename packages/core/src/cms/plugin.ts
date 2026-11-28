@@ -21,7 +21,6 @@ export default {
         c.get(ADMIN_GUARD),
       ),
     );
-    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(cmsBannersTool, (c) => {
       const banners = new CmsBannersService(c.get(DRIZZLE));
       return (input) => banners.banners(input);

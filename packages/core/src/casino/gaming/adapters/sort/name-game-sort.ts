@@ -6,7 +6,6 @@ import { game } from '../../schema/index.js';
 
 const NameSortParamsSchema = z.object({});
 
-/** Alphabetical by game name, either direction, tie-broken by id for a stable order. */
 export function createNameGameSort(
   drizzle: DrizzleService,
 ): GameSortDefinition<z.infer<typeof NameSortParamsSchema>> {

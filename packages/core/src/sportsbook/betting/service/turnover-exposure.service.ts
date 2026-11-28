@@ -11,7 +11,6 @@ import {
 import { sportsbookBet } from '../schema/index.js';
 import { betTotals, openBet } from './bet-query.service.js';
 
-/** The operator's sportsbook turnover over a range and what its open bets stand to pay now. */
 export class SportsbookTurnoverService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -39,7 +38,6 @@ export class SportsbookTurnoverService {
         legs: sql<number>`jsonb_array_length(${bet.legs})`.as('legs'),
         placedAt: bet.createdAt,
         lastLegStartsAt: bet.lastLegStartsAt,
-        // The bet id breaks ties, so equal payouts always rank in the same order.
         rank: sql<number>`row_number() over (partition by ${bet.currency} order by ${bet.potentialPayout} desc, ${bet.id})`.as(
           'rank',
         ),

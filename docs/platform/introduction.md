@@ -23,14 +23,9 @@ repo and talks to the API over HTTP.
 
 A module exposes typed routes; a consumer calls them with a fully typed client - zero codegen:
 
-```ts
-import { createClient } from '@openora/core/react';
-
-const client = createClient({ baseUrl: 'http://localhost:3001' });
-
-const { balance, currency } = await client.wallet.getBalance();
-await client.wallet.deposit({ amount: 50, currency: 'EUR', provider: 'mock' });
-```
+The typed client comes from `createClient` in `@openora/core/react` (`packages/core/src/react/client.ts`).
+Given a contract and a base URL, it exposes each module's routes as methods - `client.wallet.getBalance()` returns the
+balance and currency, `client.wallet.deposit(...)` takes an amount, a currency and a provider.
 
 ## Next
 

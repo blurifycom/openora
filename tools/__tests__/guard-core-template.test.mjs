@@ -1,6 +1,3 @@
-// The consumer guard-core hook is the only thing between an agent and the linked OSS checkout.
-// Render the template into a throwaway consumer next to a throwaway OSS dir and drive it with
-// real hook payloads: the main checkout and node_modules stay denied, a worktree is allowed.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
@@ -21,7 +18,6 @@ import { fileURLToPath } from 'node:url';
 const hooks = fileURLToPath(
   new URL('../templates/consumer/__dot__rulesync/hooks/', import.meta.url),
 );
-// realpath: the hook resolves its own location through symlinks (macOS /var -> /private/var).
 const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'guard-core-')));
 const consumer = join(sandbox, 'consumer');
 const oss = join(sandbox, 'oss');
@@ -153,9 +149,6 @@ test('reads and consumer-local writes pass', () => {
   assert.equal(exitCode({ file_path: join(consumer, 'node_modules/pkg/index.js') }), DENIED);
 });
 
-// Consumers work in git worktrees (<repo>/.claude/worktrees/<branch>), where `.git` is a file
-// pointing at the main checkout. Resolving the OSS sibling from the worktree would find nothing
-// and let every core write through, so the guard has to walk back to the main checkout first.
 test('the guard still finds the OSS checkout when the consumer is a git worktree', () => {
   const worktree = join(consumer, '.claude', 'worktrees', 'feat+x');
   mkdirSync(join(worktree, '.rulesync', 'hooks'), { recursive: true });
@@ -175,7 +168,6 @@ test('the guard still finds the OSS checkout when the consumer is a git worktree
   assert.equal(fromWorktree({ file_path: join(oss, '.worktrees/feat+x/packages/a.ts') }), ALLOWED);
 });
 
-// Codex edits through apply_patch: the paths live only in the patch headers of tool_input.command.
 const patch = (...lines) => ['*** Begin Patch', ...lines, '+x', '*** End Patch'].join('\n');
 const applyPatch = (...lines) => exitCode({ command: patch(...lines) }, 'apply_patch');
 

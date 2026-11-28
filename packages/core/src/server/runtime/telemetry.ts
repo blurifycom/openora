@@ -13,7 +13,6 @@ import type { CoreTokenCatalog } from './core-token-catalog.js';
 
 const TELEMETRY_DEFAULT_URL = 'https://telemetry.openora.ai/api/send';
 const TELEMETRY_DOCS_URL = 'https://openora.ai/documentation/telemetry';
-// Public by design: an Umami website id ships in every browser tracking snippet.
 const UMAMI_WEBSITE_ID = 'c61455d3-0d38-40b9-a7b9-f25978360ff6';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -116,7 +115,6 @@ async function collectTelemetry(
 async function sendTelemetry(url: string, body: TelemetryBody): Promise<void> {
   const res = await fetch(url, {
     method: 'POST',
-    // Umami drops bot-like user agents, which a bare `name/version` or anything naming node is.
     headers: {
       'content-type': 'application/json',
       'user-agent': `Mozilla/5.0 (compatible; openora/${coreVersion})`,
@@ -160,13 +158,11 @@ export function startTelemetry(
   }
   const jobQueue = container.get(JOB_QUEUE);
   if (!isTelemetryEnabled(option, env)) {
-    // BullMQ keeps a job scheduler in Redis after the process that created it exits.
     void jobQueue
       .unschedule(TELEMETRY_QUEUE, HEARTBEAT_SCHEDULE_ID)
       .catch((err: unknown) => logger.warn({ err }, 'telemetry unschedule failed'));
     return;
   }
-  // Split services share the queue and the boot guard, so only the one that can count players reports.
   if (!container.has(PLAYER_ACTIVITY_TRACKER)) {
     return;
   }

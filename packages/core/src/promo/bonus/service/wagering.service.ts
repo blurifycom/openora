@@ -59,25 +59,13 @@ type RoundStake = {
   realStake: string;
   unlinkedStake: string;
   linkedStake: string;
-  /** Progress the round has credited so far, net of reversals. */
   credited: string;
-  /** Funds of this round already returned by an earlier reversal, per bucket. */
   bonusReturned: string;
   realReturned: string;
   unlinkedReturned: string;
   linkedReturned: string;
 };
 
-/**
- * The wagering engine: how a bet splits across free real money and the grants' buckets, what it
- * does to each requirement, and how a win, refund or loss settles back.
- *
- * Bound to the sealed BONUS_WAGERING token and always called on the wallet's own transaction,
- * below its duplicate-provider-reference guard, so a replayed wager can never reach it.
- *
- * It never calls back into the wallet. A completed grant is reported as `convertedAmount` and the
- * wallet, which already holds the transaction, performs the credit.
- */
 export class WageringService implements BonusWageringCommands {
   constructor(
     private readonly audit: AuditWritePort,
@@ -98,13 +86,6 @@ export class WageringService implements BonusWageringCommands {
       return this.unattributed(tx, args);
     }
 
-    // Against the terms snapshots, inside the transaction that moves the money. It is an
-    // anti-abuse control - a player who can stake the whole bonus on one spin turns a wagering
-    // requirement into a coin flip - so a preflight read the client could skip is not enough.
-    // It bounds the whole stake, not the bonus part, and the round's total rather than one debit:
-    // splitting a stake across debits of one round must not get around it. While several grants
-    // are active the strictest limit among those that do not exempt the product applies. A
-    // product that never touches bonus funds or progress is outside it.
     const maxBet = realOnly ? null : strictestMaxBet(locked, args.context.product);
     if (maxBet !== null && isPositive(args.stake)) {
       const roundStake = moneyAdd(await this.outstandingRoundStake(tx, args), args.stake);
@@ -113,8 +94,6 @@ export class WageringService implements BonusWageringCommands {
       }
     }
 
-    // A and B of every grant are claims on the same real balance, so they are clamped against it
-    // in rollover order; what no grant names is free real money.
     let realLeft = isPositive(args.realAvailable) ? args.realAvailable : ZERO;
     const counters = grants.map(({ grant }) => {
       const clamped = clampCounters({
@@ -165,9 +144,6 @@ export class WageringService implements BonusWageringCommands {
       return { ok: false, reason: 'insufficient_bonus', bonusAvailable };
     }
 
-    // Each grant's own buckets progress that grant alone; free real money fills the requirements
-    // in rollover order. Progress waits on the round and is credited when it settles, so what
-    // open rounds already hold counts against the room left.
     const pending = await this.pendingProgress(
       tx,
       grants.map((plan) => plan.grant.id),
@@ -221,7 +197,6 @@ export class WageringService implements BonusWageringCommands {
         counters[i] ?? EMPTY_COUNTERS,
       );
       if (after === null) {
-        // The row is locked and its balance was read under that lock, so this cannot happen.
         throw new Error(`bonus grant ${plan.grant.id} refused a stake it was locked to cover`);
       }
       balanceAfter.set(plan.grant.id, after.balanceAfter);
@@ -266,10 +241,6 @@ export class WageringService implements BonusWageringCommands {
     };
   }
 
-  /**
-   * A plain real-money wager, still counted toward rank and rank-adjacent tracking (streaks, etc)
-   * at its full stake - nothing here weights it down the way a bonus's contribution percent would.
-   */
   private async unattributed(tx: DrizzleTx, args: BonusWagerArgs): Promise<BonusWagerOutcome> {
     const walletCredits =
       (await this.wagerTracking?.recordWager(tx, {
@@ -292,10 +263,6 @@ export class WageringService implements BonusWageringCommands {
   }
 
   async settle(tx: DrizzleTx, args: BonusSettleArgs): Promise<BonusSettleOutcome> {
-    // Two settlement callbacks for the same round (a provider retrying a reversal under a
-    // different reference, or a win racing a void) would otherwise both read the same
-    // outstanding stake before either insert lands, and both give it back - the same stake
-    // refunded twice. Locked for the rest of this call, released with the transaction.
     return withAdvisoryXactLock(tx, roundLockKey(args), () => this.settleLocked(tx, args));
   }
 
@@ -321,17 +288,12 @@ export class WageringService implements BonusWageringCommands {
     const reversal = args.kind === 'bet_reversal';
 
     if (stakes.length === 0) {
-      // No grant was ever attributed to this round: a plain cash bet, nothing to reverse or
-      // settle against a grant - but whatever it counted toward outside the bonus still is.
       if (reversal) {
         await this.reverseTracking(tx, args, args.amount);
       }
       return { bonusShare: ZERO, realShare: args.amount, completed: [] };
     }
 
-    // Net against what an earlier callback for this round already gave back, on both branches: a
-    // win reported after a round was already voided must not be split against the original stake
-    // as if the void had never happened, any more than a second reversal callback may.
     const outstanding = stakes.map((stake) => outstandingOf(stake));
     const totalStake = outstanding.reduce(
       (sum, row) => moneyAdd(sum, moneyAdd(row.bonus, row.realTotal)),
@@ -339,17 +301,12 @@ export class WageringService implements BonusWageringCommands {
     );
 
     if (!isPositive(totalStake)) {
-      // Already fully reversed by an earlier callback: nothing is outstanding for either balance.
       await this.settleRound(tx, args, lockedGrantIds);
       return { bonusShare: ZERO, realShare: ZERO, completed: [] };
     }
 
-    // A rollback larger than what is outstanding is capped rather than trusted: the surplus is
-    // not the player's money either.
     const applyAmount =
       reversal && moneyCompare(args.amount, totalStake) > 0 ? totalStake : args.amount;
-    // Every grant's every bucket is one pot, listed most restricted first so the rounding residue
-    // lands on bonus funds before it can reach a freer bucket.
     const count = outstanding.length;
     const pots = [
       ...outstanding.map((row) => row.bonus),
@@ -374,16 +331,10 @@ export class WageringService implements BonusWageringCommands {
       ZERO,
     );
     if (reversal) {
-      // The bonus-funded share never counted toward tracking (`recordWager` takes `realAmount`),
-      // so only the real share is taken back out of it.
       await this.reverseTracking(tx, args, realReturned);
     }
 
     let settled = ZERO;
-    // A slice that could not go back onto its grant because the grant is no longer active, and
-    // that grant did not complete (it expired, was forfeited or depleted). The default takes the
-    // winnings, or the voided stake, from that bonus along with the bonus balance itself, so this
-    // slice belongs to neither balance - it is not added to realShare below.
     let forfeited = ZERO;
     for (const { row, slice } of slices) {
       const realSlice = moneyAdd(slice.free, moneyAdd(slice.unlinked, slice.linked));
@@ -395,16 +346,9 @@ export class WageringService implements BonusWageringCommands {
         ? await this.reverseRound(tx, args, { outstanding: row, slice })
         : await this.creditBonus(tx, row.stake.grantId, slice);
       if (applied === null) {
-        // A completed grant's bonus funds already converted at completion, so its slice falls
-        // through to the real balance like a win's does. An expired, forfeited or depleted grant
-        // took the slice with it when it closed - returning a bonus-funded stake or win as real
-        // money would release value the wagering it required never earned.
         const status = await this.grantStatus(tx, row.stake.grantId);
         if (status !== 'completed' && isPositive(slice.bonus)) {
           forfeited = moneyAdd(forfeited, slice.bonus);
-          // The wallet's own ledger already recorded the full gross amount for this callback; if
-          // this grant's slice is not visible here too, the gap between what the provider
-          // reported and what either balance received is recorded nowhere.
           await tx.insert(promoGrantEntry).values({
             grantId: row.stake.grantId,
             userId: args.userId,
@@ -426,8 +370,6 @@ export class WageringService implements BonusWageringCommands {
         userId: args.userId,
         currency: args.currency,
         type: reversal ? 'reversal' : 'win',
-        // Both movements put funds back on the grant, so both are a positive delta: a grant's
-        // entries have to keep summing to the balance they explain.
         bonusAmount: slice.bonus,
         realAmount: realSlice,
         unlinkedAmount: slice.unlinked,
@@ -439,10 +381,6 @@ export class WageringService implements BonusWageringCommands {
       });
     }
 
-    // Clamped at zero as a backstop: `settled` and `forfeited` are bounded by construction to
-    // never exceed `applyAmount` between them, but a floor holds even if that ever drifts, rather
-    // than a negative share reaching `creditWalletBalance` and debiting the player's real balance
-    // for a win.
     const realShareOut = moneySubtract(moneySubtract(applyAmount, settled), forfeited);
     const realShare = isPositive(realShareOut) ? realShareOut : ZERO;
 
@@ -466,7 +404,6 @@ export class WageringService implements BonusWageringCommands {
     });
   }
 
-  /** What the round already staked on any grant, net of what reversals gave back. */
   private async outstandingRoundStake(tx: DrizzleTx, args: BonusWagerArgs): Promise<string> {
     const rows = await this.roundStakes(
       tx,
@@ -488,11 +425,6 @@ export class WageringService implements BonusWageringCommands {
     );
   }
 
-  /**
-   * Every active grant held in the bet's own currency, in rollover order: earliest expiry first.
-   * Locked in id order, the order settlement takes them in, so a stake and a settlement on two
-   * shared grants cannot deadlock; the rollover order is applied after.
-   */
   private async lockLiveGrants(tx: DrizzleTx, userId: Uuid, currency: string) {
     const rows = await tx
       .select({
@@ -519,11 +451,6 @@ export class WageringService implements BonusWageringCommands {
     );
   }
 
-  /**
-   * Conditional in SQL, so two concurrent bets cannot both pass a balance they then overdraw. The
-   * counters are written from their clamped value: whatever real money left the wallet outside a
-   * bet stops being tied to the grant here.
-   */
   private async spend(
     tx: DrizzleTx,
     grantId: PromoGrant['id'],
@@ -548,7 +475,6 @@ export class WageringService implements BonusWageringCommands {
     return row ?? null;
   }
 
-  /** A second stake on a round already settled opens it again, its weight waiting with the rest. */
   private async openRound(
     tx: DrizzleTx,
     args: BonusWagerArgs,
@@ -577,7 +503,6 @@ export class WageringService implements BonusWageringCommands {
       });
   }
 
-  /** Progress waiting on each grant's open rounds; read under the grant locks that guard it. */
   private async pendingProgress(
     tx: DrizzleTx,
     grantIds: PromoGrant['id'][],
@@ -602,7 +527,6 @@ export class WageringService implements BonusWageringCommands {
     return new Map(rows.map((row) => [row.grantId, row.pending]));
   }
 
-  // Grants before round rows, as `wager` takes them, so a stake and a settlement cannot deadlock.
   private async lockRoundGrants(tx: DrizzleTx, args: RoundKey): Promise<PromoGrant['id'][]> {
     const rows = await tx
       .selectDistinct({ grantId: promoGrantRound.grantId })
@@ -620,7 +544,6 @@ export class WageringService implements BonusWageringCommands {
     return ids;
   }
 
-  /** Closes the round on the locked grants, crediting pending a settled round may still hold. */
   private async settleRound(
     tx: DrizzleTx,
     args: RoundKey,
@@ -722,10 +645,6 @@ export class WageringService implements BonusWageringCommands {
     return completed;
   }
 
-  /**
-   * A grant with no bet left open either completes (requirement met), depletes (every bucket
-   * below the dust threshold) or carries on. Run after each settlement, under the grant's lock.
-   */
   private async resolveIdle(
     tx: DrizzleTx,
     grantId: PromoGrant['id'],
@@ -813,10 +732,6 @@ export class WageringService implements BonusWageringCommands {
     providerName: string,
     round: NonNullable<PromoGrantEntry['externalRoundId']>,
   ): Promise<RoundStake[]> {
-    // What the round took, and what earlier callbacks already gave back, in one pass: a second
-    // rollback has to net against the first rather than be waved through or refused outright.
-    // Currency and provider qualify the round id, so a different provider or currency minting
-    // the same id independently can never net against this one.
     const onStake = sql`${promoGrantEntry.type} = 'stake'`;
     const onReversal = sql`${promoGrantEntry.type} = 'reversal'`;
     const always = sql`true`;
@@ -836,7 +751,6 @@ export class WageringService implements BonusWageringCommands {
         realStake: total(onStake, promoGrantEntry.realAmount),
         unlinkedStake: total(onStake, promoGrantEntry.unlinkedAmount),
         linkedStake: total(onStake, promoGrantEntry.linkedAmount),
-        // Stakes from before settlement-time credit carry their progress on the stake row itself.
         credited: total(always, promoGrantEntry.wageringDelta),
         bonusReturned: total(onReversal, promoGrantEntry.bonusAmount),
         realReturned: total(onReversal, promoGrantEntry.realAmount),
@@ -857,7 +771,6 @@ export class WageringService implements BonusWageringCommands {
       .orderBy(asc(promoGrantEntry.grantId));
   }
 
-  /** Read after `creditBonus`/`reverseRound` refuses, to tell a completed grant apart from a terminal one. */
   private async grantStatus(tx: DrizzleTx, grantId: PromoGrant['id']) {
     const [row] = await tx
       .select({ status: promoGrant.status })
@@ -866,7 +779,6 @@ export class WageringService implements BonusWageringCommands {
     return row?.status ?? null;
   }
 
-  /** The grant's current bonus balance, for a ledger row that records a movement with no delta. */
   private async grantBalance(tx: DrizzleTx, grantId: PromoGrant['id']) {
     const [row] = await tx
       .select({ bonusBalance: promoGrant.bonusBalance })
@@ -875,7 +787,6 @@ export class WageringService implements BonusWageringCommands {
     return row?.bonusBalance ?? ZERO;
   }
 
-  /** A grant that already completed, expired or was forfeited takes no more money. */
   private async creditBonus(tx: DrizzleTx, grantId: PromoGrant['id'], slice: FundSplit) {
     const [row] = await tx
       .update(promoGrant)
@@ -885,7 +796,6 @@ export class WageringService implements BonusWageringCommands {
     return row ? { balanceAfter: row.balanceAfter, progressReversed: ZERO } : null;
   }
 
-  /** Takes back credited and pending progress in the share of the outstanding stake returned. */
   private async reverseRound(
     tx: DrizzleTx,
     args: RoundKey,
@@ -991,10 +901,8 @@ const EMPTY_GRANT_SPEND: GrantSpend = { unlinked: ZERO, linked: ZERO, bonus: ZER
 
 const EMPTY_COUNTERS = { unlinked: ZERO, linked: ZERO };
 
-/** Within one grant, the cash it ties up goes before its bonus funds. */
 const GRANT_SPEND_ORDER = ['unlinked', 'linked', 'bonus'] as const;
 
-/** How one grant treats this bet: its weight, its fund settings, and which buckets may pay. */
 function planGrant(grant: LiveGrant, args: BonusWagerArgs, realOnly: boolean) {
   const excluded = grant.terms.excludedProducts?.includes(args.context.product) === true;
   const settings = grant.terms.funds ?? DEFAULT_FUND_SETTINGS;
@@ -1005,8 +913,6 @@ function planGrant(grant: LiveGrant, args: BonusWagerArgs, realOnly: boolean) {
     mode,
     referenceEdge: grant.terms.referenceEdge,
   });
-  // A real-money-only product keeps to its own rule: it earns nothing, never takes C, and the
-  // class rules do not apply.
   const percent = realOnly ? ZERO : contribution.effectivePercent;
   const cls = betClass(args.context, percent);
   const fundRules = realOnly ? DEFAULT_FUND_SETTINGS : settings;
@@ -1032,7 +938,6 @@ function planGrant(grant: LiveGrant, args: BonusWagerArgs, realOnly: boolean) {
   };
 }
 
-/** A sum that keeps a lone non-zero term as written, so a one-grant bet reports amounts as given. */
 function sumOf(a: string, b: string): string {
   if (moneyCompare(a, ZERO) === 0) {
     return b;
@@ -1043,7 +948,6 @@ function sumOf(a: string, b: string): string {
   return moneyAdd(a, b);
 }
 
-/** The lowest `maxBet` among the grants that do not exempt `product`, or null when none sets one. */
 export function strictestMaxBet(
   grants: readonly LiveGrant[],
   product: BonusWagerArgs['context']['product'],
@@ -1057,11 +961,6 @@ export function strictestMaxBet(
   }, null);
 }
 
-/**
- * The stake taken from free real money and from each grant's own buckets, grants in rollover
- * order and each grant's buckets A, B, C. Free money goes first or last as the primary grant's
- * `freeFundsOrder` says. Null when everything the bet may use falls short.
- */
 export function splitAcrossGrants(args: {
   stake: string;
   free: string;

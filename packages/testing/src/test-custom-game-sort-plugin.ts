@@ -4,12 +4,6 @@ import { GAME_SORT_CATALOG, createGameSortCatalog, defineGameSort } from '@openo
 import { createDefaultGameSorts } from '@openora/core/casino/server';
 import * as z from 'zod';
 
-/**
- * Proves GAME_SORT_CATALOG is a genuinely replaceable seam: an overlay rebinds it,
- * keeping the built-ins and adding one operator-supplied definition. `rank()` orders by
- * raw game id, descending - deterministic and independent of name or manual position, so
- * a test can compute the expected order itself and confirm this definition actually ran.
- */
 export default {
   id: 'test-custom-game-sort',
   dependsOn: ['gaming'],

@@ -18,11 +18,7 @@ A process that sets `SERVICE_MANIFEST` must set the other two or the boot throws
 
 The manifest must be closed: every module a listed module `dependsOn`, and every module that binds a port a listed module requires. Chat `dependsOn` `identity` and `audit`, and identity `dependsOn` audit, so those are the floor. A split also refuses to boot when it would skip a control the rest of the install enforces (a geo check, an RG limit, the admin guard's permission resolver), as long as the plugin list contains the module that binds it.
 
-You do not have to work the closure out by hand. Boot once with the short manifest. The failure lists every missing module and why, and ends with a line to paste:
-
-```
-Add them: SERVICE_MANIFEST=chat,identity:no-routes,audit:no-routes,iam:no-routes,...
-```
+You do not have to work the closure out by hand. Boot once with the short manifest. The failure lists every missing module and why, and ends with an `Add them:` line to paste, a complete `SERVICE_MANIFEST` value that lists your modules followed by each missing one as `:no-routes`.
 
 It keeps your flags and adds each missing module as `:no-routes`, so another process keeps consuming it. An unknown id, an unknown flag, or `:no-routes` on an infra overlay also fails the boot, with the known ids in the message.
 
@@ -78,22 +74,19 @@ Chat's HTTP routes sit under `/chat/*` (player, realtime streams included) and `
 
 The main API can drop chat. Of the modules it keeps, only `player-management` needs a chat port (`CHAT_BLOCK_READER`, for player search), and it requires the port, not the `chat` module. Set `CHAT_SERVICE_URL` and `createApp` drops `chat` and every plugin that `dependsOn` it, directly or through another dropped one (`social`, `chat-commands`), before it applies any manifest. The `chat-remote` plugin, part of `corePlugins()` (a hand-written registry lists it itself), then binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API (ADR-0054, ADR-0060). A module of your own that needs chat's tables must `dependsOn` chat to be dropped with it:
 
-```
-SERVICE_NAME=monolith
-REALTIME_NAMESPACE=monolith
-CHAT_SERVICE_URL=https://chat.internal   # the chat service's private origin
-CHAT_SERVICE_NAME=chat                   # its SERVICE_NAME, the default
-INTERNAL_API_SECRETS=<shared secret>
-```
+- `SERVICE_NAME` and `REALTIME_NAMESPACE`: both `monolith`.
+- `CHAT_SERVICE_URL`: the chat service's private origin.
+- `CHAT_SERVICE_NAME`: the chat service's `SERVICE_NAME`; the default is `chat`.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
 
 The main API then has no chat tables to migrate and serves no chat route. A manifest on the main API must not name a dropped module (that is an unknown id); it is not needed to leave chat out. It also fails in the other direction: the chat plugin refuses to boot while `CHAT_SERVICE_URL` is set, so one process never binds the ports twice. In production the URL must be https unless `CHAT_SERVICE_ALLOW_HTTP=true` (a mesh that encrypts the hop).
 
 The chat service serves the two routes only to the callers it names, and refuses every caller while the lists are unset:
 
-```
-CHAT_BLOCK_READER_CALLERS=monolith       # POST /internal/v1/chat/blocks/{excluded,blocked,blockers}
-CHAT_TRANSFER_CHECK_CALLERS=monolith     # POST /internal/v1/chat-commands/transfer-check
-```
+- `CHAT_BLOCK_READER_CALLERS` guards the block reads, which are `POST` calls to `/internal/v1/chat/blocks/excluded`, `/blocked` and `/blockers`.
+- `CHAT_TRANSFER_CHECK_CALLERS` guards the transfer check, a `POST` to `/internal/v1/chat-commands/transfer-check`.
+
+Set both to `monolith`, the main API's `SERVICE_NAME`.
 
 Both lists are comma-separated `SERVICE_NAME`s. They guard against misconfiguration only, because one install-wide secret signs as any caller name. A module that moves money in chat needs `chat-commands` on the chat service, which serves the transfer check.
 
@@ -101,15 +94,12 @@ Failures close. Neither read is cached, and each call times out at 500ms. A bloc
 
 Chat service, on a database of its own and reaching identity over its internal API:
 
-```
-SERVICE_NAME=chat
-REALTIME_NAMESPACE=monolith
-SERVICE_MANIFEST=chat,chat-commands,social,identity:no-routes,iam:no-routes,audit:no-routes   # then add what the boot asks for
-INTERNAL_API_SECRETS=<shared secret>
-IDENTITY_SERVICE_URL=https://api.internal   # the service that serves identity and iam
-CHAT_BLOCK_READER_CALLERS=monolith
-CHAT_TRANSFER_CHECK_CALLERS=monolith
-```
+- `SERVICE_NAME`: `chat`.
+- `REALTIME_NAMESPACE`: `monolith`, the same as the main API.
+- `SERVICE_MANIFEST`: `chat`, `chat-commands`, `social`, plus `identity`, `iam` and `audit` as `:no-routes`; then add what the boot asks for.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
+- `IDENTITY_SERVICE_URL`: the origin of the service that serves identity and iam.
+- `CHAT_BLOCK_READER_CALLERS` and `CHAT_TRANSFER_CHECK_CALLERS`: `monolith`.
 
 On the service that serves identity and iam, name the chat service so it may read accounts, sessions (admin security included) and admin grants: `ACCOUNT_READER_CALLERS`, `SESSION_RESOLVER_CALLERS` and `ADMIN_PERMISSION_CALLERS` (`POST /internal/v1/iam/admin-permissions/{grants,super-admin}`) each list `chat`. Unset refuses every caller, and without `chat` in `ADMIN_PERMISSION_CALLERS` every admin check on the chat service is refused. Chat reads grants through `IDENTITY_SERVICE_URL`, the same origin as accounts and sessions, so one service must serve both identity and iam. Chat caches no grant of its own, so a revoked admin loses access as soon as the iam owner's cache purges, and an unreachable owner refuses the request with a 503 rather than reading as "no grants". The chat service's own database holds no role assignments, so `iam:no-routes` there binds only controls and the remote resolver wins.
 
@@ -121,14 +111,8 @@ The chat service runs the audit module against its own database and ships its au
 
 Both get the same `REDIS_URL` and `AUTH_SECRET`; the chat service's `DATABASE_URL` names its own database. Route at the load balancer by path prefix:
 
-```
-/chat/*                     -> chat service
-/backoffice/chat/*          -> chat service
-/social/*                   -> chat service
-/chat-command/*             -> chat service
-/backoffice/chat-command/*  -> chat service
-/*                          -> main API
-```
+- `/chat/*`, `/backoffice/chat/*`, `/social/*`, `/chat-command/*` and `/backoffice/chat-command/*` go to the chat service.
+- Everything else (`/*`) goes to the main API.
 
 Route every prefix. Without the staff ones, the staff routes go to `/*` and 404 once the main API stops serving chat.
 
@@ -154,20 +138,16 @@ Ports that take the caller's transaction cannot cross the network: `WALLET_COMMA
 
 Platform service:
 
-```
-SERVICE_NAME=platform
-MONEY_SERVICE_URL=https://money.internal   # the money service's private origin
-MONEY_SERVICE_NAME=money                   # its SERVICE_NAME, default money
-INTERNAL_API_SECRETS=<shared secret>
-```
+- `SERVICE_NAME`: `platform`.
+- `MONEY_SERVICE_URL`: the money service's private origin.
+- `MONEY_SERVICE_NAME`: the money service's `SERVICE_NAME`; the default is `money`.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
 
 Money service:
 
-```
-SERVICE_NAME=money
-MONEY_PORTS_CALLERS=platform   # POST /internal/v1/money/ports/call
-INTERNAL_API_SECRETS=<shared secret>
-```
+- `SERVICE_NAME`: `money`.
+- `MONEY_PORTS_CALLERS`: `platform`; it guards `POST /internal/v1/money/ports/call`.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
 
 `MONEY_PORTS_CALLERS` is a comma list of `SERVICE_NAME`s; unset refuses every caller. Every call goes through one route, naming the port and method; the money service answers from its own binding and refuses a port or method outside the table above. A required `tx` argument is never sent: the money service runs a write in a transaction of its own and a read on its own connection.
 
@@ -229,12 +209,7 @@ When Redis is lost or restored from a snapshot:
 
 1. Restore the latest snapshot, or start an empty Redis.
 2. Start the services. A consumer group the restore lost is recreated at the stream tail on boot, so it sees only events published from then on. Recurring job schedules are upserted again at boot.
-3. Once every service is up, replay what was published since the snapshot, with a margin, against each database that has an outbox:
-
-   ```sh
-   DATABASE_URL=... REDIS_URL=... npx openora-outbox-replay --since 2026-11-25T08:00:00Z --dry-run
-   DATABASE_URL=... REDIS_URL=... npx openora-outbox-replay --since 2026-11-25T08:00:00Z
-   ```
+3. Once every service is up, replay what was published since the snapshot, with a margin, against each database that has an outbox. Run `npx openora-outbox-replay` with `DATABASE_URL` and `REDIS_URL` set in the environment and the `--since` flag set to an ISO timestamp from before the snapshot. Add `--dry-run` to count first.
 
    It republishes every published `event_outbox` row with `published_at` at or after `--since`, oldest first, and prints a count per topic. `--topic <topic>` limits it to one topic; `--dry-run` only counts. A consumer skips an event it already applied, so a generous `--since` and a second run are safe. A `--since` older than the 7-day retention is refused with a non-zero exit: part of that range is already pruned. Unpublished rows are left to the relay.
 

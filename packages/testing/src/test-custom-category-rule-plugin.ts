@@ -11,11 +11,6 @@ import { game } from '@openora/core/casino/schema/gaming';
 import { and, eq, sql } from 'drizzle-orm';
 import * as z from 'zod';
 
-/**
- * Proves GAME_CATEGORY_RULE_CATALOG is a genuinely replaceable seam: an overlay rebinds
- * it, keeping the built-ins and adding one operator-supplied kind - games of a game type.
- * It declares no `isAffectedBy`, so only a save, an on-demand run or the sweep refreshes it.
- */
 export default {
   id: 'test-custom-category-rule',
   dependsOn: ['gaming'],

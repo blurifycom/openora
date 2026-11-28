@@ -30,12 +30,7 @@ export const player = pgTable(
     userId: uuid().notNull().unique('player_user_id_unique'),
     firstName: text(),
     lastName: text(),
-    // `mode: 'string'` keeps a birth date a plain calendar date: the default Date mode
-    // round-trips through a timestamp and shifts the day for players east or west of UTC.
     dateOfBirth: date({ mode: 'string' }),
-    // Self-declared contact number - deliberately not unique. `user.phoneNumber` is unique
-    // because it is a login credential; making this one unique too would turn an optional
-    // profile field into a phone-enumeration oracle and let anyone squat a stranger's number.
     phone: text(),
     country: text(),
     bio: text(),
@@ -48,24 +43,15 @@ export const player = pgTable(
     totalWagered: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     totalDeposits: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     lastSeenAt: timestamp({ withTimezone: true }),
-    // The IANA zone the player's browser last reported; null until a device reports one,
-    // never derived from `country` or `registrationIp`.
     timezone: text(),
-    // Last confirmed by a device, not last changed: it moves on every accepted capture.
     timezoneUpdatedAt: timestamp({ withTimezone: true }),
     termsVersion: text(),
     termsAcceptedAt: timestamp({ withTimezone: true }),
     ageAcceptedAt: timestamp({ withTimezone: true }),
     registrationIp: text(),
     registrationUserAgent: text(),
-    /** Shows "Incognito" in place of this player's username on a public leaderboard (a wager
-     * race, say) instead of the platform's own partial masking. Never affects the player's own
-     * standing, wagered total, or prize eligibility - only what other players see. */
     hideUsernameOnLeaderboards: boolean().notNull().default(false),
-    /** Off refuses new friend requests addressed to this player. A request the player sent
-     * themselves, and friendships that already exist, are unaffected. */
     allowFriendRequests: boolean().notNull().default(true),
-    /** Off hides this player's online status and last-seen time from their friends. */
     showOnlineStatusToFriends: boolean().notNull().default(true),
     accountManagerId: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -87,7 +73,6 @@ export const player = pgTable(
 
 export type Player = typeof player.$inferSelect;
 
-/** Written once, with the registration consent; never updated. */
 export const playerAcquisition = pgTable('player_acquisition', {
   id: uuid().primaryKey().defaultRandom(),
   playerId: uuid()

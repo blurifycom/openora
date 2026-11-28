@@ -103,7 +103,6 @@ export function createGamificationRouter({
 
   return os.router({
     ranks: {
-      // No `getUserId`: this one is public, and must stay that way.
       ladder: os.ranks.ladder.handler(() =>
         mapErrors({ NOT_FOUND: RankLadderNotConfiguredError }, () => ranks.getLadder()),
       ),
@@ -114,10 +113,8 @@ export function createGamificationRouter({
         ),
       ),
 
-      // No `getUserId`: public, so a chat avatar can show another player's rank badge.
       lookup: os.ranks.lookup.handler(({ input }) => ranks.lookup([...new Set(input.userIds)])),
 
-      // No `getUserId`: public, like `ladder`.
       players: os.ranks.players.handler(() => ranks.playersPerTier()),
 
       rewards: os.ranks.rewards.handler(({ context }) => rankRewards.list(getUserId(context))),
@@ -174,7 +171,6 @@ export function createGamificationRouter({
         rankChallenge.getForPlayer(getUserId(context)),
       ),
 
-      // No `getUserId`: public, the same rule `ranks.ladder` follows.
       ladder: os.rankChallenge.ladder.handler(() => rankChallenge.getLadder()),
     },
 
@@ -225,7 +221,6 @@ export function createGamificationRouter({
           return rakebackAdmin.liability();
         }),
 
-        // The same permission a manual balance adjustment needs.
         void: os.admin.rakeback.void.handler(async ({ input, context }) => {
           const { userId, ip, userAgent } = await adminGuard.assertSuperAdmin(context);
           return mapErrors(

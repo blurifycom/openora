@@ -9,57 +9,30 @@ This guide walks an AI agent through implementing a module end-to-end using only
 
 ## Step 1: Understand the platform
 
-```
-read-agents-md section="Mission"
-read-agents-md section="Architecture pillars"
-read-agents-md section="Where does X go?"
-```
-
-Read the output before proceeding. Do not skip this.
+Call the `read-agents-md` MCP tool three times, with the section set to "Mission", "Architecture pillars", and "Where does X go?". Read the output before proceeding. Do not skip this.
 
 ## Step 2: Check if the module already exists
 
-```
-list-modules
-```
-
-If the module is listed, use `describe-module <name>` to understand its current state.
+Call the `list-modules` MCP tool. If the module is listed, use `describe-module` with its name to understand its current state.
 
 ## Step 3: Scaffold the module
 
-```
-/scaffold-module <domain> <name>
-```
-
-This creates `packages/core/src/<domain>/<name>/` with all required files, wires the domain barrels + `@openora/core` exports + the contract slice, and registers it in `extensions.config.ts`.
+Run the `/scaffold-module` command with the domain and the module name. This creates `packages/core/src/<domain>/<name>/` with all required files, wires the domain barrels + `@openora/core` exports + the contract slice, and registers it in `extensions.config.ts`.
 
 ## Step 4: Define the Drizzle tables
 
 Edit `packages/core/src/<domain>/<module>/schema/index.ts`. Add `pgTable` definitions following these rules:
 
 - No FK references to tables owned by other modules (use plain ID columns). Within your own module, `.references(() => table.id)` is fine.
-- Table names are snake_case (`pgTable('tournament_entry', ...)`); the exported const is camelCase; the row type is `typeof <const>.$inferSelect`.
+- Table names are snake_case (a tournament entry table is named `tournament_entry`); the exported const is camelCase; the row type is `typeof <const>.$inferSelect`.
 
-Check for table-name collisions before adding:
+Check for table-name collisions before adding by calling the `propose-table-change` MCP tool with the snake_case table name.
 
-```
-propose-table-change table=<snake_case_name>
-```
-
-Inspect the existing DB shape any time with `get-drizzle-schema` (pass `module=<name>` to scope). Then generate the migration:
-
-```
-/regen
-```
+Inspect the existing DB shape any time with `get-drizzle-schema` (pass `module=<name>` to scope). Then generate the migration with the `/regen` command.
 
 ## Step 5: Define schemas
 
-Edit the module's `contract/` dir (`packages/core/src/<domain>/<module>/contract/index.ts`). It owns the route contract plus the request/response schemas and their `z.infer`'d types. Check if a shared schema already exists:
-
-```
-schema-get name=<EntityName>
-list-routes
-```
+Edit the module's `contract/` dir (`packages/core/src/<domain>/<module>/contract/index.ts`). It owns the route contract plus the request/response schemas and their `z.infer`'d types. Check if a shared schema already exists with the `schema-get` MCP tool (pass the entity name) and the `list-routes` tool.
 
 If a shared schema exists in `@openora/core/contracts`, re-export it instead of duplicating.
 
@@ -67,25 +40,15 @@ If a shared schema exists in `@openora/core/contracts`, re-export it instead of 
 
 Edit `packages/core/src/<domain>/<module>/service/<module>.service.ts`. Business logic only. Rules:
 
-- Take `DrizzleService` (from `@openora/core/server`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
+- Take `DrizzleService` (from `@openora/core/server`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query through the `db` property of the injected `DrizzleService`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
 - Throw domain errors via `createDomainError(...)` from `@openora/core`.
 - Never call external HTTP APIs directly - use an adapter interface from `@openora/core/contracts`.
 
 ## Step 7: Add routes
 
-For each operation, add a route:
+For each operation, run the `/scaffold-route` command with the module name, the HTTP method, and the path. A typical module gets a list route (GET on the plural collection path), a create route (POST on the same path), and a get-by-id route (GET on the collection path plus an `:id` segment).
 
-```
-/scaffold-route <name> GET /<name>s
-/scaffold-route <name> POST /<name>s
-/scaffold-route <name> GET /<name>s/:id
-```
-
-Check existing routes first to avoid duplicates:
-
-```
-list-routes module=<name>
-```
+Check existing routes first to avoid duplicates by calling `list-routes` with the module name.
 
 ## Step 8: Wire the plugin
 
@@ -99,25 +62,11 @@ The platform is headless backend only - pages, components, and styling live in t
 
 ## Step 10: Verify
 
-```
-/verify --filter @openora/core
-```
-
-Fix any typecheck, lint, boundary, or test failures before considering the work done.
+Run the `/verify` command with the `--filter` flag set to `@openora/core`. Fix any typecheck, lint, boundary, or test failures before considering the work done.
 
 ## Step 11: Integration check
 
-Start the API from a `pnpm create:app` app (in this repo `pnpm dev` only runs the MCP dev server; see the [Quickstart](./quickstart.md)):
-
-```
-pnpm dev
-```
-
-Call a route manually to confirm end-to-end wiring:
-
-```
-curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -d '{}'
-```
+Start the API from a `pnpm create:app` app (in this repo `pnpm dev` only runs the MCP dev server; see the [Quickstart](./quickstart.md)) with `pnpm dev`. Then call a route manually with `curl` against `http://localhost:3001` to confirm end-to-end wiring: send a POST with a JSON content type and an empty JSON body to the module's collection path.
 
 ## Common pitfalls
 

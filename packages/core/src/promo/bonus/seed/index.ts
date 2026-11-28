@@ -3,20 +3,6 @@ import type { DrizzleDb } from '@openora/core/server';
 import { promoWeight, promoWeightProfile } from '../schema/index.js';
 import { DEFAULT_WEIGHT_PROFILE_NAME } from '../service/grant.service.js';
 
-/**
- * The profile a grant scores against when nothing named one - a chat gift, a rain drop, a
- * donation, an admin's hand-issued bonus. It counts every bet in full; an operator narrows it from
- * the backoffice.
- *
- * Reference data, seeded the way IAM roles and player tags are: an environment that runs
- * migrations without running the seeds has no default profile, and every grant with no offer
- * behind it is refused until one exists. That is the fail-closed direction, but it is a real
- * deployment step rather than something the schema guarantees.
- *
- * Always resolves the profile id and always upserts its default weight - a profile that already
- * exists but is missing that weight (a partial prior seed, or one created by hand) is repaired,
- * not skipped. Skipping it leaves every bet scoring 0 percent and a bonus that can never complete.
- */
 export async function seedDefaultWeightProfile(db: DrizzleDb): Promise<void> {
   const [inserted] = await db
     .insert(promoWeightProfile)
@@ -42,10 +28,6 @@ export async function seedDefaultWeightProfile(db: DrizzleDb): Promise<void> {
     .insert(promoWeight)
     .values([
       { profileId, scope: 'default', scopeRef: null, contributionPercent: '100' },
-      // The headline rule from the specification: casino play clears a wagering requirement,
-      // sportsbook and PvP do not. Seeded rather than left to the default, because resolution
-      // falls through to the default and a bet the operator never weighted would otherwise
-      // count in full.
       { profileId, scope: 'product', scopeRef: 'sportsbook', contributionPercent: '0' },
       { profileId, scope: 'product', scopeRef: 'pvp', contributionPercent: '0' },
     ])

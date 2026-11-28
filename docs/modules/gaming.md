@@ -155,13 +155,7 @@ Three services split the work, mirroring how sorts are laid out: `GameCategoryRu
 
 `membershipRule` (`GameCategoryRuleSchema` in `@openora/core/contracts`) is a list of 1-10 clauses, `{ key, params }`. Each `key` names a **rule definition** in `GAME_CATEGORY_RULE_CATALOG`; `params` is that definition's own shape. The clauses run in order as a pipeline: the first matches over the whole catalogue, and every later clause only narrows what the one before it left. So clauses AND together, a ranking clause belongs last, and the same key may appear twice (two `tags` clauses require a tag from each).
 
-```json
-[
-  { "key": "providers", "params": { "providerIds": ["..."] } },
-  { "key": "tags", "params": { "tagIds": ["..."] } },
-  { "key": "most_played", "params": { "periodDays": 7, "limit": 20 } }
-]
-```
+For example, a rule that keeps games of chosen providers, then requires a chosen tag, then keeps the most played of what is left is three clauses in that order: `providers`, `tags`, `most_played`.
 
 Built-in definitions (`createDefaultGameCategoryRules()`):
 

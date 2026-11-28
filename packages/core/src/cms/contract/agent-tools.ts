@@ -2,9 +2,7 @@ import * as z from 'zod';
 import { TimestampSchema, UuidSchema, defineMcpTool } from '@openora/core/contracts';
 import { BannerLayoutSchema } from './enums.js';
 
-/** At most this many banner configurations cms.banners lists. */
 export const CMS_BANNERS_MAX = 100;
-/** At most this many image locales cms.banners lists per configuration. */
 export const CMS_BANNER_MAX_LOCALES = 50;
 
 export const CmsBannersInputSchema = z.object({
@@ -45,7 +43,6 @@ export const cmsBannersTool = defineMcpTool({
     'are more. No image URL, link or author is returned.',
   class: 'read',
   schemaVersion: 1,
-  // The banner admin reads assert content:update; content has no view action.
   iam: { resource: 'content', action: 'update' },
   inputSchema: CmsBannersInputSchema,
   outputSchema: CmsBannersOutputSchema,

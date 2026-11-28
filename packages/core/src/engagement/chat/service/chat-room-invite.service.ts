@@ -89,7 +89,6 @@ const invitingRole = or(
   and(eq(chatRoomMember.role, 'moderator'), eq(chatRoomConfiguration.moderatorInvite, true)),
 );
 
-// An invite lapses after the expiry window, once its room closes, or once its inviter may no longer invite.
 function liveInvite(db: Db, now: Date) {
   return and(
     eq(chatRoomInvite.status, 'pending'),
@@ -187,8 +186,6 @@ function aliveInvitableRoom(roomId: Uuid | typeof chatRoomInvite.roomId) {
   );
 }
 
-// Where each user stands towards an invite into the room; first match wins: member, banned,
-// invited, available.
 async function inviteStatuses(
   db: Db,
   roomId: Uuid,
@@ -237,7 +234,6 @@ async function inviteStatuses(
 const isInvitablePlayer = (account: Account | undefined): account is Account =>
   account?.role === 'player' && account.player !== null;
 
-// An excluded player neither sees nor accepts invites, and an invite to them is withheld.
 const isExcluded = (account: Account | undefined) => !account || account.excluded;
 
 export class ChatRoomInviteService {
@@ -248,7 +244,6 @@ export class ChatRoomInviteService {
     private readonly events: EventBus,
     private readonly accounts: AccountReader,
     private readonly membership: Pick<ChatRoomMembershipService, 'joinByInvite' | 'findMemberRoom'>,
-    // When bound, an operator's own play rule (an overlay rebinding) also withholds invites.
     private readonly playEligibility?: PlayEligibilityPort,
   ) {
     this.identityReader = playerIdsOf(accounts, logger);
@@ -276,8 +271,6 @@ export class ChatRoomInviteService {
     return room ?? null;
   }
 
-  // A non-member gets NOT_FOUND so a private room's existence is not revealed. Called outside
-  // any transaction: the audit signal reads the caller's account.
   private async refuseInvite(
     actorId: Uuid,
     roomId: Uuid,
@@ -320,14 +313,11 @@ export class ChatRoomInviteService {
     ip,
     userAgent,
   }: { actorId: Uuid; roomId: Uuid; userId: Uuid } & ClientMeta) {
-    // Postgres and the ban writer hold uuids lowercase: an uppercase id must key the same locks.
     const roomId = rawRoomId.toLowerCase();
     const userId = rawUserId.toLowerCase();
     if (actorId === userId) {
       throw new ChatRoomInviteSelfError();
     }
-    // Read uncached and before the transaction: an exclusion bites at once, and an unreachable
-    // identity service refuses before any write.
     const accounts = await this.accounts.getAccounts([actorId, userId], { playEligibility: true });
     const target = accounts.get(userId);
     const playRefused = await this.isPlayRefused(userId);
@@ -367,7 +357,6 @@ export class ChatRoomInviteService {
               playRefused ||
               (await hasActivePlatformBan(t, userId, roomId, now)) ||
               (await hasActiveBlock(t, userId, actorId));
-            // A lapsed invite still holds the one-pending slot in the partial unique index.
             const lapsed = await expirePendingInvites(
               t,
               and(eq(chatRoomInvite.roomId, roomId), eq(chatRoomInvite.inviteeId, userId)),
@@ -563,7 +552,6 @@ export class ChatRoomInviteService {
     return room.room;
   }
 
-  // A concurrent accept of the same invite finds it already accepted once it gets the room lock.
   private async joinByInvite(
     userId: Uuid,
     inviteId: Uuid,
@@ -612,7 +600,6 @@ export class ChatRoomInviteService {
     }
   }
 
-  // A retried accept returns the room it already joined, while the invitee is still in it.
   private async acceptedRoom(userId: Uuid, inviteId: Uuid) {
     const [accepted] = await this.drizzle.db
       .select({ roomId: chatRoomInvite.roomId })

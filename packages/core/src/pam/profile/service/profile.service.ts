@@ -75,11 +75,6 @@ const USERNAME_CHANGE_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 
-/**
- * Only the fields an update touched, so an audit record's before/after shows the change.
- * Dates go in as ISO strings: the audit hash is computed over this value but verified
- * against the jsonb read-back, where a raw `Date` would hash as `{}` and break the chain.
- */
 export function pickFields<T extends object>(row: T, keys: readonly (keyof T)[]) {
   return Object.fromEntries(
     keys.map((key) => {
@@ -91,7 +86,6 @@ export function pickFields<T extends object>(row: T, keys: readonly (keyof T)[])
 
 export function pickChanged<T extends object>(row: T, candidate: Partial<T>): Partial<T> {
   const keys = Object.keys(candidate) as (keyof T)[];
-  // Library boundary: `Object.fromEntries` widens the keys back to `string`.
   return Object.fromEntries(
     keys
       .filter((key) => candidate[key] !== undefined && candidate[key] !== row[key])
@@ -152,10 +146,6 @@ export class ProfileService implements PlayerProvisioning {
     this.reservedUsernames = reservedUsernames;
   }
 
-  /**
-   * Idempotent: a retried registration never overwrites the original consent record, and
-   * the acquisition is stored only with the player row it was captured for.
-   */
   async createForRegistration(
     { userId, acquisition, ...consent }: PlayerRegistrationRecord,
     onCreated?: (tx: unknown, playerId: string) => Promise<void>,
@@ -196,11 +186,6 @@ export class ProfileService implements PlayerProvisioning {
     });
   }
 
-  /**
-   * `player.user_id` carries no foreign key (cross-module FKs are not allowed), so the
-   * identity row is resolved first: materialising a profile for a missing user would
-   * create an orphan that every downstream join then has to defend against.
-   */
   private async ensureProfileRow(userId: User['id']) {
     const identity = await fetchIdentityByUserId(this.drizzle.db, userId);
     if (!identity) {
@@ -212,9 +197,6 @@ export class ProfileService implements PlayerProvisioning {
       return { row: existing, identity };
     }
 
-    // Upsert: a concurrent first-hit may insert the row between our select and
-    // this insert. The no-op set makes the conflict path return the winning row
-    // without overwriting it, so we always get exactly one row back.
     const [created] = await this.drizzle.db
       .insert(player)
       .values({ userId })
@@ -232,12 +214,6 @@ export class ProfileService implements PlayerProvisioning {
     return this.ensureProfile(userId);
   }
 
-  /**
-   * Stores the IANA zone the browser reported. Display metadata - it never gates anything and
-   * stays out of RG windows and audit records, which remain UTC. `timezoneUpdatedAt` moves on
-   * every accepted capture, including one repeating the stored zone, so it reads as "last
-   * confirmed". An unrecognised zone, and a player with no row yet, are both silent no-ops.
-   */
   async recordTimezone(userId: User['id'], timezone: string): Promise<void> {
     const resolved = resolveTimezone(timezone);
     if (!resolved) {
@@ -383,8 +359,6 @@ export class ProfileService implements PlayerProvisioning {
     const { row } = await this.ensureProfileRow(userId);
     const before = row.displayCurrency;
 
-    // One transaction: a display-currency change without its audit record is an
-    // unexplained change, so the write and the record commit together or not at all.
     await this.drizzle.db.transaction(async (tx) => {
       await tx
         .update(player)
@@ -415,8 +389,6 @@ export class ProfileService implements PlayerProvisioning {
   ): Promise<DisplayCurrencyInfo> {
     await this.ensureProfileRow(userId);
 
-    // The row is locked before `before` is read, so two racing picks each audit the value
-    // they actually replaced; the write and its record commit together or not at all.
     const row = await this.drizzle.db.transaction(async (tx) => {
       const [locked] = await tx
         .select()

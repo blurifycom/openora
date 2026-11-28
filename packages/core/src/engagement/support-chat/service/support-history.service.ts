@@ -29,7 +29,6 @@ const logger = createLogger('support-chat');
 
 const HISTORY_CACHE_TTL_MS = 60_000;
 const MAX_PREVIOUS_EMAILS = 3;
-// How far the clock stamping a change may run ahead of the one stamping its audit row.
 const MAX_CLOCK_SKEW_MS = 5_000;
 
 export const SupportHistoryNotConfiguredError = createDomainError<[]>(
@@ -45,19 +44,14 @@ const STATUSES_OF: Record<SupportHistoryItem['kind'], ReadonlySet<SupportHistory
 
 const SupportHistoryItemsSchema = z.array(SupportHistoryItemSchema);
 
-// `timedByChange` when `at` is the change time the event carried, not the row's write time.
 type EmailChange = {
   before: string | null;
   after: string | null;
   at: Date;
-  // When the audit row was written, which always follows the change.
   writtenAt: Date;
   timedByChange: boolean;
 };
 
-// A redelivered event writes its row again, wherever it lands: the same emails and the same
-// carried change time as an earlier row. The first stays in place and the repeats are dropped. A
-// row timed by its write time cannot be told from a real repeat, so it is never dropped.
 export function withoutRedeliveries(changes: readonly EmailChange[]) {
   const seen = new Set<string>();
   return changes.filter((change) => {
@@ -73,25 +67,6 @@ export function withoutRedeliveries(changes: readonly EmailChange[]) {
   });
 }
 
-/**
- * The emails a player held and when, oldest first, the current one last and open-ended. The audit
- * trail is trusted from its end back to its first break, walking back from the current email: each
- * change must name as its new email the one the next change replaced (the last change the current
- * email), and its time must be later than every earlier change and registration, and not later than
- * its own audit write allowing for clock skew. A change claiming a time ahead of the real clock
- * thus breaks every later one until real time passes it. Everything from the first break walking
- * back is dropped, the window opened by a change with a wrong time included. When even the last
- * change cannot be trusted there is no window at all. `complete` is false when a break or the cap
- * on previous emails left an older email out; `broken` tells a break from the cap. A row repeating
- * an earlier one, change time included, is a redelivery and counts once. An intact trail whose
- * oldest email differs, case-insensitively, from `registeredEmail` is broken and has no
- * registration window; otherwise the oldest window starts at registration, which
- * `boundFirstWindow` checks against other accounts. Not noticed: a lost run
- * returning to the address it left, a lost first change when `registeredEmail` is null, a time later
- * than the real change by no more than its audit write's delay plus the skew, which widens the
- * earlier window by that much, and a clock running behind whose stamps still follow every earlier
- * one, which shifts the bounds by the lag.
- */
 export function buildEmailWindows({
   currentEmail,
   registeredEmail,
@@ -107,14 +82,12 @@ export function buildEmailWindows({
   if (!currentEmail) {
     return { windows: [], complete: rows.length === 0, broken: rows.length > 0 };
   }
-  // floors[k]: the latest time stamped before row k, registration included.
   const floors: number[] = [];
   let latest = registeredAt.getTime();
   for (const { at } of rows) {
     floors.push(latest);
     latest = Math.max(latest, at.getTime());
   }
-  // Newest first while walking back.
   const found: SupportHistoryEmailWindow[] = [];
   let email = currentEmail;
   let to: string | null = null;
@@ -148,16 +121,6 @@ export function buildEmailWindows({
   };
 }
 
-/**
- * Checks the one window `buildEmailWindows` only assumes: the oldest of a complete trail, opened
- * at registration. A lost first change would leave the player's later email held from
- * registration, over the time another account held it. `others` are other accounts' changes
- * naming that email, compared case-insensitively. The latest one strictly after registration and
- * before the window closes decides: another account leaving the address opens the window then,
- * and another account taking it drops the window, as nothing places when that account let it go.
- * Either way the trail is reported broken. An incomplete result, which has no registration window,
- * is returned as it is.
- */
 export function boundFirstWindow(
   built: ReturnType<typeof buildEmailWindows>,
   registeredAt: Date,
@@ -173,7 +136,6 @@ export function boundFirstWindow(
   for (const { before, after, at } of others) {
     const took = after?.toLowerCase() === email;
     const inside = at.getTime() > registeredAt.getTime() && at.getTime() < until;
-    // A tie goes to the account taking the address, which fails closed.
     if (
       inside &&
       (took || before?.toLowerCase() === email) &&
@@ -192,8 +154,6 @@ export function boundFirstWindow(
   };
 }
 
-// The change time the event carried, when it is a valid timestamp; rows from before it fall back
-// to their write time.
 const changedAtOf = (after: Record<string, unknown> | null) => {
   const parsed = TimestampSchema.safeParse(after?.['changedAt']);
   return parsed.success ? new Date(parsed.data) : null;
@@ -225,13 +185,7 @@ type SupportHistoryDeps = {
 export class SupportHistoryService {
   constructor(private readonly deps: SupportHistoryDeps) {}
 
-  /**
-   * A player's vendor tickets and chat threads, cached whole per `(userId, includeResolved)` for
-   * a minute, `fetchedAt` included, unless the email trail has a gap while a change of it is still
-   * queued for the audit chain. Each section fails on its own, its reason to the log only.
-   */
   async getHistory(userId: User['id'], includeResolved: boolean) {
-    // The audit log keeps ids as text, so an uppercase id would miss its rows and split the cache.
     const id = userId.toLowerCase();
     let lagging = false;
     return cached(
@@ -243,9 +197,6 @@ export class SupportHistoryService {
         lagging = lags;
         return history;
       },
-      // A gap the audit chain may close once a queued change ships is read again on the next
-      // call; any other gap (vendor down, the email cap, a contradicting trail) stays one, so it
-      // is cached like a full answer and the vendor is not asked again on every view.
       () => !lagging,
     );
   }
@@ -298,8 +249,6 @@ export class SupportHistoryService {
     if (!row) {
       throw new SupportChatPlayerNotFoundError(userId);
     }
-    // The audit subject is the player when the account has one, the user otherwise. Each change is
-    // timed by the change time it carries, or by its write time when it carries none.
     const subject = { playerId: row.playerId, userId };
     const changes = await this.deps.audit.emailChanges(subject, tx);
     const built = buildEmailWindows({
@@ -309,8 +258,6 @@ export class SupportHistoryService {
       changes: changes.map(toEmailChange),
     });
     const first = built.complete ? built.windows[0] : undefined;
-    // Defense in depth: the player's own rows of a complete trail fall at or after the oldest
-    // window's `to` and are ignored anyway, yet the reader leaves them out too.
     const others = first
       ? await this.deps.audit.othersEmailChanges({ ...subject, email: first.email }, tx)
       : [];
@@ -339,7 +286,6 @@ export class SupportHistoryService {
     } catch (err) {
       return unavailable(reasonOf(err));
     }
-    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
     let parsed: ReturnType<typeof SupportHistoryItemsSchema.safeParse>;
     try {
       parsed = SupportHistoryItemsSchema.safeParse(answer);

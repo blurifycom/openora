@@ -23,13 +23,6 @@ const toMatch = ({ userId, username, avatarUrl }: Account): PlayerMatch => ({
 
 const BOUND_PORT_CONCURRENCY = 8;
 
-/**
- * {@link AccountReader} on the identity database, read live on every call. `excluded` is core's
- * own play check. A `getAccounts` read that sets `playEligibility` also asks the bound port, for
- * every player account core admits, at a bounded concurrency: `playEligibility` resolves it at
- * call time, so a rebinding by a later plugin applies, and core's own port is not asked twice.
- * Searches and username lookups never ask it, so a throwing overlay port cannot fail them.
- */
 export class DrizzleAccountReader implements AccountReader {
   constructor(
     private readonly drizzle: DrizzleService,

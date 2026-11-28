@@ -5,7 +5,6 @@ export const SPORTSBOOK_BET_STATUSES = ['reserved', 'accepted', 'cancelled', 'se
 export const SportsbookBetStatusSchema = z.enum(SPORTSBOOK_BET_STATUSES);
 export type SportsbookBetStatus = z.infer<typeof SportsbookBetStatusSchema>;
 
-/** A label on a settled bet, not a state: what the provider settled it as. */
 export const SPORTSBOOK_BET_RESULTS = [
   'won',
   'lost',
@@ -21,7 +20,6 @@ export const SPORTSBOOK_CANCEL_REASONS = ['rejected', 'discarded'] as const;
 export const SportsbookCancelReasonSchema = z.enum(SPORTSBOOK_CANCEL_REASONS);
 export type SportsbookCancelReason = z.infer<typeof SportsbookCancelReasonSchema>;
 
-/** `voided`: a void of the bet whose reopen recorded the shortfall cancelled what was left of it. */
 export const SPORTSBOOK_DEBT_CAUSES = [
   'recorded',
   'offset',
@@ -54,12 +52,10 @@ export const SPORTSBOOK_REFUSAL_REASONS = [
 export const SportsbookRefusalReasonSchema = z.enum(SPORTSBOOK_REFUSAL_REASONS);
 export type SportsbookRefusalReason = z.infer<typeof SportsbookRefusalReasonSchema>;
 
-/** The provider's own name for itself, e.g. its overlay plugin id. Prefixes every wallet reference. */
 export const SportsbookProviderNameSchema = z
   .string()
   .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, 'lowercase provider key, e.g. acme-sports');
 
-/** An id the provider minted: a bet id or a transaction id. */
 export const SportsbookProviderIdSchema = z.string().trim().min(1).max(128);
 
 export const SportsbookBetLegSchema = z.object({
@@ -80,27 +76,19 @@ const ledgerRequest = {
 
 const SportsbookBetLegsSchema = z.array(SportsbookBetLegSchema).min(1).max(100);
 
-/** The operator's own name for a promotion; core reports by it and never interprets it. */
 export const SportsbookPromotionTypeSchema = z
   .string()
   .trim()
   .min(1)
   .max(64)
-  // A record drops this key, so the funder map could never name it; refused, it reaches no bet.
   .refine((type) => type !== '__proto__', 'reserved name');
 
 const promotionLabel = {
   type: SportsbookPromotionTypeSchema,
-  /** The provider's id for the promotion granted to the player, when it has one. */
   id: SportsbookProviderIdSchema.optional(),
-  /** The promotion's part of `potentialPayout`, for a boost. */
   potentialAmount: MoneyAmountSchema.optional(),
 };
 
-/**
- * The money facts of a provider promotion on a bet. Strict, so a fact core does not understand
- * is refused rather than dropped.
- */
 export const SportsbookPromotionSchema = z.discriminatedUnion('stake', [
   z
     .object({ ...promotionLabel, stake: z.literal('promotion'), voidReturnsStake: z.boolean() })
@@ -126,11 +114,6 @@ export const SportsbookSessionArgsSchema = z.object({
 });
 export type SportsbookSessionArgs = z.input<typeof SportsbookSessionArgsSchema>;
 
-/**
- * The terms the provider accepted, sent together or not at all: the reserved legs in the same order,
- * where only the odds may change, and the potential payout they give. The stake never changes.
- * `promotionPotential` is the promotion's part of that payout, for a boost the new odds changed.
- */
 export const SportsbookConfirmArgsSchema = z.object({
   ...ledgerRequest,
   potentialPayout: MoneyAmountSchema.optional(),
@@ -145,13 +128,10 @@ export const SportsbookCancelArgsSchema = z.object({
 });
 export type SportsbookCancelArgs = z.input<typeof SportsbookCancelArgsSchema>;
 
-/** `expectedVersion` pins the settle to the bet version the caller observed; omit it to settle whatever version is open. */
 export const SportsbookSettleArgsSchema = z.object({
   ...ledgerRequest,
   result: SportsbookBetResultSchema,
-  /** The total payout of this settlement, stake included; `'0'` for a loss. Never a delta. */
   payout: MoneyAmountSchema,
-  /** The part of `payout` a promotion funds; core derives it from the bet when omitted. */
   promotionAmount: MoneyAmountSchema.optional(),
   expectedVersion: z.int().positive().optional(),
 });
@@ -163,7 +143,6 @@ export const SportsbookReopenArgsSchema = z.object({
 });
 export type SportsbookReopenArgs = z.input<typeof SportsbookReopenArgsSchema>;
 
-/** What the provider reports for a bet when core asks: reconciliation and align-with-provider act on it. */
 export const SportsbookProviderBetStatusSchema = z.discriminatedUnion('status', [
   z.object({ status: z.enum(['pending', 'accepted', 'rejected', 'not_found']) }),
   z.object({

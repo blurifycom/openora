@@ -5,18 +5,10 @@ import { EVENT_RETENTION_MS } from '../../kernel/event-bus.js';
 import { eventOutbox, processedEvents, type EventOutboxRow } from './schema.js';
 import type { DrizzleDb } from '../drizzle.js';
 
-// A claimed row whose relay died mid-publish becomes claimable again after this.
 const CLAIM_LEASE_MS = 30_000;
 const PRUNE_INTERVAL_MS = 60 * 60_000;
-// Dedupe records outlive the stream entries they guard: the broker only redelivers an entry
-// younger than EVENT_RETENTION_MS (an older pending one is dead-lettered), and a record is
-// written after its entry, so a day's margin keeps every redeliverable entry deduped.
 const PROCESSED_EVENTS_RETENTION_MS = EVENT_RETENTION_MS + 24 * 60 * 60_000;
-// A batch stops publishing once this much of its lease is spent and hands the rest back, so
-// another relay can't reclaim and republish rows this one is still working through.
 const PUBLISH_BUDGET_MS = CLAIM_LEASE_MS / 2;
-// The relay reports the backlog at most this often, and only while the oldest unpublished row
-// is older than the lag threshold.
 const LAG_CHECK_INTERVAL_MS = 60_000;
 const LAG_THRESHOLD_MS = 60_000;
 
@@ -24,10 +16,6 @@ const logger = createLogger('outbox-relay');
 
 type EventOutboxBacklog = { pending: number; oldestPendingAgeMs: number };
 
-/**
- * Unpublished `event_outbox` rows (claimed or not) and the age of the oldest, both read on the
- * database clock so a skewed replica clock cannot hide or invent lag.
- */
 async function eventOutboxBacklog(db: DrizzleDb): Promise<EventOutboxBacklog> {
   const result = await db.execute<{ pending: number; oldest_pending_age_ms: number | null }>(sql`
     SELECT count(*)::int AS pending,
@@ -40,8 +28,8 @@ async function eventOutboxBacklog(db: DrizzleDb): Promise<EventOutboxBacklog> {
 }
 
 export type OutboxRelayOptions = {
-  intervalMs?: number; // poll cadence; default 200
-  batchSize?: number; // rows per drain; default 100
+  intervalMs?: number;
+  batchSize?: number;
   onError?: (err: unknown) => void;
 };
 
@@ -58,7 +46,6 @@ export function toEnvelope(row: EventOutboxRow): EventEnvelope {
   };
 }
 
-/** The longest-waiting event the relay has not published yet, if any. */
 export async function oldestUnrelayedEvent(
   db: DrizzleDb,
 ): Promise<Pick<EventOutboxRow, 'eventId' | 'occurredAt'> | undefined> {
@@ -71,26 +58,6 @@ export async function oldestUnrelayedEvent(
   return row;
 }
 
-/**
- * Publishes pending `event_outbox` rows to the `MESSAGE_BROKER`. Runs as a
- * background poll loop (`start`/`stop`) and is also drainable on demand
- * (`drainOnce`) for tests or a synchronous flush.
- *
- * Each drain atomically claims a batch in one `UPDATE ... WHERE event_id IN
- * (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING`, stamping `claimed_at`, so
- * concurrent relays (one per replica) never claim the same row inside its lease.
- * A row is marked published only AFTER `broker.publish` resolves; a failing row
- * is reported to `onError`, its lease released for the next tick, and the rest of
- * the batch carries on. A relay that dies mid-publish leaves its rows claimed until
- * the lease expires, then another relay republishes them - at-least-once delivery,
- * deduped downstream by `processed_events`.
- *
- * The same loop prunes published outbox rows older than `EVENT_RETENTION_MS` (and
- * `processed_events` a day later), at most once an hour per replica.
- *
- * ponytail: polls every 200ms per replica (an indexed, usually-empty claim). Swap
- * the poll for LISTEN/NOTIFY if the idle query load or the publish latency matters.
- */
 export class OutboxRelay {
   private timer: ReturnType<typeof setInterval> | undefined;
   private draining = false;
@@ -121,8 +88,6 @@ export class OutboxRelay {
     }
   }
 
-  // Keeps draining while batches come back full, so a backlog clears at publish speed
-  // instead of one batch per tick. A no-op while another drain is in flight.
   private async drainUntilIdle(): Promise<void> {
     const batchSize = this.opts.batchSize ?? 100;
     let published: number;
@@ -131,9 +96,6 @@ export class OutboxRelay {
     } while (this.timer && published === batchSize);
   }
 
-  // Publish one claimed batch. Returns how many rows were published. Reentrant-safe:
-  // a second call while a drain is in flight is a no-op. Never throws - every failure
-  // goes to `onError`.
   async drainOnce(): Promise<number> {
     if (this.draining) {
       return 0;
@@ -175,8 +137,6 @@ export class OutboxRelay {
   }
 
   private async claimBatch(): Promise<EventOutboxRow[]> {
-    // DB clock on both sides of the lease (claimed_at is stamped with now()), so replica
-    // clock skew cannot steal or strand a live claim.
     const leaseExpiredBefore = sql`now() - ${CLAIM_LEASE_MS} * interval '1 millisecond'`;
     const claimable = this.db
       .select({ eventId: eventOutbox.eventId })

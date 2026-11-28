@@ -1,6 +1,3 @@
-// The consumer guard-mr hook keeps an agent from opening a merge/pull request on a commit
-// `pnpm verify` never passed. Drive it in a throwaway git repo: no stamp is denied, a stamp of
-// the clean HEAD is allowed, and a new commit or an uncommitted edit invalidates it.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
@@ -171,7 +168,6 @@ test("a checkout of another repository is left to that repository's rules", () =
       from(`gh pr create --draft -B dev -H feat --title 'fix: a; b' --body-file "b.md"`),
       ALLOWED,
     );
-    // Anything but one plain create could reach back into the guarded repository.
     assert.equal(from('gh pr create -R other/repo --head feat'), DENIED);
     assert.equal(from('gh pr create -R o/r --head unverified'), DENIED);
     assert.equal(from('gh pr create -R other/repo -R github.com/O/R.git --head x'), DENIED);
@@ -243,7 +239,6 @@ test("a checkout of another repository is left to that repository's rules", () =
     } finally {
       git('worktree', 'remove', '--force', unstamped);
     }
-    // A rewrite that sends the other checkout's own remote here.
     execFileSync(
       'git',
       ['config', 'url.git@github.com:o/r.git.insteadOf', 'https://github.com/other/repo.git'],
@@ -254,7 +249,6 @@ test("a checkout of another repository is left to that repository's rules", () =
       cwd: other,
     });
     assert.equal(from('gh pr create --draft --base dev --head feat'), ALLOWED);
-    // A remote that gh would decode or normalise into this repository.
     for (const url of [
       'https://github.com/o/r?x=1',
       'https://github.com/o%2Fr',
@@ -265,7 +259,6 @@ test("a checkout of another repository is left to that repository's rules", () =
       assert.equal(from('gh pr create --draft --base dev --head feat'), DENIED, url);
       execFileSync('git', ['remote', 'remove', 'odd'], { cwd: other });
     }
-    // A remote of the other checkout pointing here sends even a plain create here.
     execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/o/r'], { cwd: other });
     assert.equal(from('gh pr create --draft --base dev --head feat'), DENIED);
   } finally {

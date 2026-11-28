@@ -51,15 +51,10 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
 
   constructor(private readonly container: Container<C>) {}
 
-  // A module this process loads only for what it provides (ADR-0050): it still binds every port
-  // and its router factories still run (they build the services its ports and the selected
-  // modules read), but each router is swapped for an empty one and its event handlers, trigger
-  // listeners and job workers are withheld, so another process that selects it consumes for it.
   requireOnly(pluginId: string): void {
     this._requiredOnly.add(pluginId);
   }
 
-  /** What a required-only module registered and this process does not consume. */
   withheld(): readonly WithheldRegistration[] {
     return this._withheld;
   }
@@ -76,10 +71,6 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
     this._owner = pluginId ?? UNKNOWN_OWNER;
   }
 
-  // Last-wins, so an overlay loaded after a module can rebind its adapter token.
-  // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
-  // even though the type system already blocks them - catches plain-JS callers and cast escapes.
-  // Canonical sealed list lives in `@openora/core/compliance`.
   provide = <T extends Token<unknown>>(
     token: T,
     factory: (container: TypedContainer<C>) => TokenValue<T>,
@@ -97,11 +88,6 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
     this.container.registerUnsafe(token, factory);
   };
 
-  // Bind-once. The owning module calls this during its own register() to bind the
-  // canonical implementation; a second call for the same token - an overlay trying
-  // to slip past provide()'s rejection, or a duplicate registration - throws instead
-  // of silently rebinding (there is no "last-wins" for a sealed token). The container
-  // seals it too, so no later register on the container itself rebinds it either.
   provideSealed = <T extends SealedToken<unknown>>(
     token: T,
     factory: (container: TypedContainer<C>) => TokenValue<T>,

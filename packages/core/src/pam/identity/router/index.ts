@@ -33,18 +33,8 @@ import {
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import { UsernameBlockedError } from '../../shared/username.js';
 
-// The routes an account owing a second-factor enrolment must still reach: the session
-// stream, its own sessions, and the phone verification an SMS factor needs.
 const DURING_TWO_FACTOR_SETUP = { allowPendingTwoFactorSetup: true } as const;
 
-// Identity routes mostly read the caller from the session headers rather than through
-// getUserId, so getUserId's hold does not reach them. While an account owes a
-// second-factor enrolment every identity route is refused except these: signing in or
-// out, the anonymous recovery flows, reading who it is and its security state, enrolling
-// a factor, the phone verification an SMS factor needs, and its own sessions. Anything
-// else - turning "require 2FA on login" off, changing the email, the profile, the
-// password - would let a password-only session settle in or hand over the account before
-// the player has a second factor again.
 const REACHABLE_DURING_TWO_FACTOR_SETUP: ReadonlySet<string> = new Set([
   'register',
   'usernameAvailable',
@@ -77,20 +67,10 @@ function requireSessionId(context: OssContext) {
   return sessionId;
 }
 
-// Server-to-client push channel for a user's own session-lifecycle notices
-// (revoke-all, single-session revoke, unlock). Per
-// docs/standards/messaging-and-microservices.md, push belongs on REALTIME_TRANSPORT
-// (Redis Pub/Sub, fans out to every replica), not the domain EventBus (a Redis
-// Streams consumer group delivers each event to only ONE replica - a tab connected
-// to any other replica would never see the push). The plugin republishes here off
-// the durable `identity.sessions.revoked_all` / `identity.session.revoked` /
-// `identity.user.unlocked` domain events; see plugin.ts.
 export function sessionEventsChannel(userId: User['id']): string {
   return `identity:session-events:${userId}`;
 }
 
-// Carries who to spare/target so each connection can decide for itself; the wire
-// contract the client sees stays { type: 'revoked' | 'unlocked' }.
 export type SessionEventsPush =
   | { type: 'revoked-all'; exceptSessionId?: Session['id'] }
   | { type: 'session-revoked'; sessionId: Session['id'] }
@@ -106,9 +86,6 @@ export function createIdentityRouter(
   adminSecurity: AdminSecurityService,
   withdrawalPin: WithdrawalPinService,
 ) {
-  // `player:update` covers players only: acting on a staff account - a super-admin's included -
-  // is super-admin-only, so a junior staffer cannot clear a senior one's brute-force lockout
-  // or trigger resets on it. An unknown user falls through to the service's NOT_FOUND.
   const assertMayActOnAccount = async (context: OssContext, userId: User['id']) => {
     const role = await identity.findAccountRole(userId);
     if (role !== null && role !== 'player') {
@@ -119,7 +96,6 @@ export function createIdentityRouter(
   const os = implement(identityContract)
     .$context<OssContext>()
     .use(({ context, path, next }) => {
-      // The first segment is the namespace this router is mounted under.
       const procedure = path.slice(1).join('.');
       if (
         context.auth?.twoFactorSetupRequired &&
@@ -166,9 +142,6 @@ export function createIdentityRouter(
     ),
 
     me: os.me.handler(({ context }) => {
-      // Disable browser caching for the session state query. This prevents aggressive
-      // heuristic caching (e.g. in Chrome/Safari) from serving a stale logged-in session
-      // state after the session is revoked or logged out.
       if (context.resHeaders) {
         context.resHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate');
         context.resHeaders.set('Pragma', 'no-cache');
@@ -243,18 +216,12 @@ export function createIdentityRouter(
               push({ type: 'unlocked' });
               return;
             }
-            // A single-session revoke - including the idle-timeout expiry
-            // `SessionIdleService` performs - names exactly one session, so only that tab
-            // is told. Without it the tab it just killed keeps rendering as signed in
-            // until its next request happens to 401.
             if (event.type === 'session-revoked') {
               if (event.sessionId === connectionSessionId) {
                 push({ type: 'revoked' });
               }
               return;
             }
-            // Self-service password change spares the acting session via
-            // exceptSessionId; the admin revoke-all path leaves it unset and kicks all.
             if (event.exceptSessionId && event.exceptSessionId === connectionSessionId) {
               return;
             }
@@ -406,8 +373,6 @@ export function createIdentityRouter(
         }),
       ),
 
-      // Scoped to the caller's own userId, so a forged id cannot kill someone
-      // else's device - a miss is a 404, not a cross-user revoke.
       revokeMine: os.sessions.revokeMine.handler(({ input, context }) => {
         const userId = getUserId(context, DURING_TWO_FACTOR_SETUP);
         return mapErrors(
@@ -424,8 +389,6 @@ export function createIdentityRouter(
 
       listAll: os.sessions.listAll.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'sessions', 'view');
-        // The cross-user list returns player email/role/IP with free-text email
-        // search, so it needs the player-data permission on top of session hygiene.
         await adminGuard.assert(context, 'player', 'view');
         return sessionSvc.listAllActiveSessions({
           role: input.role,

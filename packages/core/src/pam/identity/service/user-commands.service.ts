@@ -18,7 +18,6 @@ export function isUniqueViolation(error: unknown, constraint: string): boolean {
 
 export const generatedAdminUsername = () => `admin_${randomBytes(6).toString('hex')}`;
 
-/** Identity owns the `user` table, so sibling modules mutate it through this port. */
 export class DrizzleUserCommands implements UserCommands {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -32,12 +31,9 @@ export class DrizzleUserCommands implements UserCommands {
   async setUsername(userId: User['id'], username: string, tx?: unknown) {
     const db = tx === undefined ? this.drizzle.db : (tx as DrizzleTx);
     try {
-      // Registration writes the handle to `name` too; keep them in step so the old handle cannot linger.
       await db.update(user).set({ username, name: username }).where(eq(user.id, userId));
     } catch (error) {
       if (isUniqueViolation(error, 'user_username_unique')) {
-        // Thrown as the transport error rather than a domain class: consumers live in
-        // sibling modules and cannot import identity's internals to map it.
         throw new ORPCError('CONFLICT', { message: 'Username is already in use' });
       }
       throw error;
@@ -53,7 +49,6 @@ export class DrizzleUserCommands implements UserCommands {
         await db
           .insert(user)
           .values({
-            // better-auth stores emails lowercased; sign-up and sign-in must agree with this row.
             email: input.email.toLowerCase(),
             name: input.name,
             username: generatedAdminUsername(),

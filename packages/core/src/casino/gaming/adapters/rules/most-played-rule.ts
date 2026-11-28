@@ -10,17 +10,6 @@ import { playableGameCondition } from '../../../shared/game-catalog.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/**
- * The `limit` most-played games - by completed rounds over the last `periodDays` days -
- * most played first. Ranks playable games only, so an inactive game never takes a slot a
- * player would see as a gap, and never admits a game with no completed round in the
- * window - a quiet catalogue yields fewer than `limit` games rather than arbitrary ones.
- *
- * Round counts come from ADMIN_GAME_REPORTING, so an overlay that rebinds the report also
- * drives this rule: its `rankAllGamesByRounds` for a first clause and `rankGamesByRounds`
- * otherwise when bound, each counting and limiting in one query, else the full game
- * performance report. A count is currency-neutral: rounds in every currency weigh the same.
- */
 export function createMostPlayedRule(drizzle: DrizzleService, reporting: AdminGameReporting) {
   return defineGameCategoryRule({
     key: 'most_played',
@@ -45,8 +34,6 @@ export function createMostPlayedRule(drizzle: DrizzleService, reporting: AdminGa
         return new Set(rows.map((row) => row.id));
       };
       if (!candidateIds && reporting.rankAllGamesByRounds) {
-        // The whole catalogue in one ranking; only when unplayable games took slots does
-        // it fall back to listing the playable games and ranking those.
         const ranked = await reporting.rankAllGamesByRounds({ ...window, limit: params.limit });
         const playableIds = await playableAmong(ranked.map((row) => row.gameId));
         const kept = ranked.filter((row) => row.roundsPlayed > 0 && playableIds.has(row.gameId));
@@ -58,8 +45,6 @@ export function createMostPlayedRule(drizzle: DrizzleService, reporting: AdminGa
       if (playableIds.size === 0) {
         return [];
       }
-      // Always narrowed to the playable candidates, so rounds are counted for those games
-      // only - never the whole round table for a catalogue slice.
       const range = { ...window, gameIds: [...playableIds] };
       const ranked = reporting.rankGamesByRounds
         ? await reporting.rankGamesByRounds({ ...range, limit: params.limit })
@@ -73,9 +58,5 @@ export function createMostPlayedRule(drizzle: DrizzleService, reporting: AdminGa
         .slice(0, params.limit)
         .map((row) => row.gameId);
     },
-    // No isAffectedBy: this kind aggregates the round table, so it is refreshed by the
-    // periodic sweep (which its rolling window needs anyway) and on demand - never by a
-    // burst of catalogue events. A game that goes unplayable in between is hidden from
-    // players by the readers regardless.
   });
 }

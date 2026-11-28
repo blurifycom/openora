@@ -62,15 +62,8 @@ import {
   NoPendingLimitChangeError,
 } from '../service/rg-self-service.service.js';
 
-// Volume throttle on the module's one anonymous route, sized for a browser rather than for
-// a credential-guessing surface. Deliberately left on the default fail-open: a consumer that
-// gates page access on this answer goes dark if a limiter outage starts denying it.
 const GEO_CHECK_RATE_LIMIT = { limit: 60, windowMs: 60 * 1000 };
 
-// Responsible-gambling self-protection stays reachable for any signed-in player, including
-// one held to a second-factor enrolment after a support reset: excluding yourself, cooling
-// off, tightening a limit or cancelling a pending loosening never waits on 2FA. Removing a
-// limit or confirming a loosening does.
 const RG_SELF_PROTECTION = { allowPendingTwoFactorSetup: true } as const;
 
 export function kycStatusChannel(userId: User['id']): string {
@@ -318,8 +311,6 @@ export function createComplianceRouter({
       return createKycStatusStream(realtime, getUserId(context), signal);
     }),
 
-    // M2M provider webhook - no admin session. Verify the verbatim bytes against the
-    // signature header or reject (fail closed); never fall back to an empty body.
     kycWebhook: os.kycWebhook.handler(async ({ context }) => {
       const rawBody = context.rawBody;
       if (
@@ -330,21 +321,7 @@ export function createComplianceRouter({
       }
       const decision = kycAdapter.parseWebhook?.(rawBody, context.request.headers);
       if (decision) {
-        // Dedup on a hash of the verbatim delivery bytes, never on referenceId:status.
-        // The vendor-neutral KycResult carries no delivery/event id, so the only
-        // signal that reliably distinguishes "the SAME decision resent" (retry storm
-        // within the vendor's own SLA - collapse it) from "a genuinely NEW decision
-        // that happens to land on a status we've seen before" (eg
-        // rejected -> approved -> rejected again - must run) is the raw body itself:
-        // a true redelivery is byte-identical: a new decision is not. Keying on
-        // referenceId:status instead would give BullMQ's permanent-by-default jobId
-        // dedup (see bullmq-job-queue.ts) a key that legitimately repeats, silently
-        // dropping the later, real decision forever.
         const idempotencyKey = `kyc-decision-sync:${createHash('sha256').update(rawBody).digest('hex')}`;
-        // Stamped HERE, at webhook-arrival time - never in the job handler - so the
-        // reconcile monotonicity guard has the true delivery order even when the job
-        // queue (which ignores orderingKey) runs two decisions for the same reference
-        // out of order.
         const receivedAt = new Date().toISOString();
         await jobQueue.enqueue(
           kycDecisionSyncQueue,
@@ -389,10 +366,6 @@ export function createComplianceRouter({
         await adminGuard.assert(context, 'kyc-override-approval', 'approve');
       }
       const results = await kyc.bulkApprove(input.userIds, input.tier, input.reason, caller.userId);
-      // A per-item failure never reaches overrideStatus, so it leaves no
-      // compliance.kyc.updated trail of its own - record the WHOLE attempted batch here
-      // (every userId, success/failure per item) so a probe of nonexistent ids is still
-      // visible in the audit log even when nothing downstream changed.
       await audit.record({
         actorId: caller.userId,
         actorType: 'admin',

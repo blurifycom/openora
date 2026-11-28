@@ -13,12 +13,6 @@ import { PlayerNotFoundError } from './player.service.js';
 
 type ConditionalUpdateRow = { previous_status: KycStatus; player_id: string };
 
-/**
- * The single writer of `player.kycStatus` (the KYC_STATUS_WRITER seam). Every status
- * change - admin override, vendor decision, webhook, threshold re-KYC - flows through
- * here. The guard-then-write is a single conditional UPDATE, never a select-then-update,
- * so the compliance service can emit at most one post-commit transition event.
- */
 export class PlayerKycStatusWriter implements KycStatusWriter {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -28,8 +22,6 @@ export class PlayerKycStatusWriter implements KycStatusWriter {
     opts: { actorId: Player['userId'] | null; reason?: string; source: KycStatusSource },
     tx?: unknown,
   ): Promise<KycStatusTransition | null> {
-    // Run on the caller's transaction when supplied (atomic with their other writes),
-    // else the writer's own db. `tx as DrizzleDb` mirrors the WALLET_COMMANDS port idiom.
     const db = (tx as DrizzleDb | undefined) ?? this.drizzle.db;
 
     const { rows } = await db.execute<ConditionalUpdateRow>(sql`

@@ -38,9 +38,6 @@ const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'common', 'testing
 
 type ModuleDir = { group: string; name: string; dir: string };
 
-// Modules fold into @openora/core as subpaths: a single-member domain owns plugin.ts
-// directly (packages/core/src/audit), a multi-slice one nests it a level deeper
-// (packages/core/src/pam/profile). `group` is the owning domain. See ADR-0025.
 function listAllModules(): ModuleDir[] {
   const out: ModuleDir[] = [];
   const hasPlugin = (dir: string): boolean => existsSync(join(dir, 'plugin.ts'));
@@ -67,8 +64,6 @@ function findModuleDir(name: string): string | null {
   return listAllModules().find((m) => m.name === name)?.dir ?? null;
 }
 
-// Wire shapes live in the cross-cutting contracts zone plus each module's own
-// contract/ dir - the two places a Zod schema may be declared. See ADR-0021/0025.
 function contractFiles(): string[] {
   const files = walkFiles(repoPath(...CONTRACTS_ZONE), '.ts');
   for (const { dir } of listAllModules()) {
@@ -142,11 +137,6 @@ function walkFiles(dir: string, ext: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/**
- * Extract a single `export const <name> = ...;` declaration from source by
- * tracking bracket depth, so the whole (possibly multi-line) Zod schema is
- * returned. Returns null if not found.
- */
 function extractDeclaration(src: string, name: string): { line: number; code: string } | null {
   const lines = src.split('\n');
   const startRe = new RegExp(`^\\s*export\\s+const\\s+${name}\\b`);
@@ -180,7 +170,6 @@ function extractDeclaration(src: string, name: string): { line: number; code: st
   return null;
 }
 
-/** DATABASE_URL from env, or the local docker default (mirrors tools/db/seed.ts). */
 function resolveDatabaseUrl(): string {
   return process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming';
 }
@@ -189,7 +178,6 @@ const READONLY_SQL_PREFIXES = ['select', 'with', 'explain', 'show', 'table', 'va
 
 type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'downstream-app' | 'unsure';
 
-/** Best-effort keyword classification of a fuzzy "what I want to build" ask. */
 function classifyIntent(ask: string): IntentKind {
   const a = ` ${ask.toLowerCase()} `;
   const has = (re: RegExp) => re.test(a);
@@ -223,12 +211,9 @@ function classifyIntent(ask: string): IntentKind {
   return 'unsure';
 }
 
-// Tokens are declared as `export const X: Token<Y> = createToken(...)` or via
-// createSealedToken for the compliance-sealed seams. See packages/core/src/contracts/adapters.
 const ADAPTER_TOKEN_RE =
   /^export const (\w+)(?::\s*(?:Sealed)?Token<[^>]*>)?\s*=\s*(?:createSealedToken|createToken)/gm;
 
-/** DI tokens exported from @openora/core/contracts - the vendor swap seams. */
 function readAdapterTokens(): string[] {
   const dir = repoPath(...ADAPTERS_ZONE);
   if (!existsSync(dir)) {
@@ -329,11 +314,6 @@ function buildPlaybook(kind: IntentKind, ctx: { modules: string[]; tokens: strin
   }
 }
 
-/**
- * The requirements interview. The human answers these; the agent does everything
- * after. Shared by `start` and `enhance-intent` so requirements-first holds
- * regardless of entry point.
- */
 const REQUIREMENTS_INTERVIEW = [
   'Interview the user with AskUserQuestion in small batches (2-4 questions at a time). Adapt to their answers, dig into anything vague, and keep going until you could hand a stranger a spec they could build from. Cover what applies - skip what does not:',
   '',

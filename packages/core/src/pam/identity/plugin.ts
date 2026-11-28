@@ -90,9 +90,6 @@ type IdentityContainer = TypedContainer<CoreTokenCatalog>;
 const PLAY_ELIGIBILITY_HEARTBEAT_QUEUE = queue('identity-ledger-heartbeat');
 const logger = createLogger('identity');
 
-// Fail loud, the way compliance does for its KYC gate: refuse to boot in production, warn
-// everywhere else. Reached only when identity's router is being mounted, so a process that
-// loads identity for its ports alone (`identity:no-routes`) never gets here.
 function reportUnsafeAuthSurface(message: string): void {
   if (process.env['NODE_ENV'] === 'production') {
     throw new Error(message);
@@ -132,8 +129,6 @@ function makePlayEligibilityPublisher(c: IdentityContainer) {
   );
 }
 
-// Fails closed until it lands: a user the ledger lacks is refused a stake, never let in. Covers a
-// user an older replica registered during a rolling deploy, before it published.
 function backfillPlayEligibilityAtBoot(c: IdentityContainer) {
   if (!c.has(PLAY_ELIGIBILITY_PROJECTION)) {
     return;
@@ -171,7 +166,6 @@ function makeTwoFactorLockout(c: IdentityContainer) {
   });
 }
 
-// Stateless over the database, so the router and the `WITHDRAWAL_SECURITY` port each build one.
 function makeWithdrawalPin(c: IdentityContainer, hmacSecret: string) {
   return new WithdrawalPinService({
     drizzle: c.get(DRIZZLE),
@@ -218,9 +212,6 @@ export default {
       boundBy: 'iam',
     },
     {
-      // Refuse the boot: without it a restriction reaches the ledger only when its outbox event does,
-      // and a player keeps staking until then. Every other writer of one depends on wallet,
-      // which binds it, so only identity's own routes can write one here.
       port: PLAY_ELIGIBILITY_PROJECTION,
       without: 'a restriction reaches the ledger only when its outbox event is delivered',
       boundBy: 'wallet',
@@ -228,17 +219,9 @@ export default {
     },
   ],
   register(ctx) {
-    // Built once and shared by ADMIN_SECURITY_POLICY and the router below - two
-    // separate `makeAdminSecurity(c)` calls would construct two independent
-    // instances wrapping the same singletons, harmless today but silently
-    // stranding an overlay's ADMIN_SECURITY_POLICY rebind: the router would keep
-    // calling the original.
     let adminSecurity: AdminSecurityService | undefined;
     const resolveAdminSecurity = (c: IdentityContainer) => (adminSecurity ??= makeAdminSecurity(c));
 
-    // Null at registration (subscriptions wire before the router factory below runs),
-    // set before any real event arrives - same ordering as compliance/plugin.ts's KYC
-    // status push.
     let realtimeTransport: RealtimeTransport | null = null;
     let playEligibilityHeartbeatRef: (() => Promise<void>) | null = null;
     ctx.jobs.worker({
@@ -252,11 +235,6 @@ export default {
       },
     });
 
-    // Domain events are durable and cross-replica, but delivered to only ONE replica
-    // per Redis Streams consumer group - wrong for a live UI push. Republish onto
-    // REALTIME_TRANSPORT (Redis Pub/Sub), which every replica's SSE connections
-    // subscribe to. See docs/standards/messaging-and-microservices.md and
-    // sessionEventsChannel in router/index.ts.
     ctx.events.on('identity.sessions.revoked_all', (raw) => {
       const parsed = domainEventSchemas['identity.sessions.revoked_all'].safeParse(raw);
       if (!parsed.success) {
@@ -304,10 +282,7 @@ export default {
     }
 
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());
-    // Platform default SMS transport: logs the OTP to stdout. A consumer overlay
-    // rebinds SMS_ADAPTER to a real vendor (Twilio, AWS SNS) after this plugin.
     ctx.provide(SMS_ADAPTER, () => new MockSmsAdapter());
-    // The back-office depends on this port, not on the identity schema directly.
     ctx.provide(
       ADMIN_USER_DIRECTORY,
       (c) =>
@@ -319,11 +294,7 @@ export default {
         ),
     );
     ctx.provide(MAIL_RECIPIENT_DIRECTORY, (c) => new DrizzleMailRecipientDirectory(c.get(DRIZZLE)));
-    // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
     ctx.provide(IDENTITY_READER, (c) => new IdentityReaderService(c.get(DRIZZLE)));
-    // Accounts as chat, social and the admin guard see them. The internal routes serve the
-    // identity database itself, never the bound reader, which a split service rebinds to a
-    // client of these very routes. Unset ACCOUNT_READER_CALLERS refuses every caller.
     ctx.provide(
       ACCOUNT_READER,
       (c) => new DrizzleAccountReader(c.get(DRIZZLE), () => c.get(PLAY_ELIGIBILITY)),
@@ -337,20 +308,16 @@ export default {
         new DrizzleAccountReader(c.get(DRIZZLE), () => c.get(PLAY_ELIGIBILITY)),
         accountReaderCallerNames,
       ),
-      // The local chain, never a remote resolver. Unset SESSION_RESOLVER_CALLERS refuses every caller.
       ...createInternalSessionRouter(
         c.get(LOCAL_SESSION_RESOLVER),
         resolveAdminSecurity(c),
         sessionResolverCallerNames,
       ),
     }));
-    // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
       (c) => new LoginEnforcementService(makeSessionService(c), makePlayEligibilityPublisher(c)),
     );
-    // Per-player "auto-logout when inactive". The request middleware resolves this on
-    // every authenticated request; leaving it unbound turns the idle check off entirely.
     ctx.provide(
       SESSION_IDLE_POLICY,
       (c) =>
@@ -361,7 +328,6 @@ export default {
         }),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
-    // What the wallet's reconciliation compares its play eligibility projection against.
     ctx.provideSealed(PLAY_ELIGIBILITY_SOURCE, (c) => ({
       page: (after, limit) => playEligibilityPage(c.get(DRIZZLE).db, after, limit),
       snapshots: (userIds) => playEligibilityOf(c.get(DRIZZLE).db, userIds),
@@ -379,7 +345,6 @@ export default {
         return failed;
       },
     }));
-    // Lets iam demand the password and a fresh second factor before it issues an MCP token.
     ctx.provide(
       FRESH_REAUTHENTICATION,
       (c) =>
@@ -389,13 +354,8 @@ export default {
           twoFactorLockout: makeTwoFactorLockout(c),
         }),
     );
-    // Holds an account that owes a second-factor enrolment (a support reset of a player who
-    // required 2FA on login) to the enrolment flow until it is done.
     ctx.provide(WITHDRAWAL_SECURITY, (c) => makeWithdrawalPin(c, withdrawalPinHmacSecret));
     ctx.provide(TWO_FACTOR_SETUP_POLICY, (c) => new TwoFactorSetupPolicyService(c.get(DRIZZLE)));
-    // Mandatory-2FA + session-fingerprint enforcement. AdminGuard resolves this on every
-    // admin request; leaving it unbound turns both checks off, which is why it is bound
-    // here rather than behind a feature flag.
     ctx.provide(ADMIN_SECURITY_POLICY, (c) => resolveAdminSecurity(c));
     ctx.provide(
       USER_COMMANDS,

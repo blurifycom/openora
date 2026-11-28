@@ -53,8 +53,6 @@ function preconditionOutcome(refusal: string | null) {
   return refusal === null ? { ok: true as const } : { ok: false as const, code: refusal };
 }
 
-// send_to_manual_review declares no tag_not_found: a catalog without withdrawal_review is an
-// operator misconfiguration, which the kernel reports as internal_error.
 export function manualReviewRefusal(refusal: TagAssignmentRefusal | null) {
   return refusal === 'tag_already_active' ? 'already_in_manual_review' : refusal;
 }
@@ -91,7 +89,6 @@ export default {
   dependsOn: ['identity', 'audit'],
   requiresPorts: [WALLET_READER],
   register(ctx) {
-    // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;
     const tagService = (c: TypedContainer<CoreTokenCatalog>) =>
       (svc ??= new TagService(
@@ -101,13 +98,10 @@ export default {
         c.get(AUDIT_WRITER),
       ));
 
-    // One memoized instance backs the router closure and the evaluation service.
     let ruleSvc: TagRuleService | null = null;
     const ruleService = (c: TypedContainer<CoreTokenCatalog>) =>
       (ruleSvc ??= new TagRuleService(c.get(DRIZZLE), c.get(EVENT_BUS)));
 
-    // One memoized instance backs the daily job and the event subscriptions below,
-    // constructed in the router factory.
     let evalSvc: TagEvaluationService | null = null;
     const tagEvaluationService = (c: TypedContainer<CoreTokenCatalog>) =>
       (evalSvc ??= new TagEvaluationService({
@@ -120,14 +114,11 @@ export default {
 
     ctx.provide(PLAYER_TAGS, tagService);
     ctx.provide(PLAYER_SEGMENT_READER, (c) => new PlayerSegmentReaderService(c.get(DRIZZLE)));
-    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(segmentCountsTool, (c) => {
       const segments = new SegmentCountsService(c.get(DRIZZLE));
       return (input) => segments.counts(input);
     });
 
-    // Throws rather than no-ops before construction, so the event is redelivered instead of
-    // being recorded as handled (ADR-0045).
     const requireEvaluation = (): TagEvaluationService => {
       if (!evalSvc) {
         throw new Error('tag evaluation service not constructed');
@@ -139,7 +130,6 @@ export default {
     ctx.events.on('wallet.withdrawal.completed', (p) =>
       requireEvaluation().onWithdrawalCompleted(p),
     );
-    // Screening: the verdict it commits is what lets the wallet auto-approve (ADR-0059).
     ctx.events.on('wallet.withdrawal.requested', (p) =>
       requireEvaluation().onWithdrawalRequested(p),
     );
@@ -165,7 +155,6 @@ export default {
     ctx.events.on('rg.self_exclusion.lifted', (p) => requireEvaluation().onSelfExclusionLifted(p));
     ctx.events.on('player.level.changed', (p) => requireEvaluation().onPlayerLevelChanged(p));
 
-    // Daily inactive-player sweep. schedule() is called in the router factory (container access).
     ctx.jobs.worker({
       queue: queue('tag.daily-evaluation'),
       schema: z.object({}),
@@ -177,10 +166,8 @@ export default {
     ctx.routers.add('tag', (c, options) => {
       const tagSvc = tagService(c);
       const ruleSvcForRouter = ruleService(c);
-      tagEvaluationService(c); // ensure evalSvc is constructed for the event handlers/job worker above
+      tagEvaluationService(c);
 
-      // Idempotent daily schedule (keyed by scheduleId). In-process driver runs it
-      // manually; a durable overlay (BullMQ) fires at cron time.
       if (options?.mounted !== false) {
         void c
           .get(JOB_QUEUE)

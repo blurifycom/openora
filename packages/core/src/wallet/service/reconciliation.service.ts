@@ -138,7 +138,6 @@ export const ReconciliationAttributionError = createDomainError<[reason: string]
   (reason) => `The deposit cannot be credited to this player: ${reason}`,
 );
 
-/** Why a resolution was refused, served to the client as `data.reason`. */
 export type ReconciliationRefusalReason =
   | 'outcome_not_allowed_for_kind'
   | 'deposit_credit_names_a_transaction'
@@ -169,11 +168,6 @@ export class ReconciliationOutcomeNotAllowedError extends Error {
   }
 }
 
-/**
- * Deposits whose money is in custody and on no player's balance, so sending it back on chain
- * settles them. An amount or currency mismatch is a deposit the player was already credited
- * for: refunding it would pay the same money twice.
- */
 const REFUNDABLE_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
   'held_deposit',
   'missing_deposit',
@@ -181,31 +175,17 @@ const REFUNDABLE_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = n
   'below_minimum_deposit',
 ]);
 
-/**
- * Findings about a wallet's own ledger. Only a re-baseline (accepting the error) or a dismissal
- * once the pair checks clean closes one: no credit settles a ledger that does not add up.
- */
 const LEDGER_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
   'ledger_invariant_breach',
   'ledger_invariant_unchecked',
 ]);
 
-/**
- * Findings whose dismissal takes a super admin: the wallet ledger's own, and a Ledger API row that
- * disagrees with its request or moved with none. Nothing closes these but a person.
- */
 const SUPER_ADMIN_DISMISSAL_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
   ...LEDGER_FINDING_KINDS,
   'ledger_request_mismatch',
   'ledger_unrequested_transaction',
 ]);
 
-/**
- * Reports a credit never settles: a withdrawal stuck in its saga (ADR-0059) is still live and
- * settles through its own path, so a manual credit would pay it twice; a Ledger API row that
- * disagrees with its request, a projection off its owner, and an event pipeline falling behind
- * are fixed at their source. Dismissal only; the last four also close themselves once they clear.
- */
 const DISMISS_ONLY_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
   'stuck_withdrawal_requested',
   'stuck_withdrawal_approved',
@@ -252,13 +232,6 @@ export function assertOutcomeAllowed(
   }
 }
 
-/**
- * A re-baseline accepts the error a finding recorded, never a larger one that came after it nor
- * one measured from a baseline since replaced: a breach must still drift by exactly what its key
- * says from the baseline it names, a flagged backfill must still disagree with the ledger's stamps
- * by its own drift with no baseline yet, and a plain unchecked pair must still sit on the baseline
- * it was filed under.
- */
 async function assertLedgerFindingStands(
   txn: DrizzleTx,
   finding: WalletReconciliationFindingRow,
@@ -310,10 +283,6 @@ type PlainUncheckedFiling = {
   openBackfillFlags: { externalId: string; drift: string }[];
 };
 
-/**
- * What a re-baselined plain unchecked pair was filed at, and every flagged backfill still open on
- * it: the re-baseline accepts the balance as it is now, so its record keeps what it differed by.
- */
 async function plainUncheckedFiling(
   txn: DrizzleTx,
   finding: WalletReconciliationFindingRow,
@@ -348,12 +317,6 @@ async function plainUncheckedFiling(
   };
 }
 
-/**
- * A ledger finding is dismissed only once its pair checks clean: nothing unpriced after the
- * baseline in force and, for a breach, no drift. A breach's pair is then re-baselined at that
- * clean balance, as the next clean check would, so the same error coming back before that check
- * is filed again instead of matching the dismissed finding's key.
- */
 async function settleCleanLedgerPair(
   txn: DrizzleTx,
   finding: WalletReconciliationFindingRow,
@@ -376,17 +339,10 @@ async function settleCleanLedgerPair(
   return { check, baseline };
 }
 
-// Lowercased: an EVM address is the same account whatever its checksum casing.
 const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 type LedgerMatch = Pick<WalletTransaction, 'id' | 'currency' | 'amount' | 'network'>;
 
-/**
- * Pure diff of one vendor deposit event against its (maybe absent) ledger row - the
- * whole decision reconciliation makes for a deposit, extracted so it is unit-testable
- * without a database. Never routes through moneyToNumber (see money.md): an exact
- * decimal compare, not a float one.
- */
 export function diffDeposit(
   event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   tx: LedgerMatch | undefined,
@@ -411,26 +367,15 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
   return chunks;
 }
 
-// Vendor listTransactions batches are thousands of rows; a well-under-the-parameter-
-// ceiling chunk size keeps every lookup a single inArray(...) round trip per chunk,
-// never one query per vendor transaction.
 const PROVIDER_REF_LOOKUP_CHUNK_SIZE = 1000;
 
-// A claimed run stuck this long is presumed crashed (the process died mid-cycle) rather
-// than still working, so the next tick may mark it `abandoned` and take the slot over.
-// Distinct from the vendor-side ambiguity thresholds: this one is about our own worker.
 const DEFAULT_STALE_RUN_AFTER_MINUTES = 30;
-// The ledger invariant reads every wallet's whole history, so a healthy run outlives the above.
 const DEFAULT_LEDGER_INVARIANT_STALE_RUN_AFTER_MINUTES = 240;
 
-/** Fallback when reconciliation runs without a `wallet.sweep` config block. */
 const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 
-// A requested withdrawal waits on a person, not a vendor, so it is stuck only once that wait
-// outruns a day. Approved and processing ones use `reconciliation.stuckAfterMinutes` (ADR-0059).
 const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
 
-// A swap leg carries no payment provider name, but a finding needs one to be filed under.
 const PROJECTION_FINDING_LABEL = 'ledger-projection';
 const EVENT_PIPELINE_FINDING_LABEL = 'event-pipeline';
 
@@ -445,25 +390,17 @@ export const LedgerInvariantJobSchema = z.object({
 type LedgerInvariantCounts = {
   baselinesInserted: number;
   baselinesSkipped: number;
-  /** Pairs the backfill refused because the ledger's own stamped balance disagrees. */
   baselineMismatches: number;
-  /** Pairs a clean check moved forward to the run's cut. */
   baselinesAdvanced: number;
   pairsChecked: number;
   needsBaseline: number;
   balanceBreaches: number;
-  /** Breaches filed by this run that were not on file before. */
   newBreaches: number;
 };
 
-/** Page size when reconciliation runs without a `wallet.reconciliation` config block. */
 const DEFAULT_BATCH_SIZE = 200;
 const LEDGER_PAGE_MAX = 1000;
 
-/**
- * Ceiling on catching up after an outage, as a multiple of `lookbackHours`. Recovering
- * from a week of downtime must not ask a vendor for one unbounded page of history.
- */
 const MAX_CATCH_UP_MULTIPLE = 7;
 
 type CreditedDeposit = {
@@ -484,29 +421,19 @@ type ProjectionDriftKind = Extract<
 
 type OwnerSnapshot = { userId: string; version: number };
 
-/** One projection the cycle compares with its owner's state, a keyset page at a time. */
 export type ProjectionDriftCheck = {
   kind: ProjectionDriftKind;
-  /** The owner's snapshots after `after`, and the users among them the projection is off. */
   page(after: string | null, limit: number): Promise<ProjectionDriftPage>;
-  /** Re-publishes `userIds` through the owner's own writer; returns the ones it could not. */
   repair(userIds: readonly string[]): Promise<string[]>;
 };
 
 type ProjectionDriftPage = {
   snapshots: OwnerSnapshot[];
-  /** Behind the owner's version: `catchUp` writes the owner's snapshots, as its event would. */
   behind: string[];
-  /** Off the owner at its own version, or still ahead of it: only the owner's writer settles. */
   conflicting: string[];
   catchUp(): Promise<unknown>;
 };
 
-/**
- * Reads the owner, then the projection. A projection ahead with another state may only have caught
- * a write that landed between the reads, so the owner is read again: still ahead is drift, as the
- * owner writes its own version and the projection in one transaction.
- */
 export function projectionDriftCheck<S extends OwnerSnapshot>(
   kind: ProjectionDriftKind,
   source: {
@@ -539,7 +466,6 @@ export function projectionDriftCheck<S extends OwnerSnapshot>(
   };
 }
 
-/** Notes a failed check once for the run's alert and logs each failure with its context. */
 function noteFailure(
   counts: { failedChecks: string[] },
   check: string,
@@ -559,20 +485,10 @@ export type ReconciliationServiceDeps = {
   audit: AuditWritePort;
   platformConfig?: PlatformConfig;
   rgLimits?: RgLimitsPort;
-  /** The projections to compare with their owners; one whose owner is not loaded is left out. */
   projectionChecks?: readonly ProjectionDriftCheck[];
-  /** Reads the dead letters when its driver can. */
   broker?: Pick<MessageBrokerAdapter, 'deadLetters'>;
 };
 
-/**
- * Owns the reconciliation job cycle (claim -> per-provider diff -> stuck-withdrawal /
- * stuck-sweep sweep -> finish + audit + alert) and the admin surface over its findings
- * (list/resolve). A finding is a report; the cycle never credits anything itself. Money
- * moves only through `WalletService`: `reconcileWithdrawalStatus` (already idempotent) and
- * `requeueNeverDispatched` (a status move back to the queue, no money) in the cycle, and in a resolution the deposit credit or release (after the deposit hold
- * policy) or the manual-adjustment row a non-deposit `credited` resolution references.
- */
 export class ReconciliationService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -606,7 +522,6 @@ export class ReconciliationService {
     this.broker = broker;
   }
 
-  /** Whether a finding is one whose dismissal takes a super admin. */
   async isLedgerFinding(id: WalletReconciliationFindingRow['id']): Promise<boolean> {
     const [row] = await this.drizzle.db
       .select({ kind: walletReconciliationFinding.kind })
@@ -648,18 +563,6 @@ export class ReconciliationService {
     };
   }
 
-  /**
-   * The finding row is locked first, so a second resolve of an already-resolved finding
-   * returns it unchanged, with no second audit entry and no second money move.
-   *
-   * `credited` on an on-chain deposit finding credits the deposit here, in this transaction,
-   * after the deposit hold policy: a player it would hold gets nothing and the finding stays
-   * open. Any other finding's `credited` references a `manual_credit` already made, matching
-   * its currency and amount exactly. A held deposit closes only by `released` (credited here,
-   * after the same policy check) or `refunded`; it is never dismissed, because the money is
-   * still in custody. A refund names the on-chain transaction, its destination and amount,
-   * and is open only to deposits no player was credited for.
-   */
   async resolveFinding(
     adminId: User['id'],
     id: WalletReconciliationFindingRow['id'],
@@ -718,7 +621,6 @@ export class ReconciliationService {
               'credit_names_no_transaction',
             );
           }
-          // Locked, so two findings resolving at once cannot both claim the same credit.
           const [tx] = await txn
             .select()
             .from(walletTransaction)
@@ -736,7 +638,6 @@ export class ReconciliationService {
           ) {
             throw new ReconciliationCreditMismatchError();
           }
-          // One credit pays for one finding: reused, the same money would close two of them.
           const [claimed] = await txn
             .select({ id: walletReconciliationFinding.id })
             .from(walletReconciliationFinding)
@@ -779,8 +680,6 @@ export class ReconciliationService {
         const deposit = await this.wallet.releaseHeldDeposit(txn, finding.transactionId, adminId);
         releasedDeposit = { ...deposit, transactionId: finding.transactionId };
       } else if (resolution.outcome === 'refunded') {
-        // The gross that reached custody leaves it again: the chain fee comes out of it, so a
-        // partial refund would leave the remainder on no balance and no finding.
         if (finding.amount === null || !moneyEquals(resolution.amount, finding.amount)) {
           throw new ReconciliationRefundAmountError(resolution.amount, finding.amount);
         }
@@ -812,8 +711,6 @@ export class ReconciliationService {
           refundedDepositId = await this.recordMissingDepositRefunded(txn, finding, adminId);
         }
       } else if (resolution.outcome === 'rebaselined') {
-        // The balance it holds now becomes the zero its ledger counts from: the error this
-        // finding reports is accepted, which is why it takes a super admin and a note.
         const pair = parseLedgerPairKey(finding.externalId);
         if (!pair) {
           throw new ReconciliationOutcomeNotAllowedError(
@@ -898,7 +795,6 @@ export class ReconciliationService {
                 refundCurrency: finding.currency,
                 refundTxHash: resolution.txHash,
                 refundDestinationAddress: resolution.destinationAddress,
-                // null when the vendor never reported who sent the deposit.
                 refundDestinationDiffersFromSource:
                   finding.sourceAddress === null
                     ? null
@@ -928,13 +824,6 @@ export class ReconciliationService {
     return dto;
   }
 
-  /**
-   * Who an on-chain deposit finding belongs to and how much of it the player is still owed.
-   * A finding whose deposit no ledger row carries yet is owed in full and is keyed on the
-   * vendor id, so a webhook redelivery replays it. One whose ledger row exists is owed only
-   * the shortfall of an underpaid amount; any other (a currency mismatch, an overpayment, a
-   * deposit still held) is not a credit at all.
-   */
   private async creditDepositFinding(
     txn: DrizzleTx,
     finding: WalletReconciliationFindingRow,
@@ -1011,12 +900,6 @@ export class ReconciliationService {
     });
   }
 
-  /**
-   * Marks the vendor deposit refunded, durably and whatever the finding kind, so no later
-   * finding about the same vendor transaction can be refunded or credited again. A deposit
-   * already on the ledger was credited (a held one is the exception: its row is the hold), so
-   * refunding it would pay the same money twice.
-   */
   private async recordRefund(
     txn: DrizzleTx,
     finding: WalletReconciliationFindingRow,
@@ -1057,12 +940,6 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * A missing deposit refunded on chain becomes a terminal `refunded` deposit row keyed on
-   * the vendor id, or the vendor redelivering it would still credit the player. A deposit to
-   * an address no player owns has no wallet to key it on, and a redelivery of it is filed
-   * as unattributed, never credited, so it records nothing.
-   */
   private async recordMissingDepositRefunded(
     txn: DrizzleTx,
     finding: WalletReconciliationFindingRow,
@@ -1122,17 +999,6 @@ export class ReconciliationService {
     return refunded.id;
   }
 
-  /**
-   * A report on top of the policy `creditDepositFinding` already asked: with no policy bound
-   * nothing refuses a deposit past the player's limit, so the breach becomes a finding, as
-   * on the webhook path. The credit is a committed `deposit` row the gate already reads out
-   * of the window, so the attempted move is `0`.
-   *
-   * Never blocks the resolution: the admin's credit has already committed, and failing
-   * their request over a report would only lose the report - a retry finds the finding
-   * resolved and returns early. A write that fails is logged and lost; the audit row for
-   * the resolution still names the admin, the amount and the transaction.
-   */
   private async recordRgBreachForHandCredit(
     finding: WalletReconciliationFindingRow,
     deposit: CreditedDeposit,
@@ -1159,9 +1025,6 @@ export class ReconciliationService {
           address: finding.address,
           tag: finding.tag,
           txHash: finding.txHash,
-          // The resolved finding's own id, not its externalId: the vendor id already keys
-          // a breach filed for the same deposit by the webhook path, and these two are
-          // separate credits of separate money whenever both exist.
           externalId: finding.id,
           transactionId: deposit.transactionId,
           detail: `credited by hand past the player's ${decision.period} ${decision.limitType} limit of ${decision.limit} (${decision.used} in the window, this credit included) - resolving finding ${finding.id}`,
@@ -1176,14 +1039,6 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * The window is anchored to the last completed run, not to the wall clock. BullMQ
-   * repeatable jobs are delayed jobs: a tick missed while no worker was running is
-   * skipped, never backfilled. Against a fixed `now - lookbackHours` window that means
-   * any outage longer than `lookbackHours` leaves a span nothing ever reconciles and
-   * nothing ever reports - the worst possible failure mode for a compensating control.
-   * Catching up is capped, and a capped window is reported rather than passed over.
-   */
   private async resolveWindow(
     until: Date,
     lookbackHours: number,
@@ -1209,12 +1064,6 @@ export class ReconciliationService {
     };
   }
 
-  /**
-   * Claim -> per-provider deposit/withdrawal diff -> stuck-withdrawal / stuck-sweep
-   * sweep -> finish + one audit entry + an alert past threshold. Returns null without
-   * doing any work when another cycle already owns the claim - the caller (cron tick or
-   * the on-demand route's worker) treats that as a normal, expected outcome.
-   */
   async runCycle(
     runId: WalletJobRun['runId'] = randomUUID(),
   ): Promise<{ runId: WalletJobRun['runId'] } | null> {
@@ -1259,8 +1108,6 @@ export class ReconciliationService {
           );
         }
 
-        // A vendor that fails its diff does not stop the checks below; the run is failed at the
-        // end instead, so its window is not anchored and the next cycle diffs that span again.
         let providerFailure: unknown;
         for (const providerName of this.paymentProviders.names()) {
           try {
@@ -1271,8 +1118,6 @@ export class ReconciliationService {
           }
         }
 
-        // Close first, then file: a withdrawal or leg that left the state it was reported in
-        // stops describing a situation that no longer exists before this cycle adds more.
         counts.withdrawalFindingsClosed += await this.resolveMovedOnWithdrawalFindings();
         await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
         await this.reportStuckRequestedWithdrawals(runId, cfg.batchSize, counts);
@@ -1290,10 +1135,6 @@ export class ReconciliationService {
           counts,
         );
 
-        // Deliberately not gated on `wallet.sweep` being configured. An operator can
-        // adopt reconciliation without sweeping, and a stuck sweep is real player money
-        // parked vendor-side in an ambiguous state - the last finding class that should
-        // quietly switch itself off because a different feature's config block is absent.
         await this.reconcileStuckSweeps(
           runId,
           this.platformConfig?.wallet?.sweep?.unknownAfterMinutes ?? DEFAULT_UNKNOWN_AFTER_MINUTES,
@@ -1301,9 +1142,6 @@ export class ReconciliationService {
           counts,
         );
 
-        // Ledger API requests against the wallet rows they wrote, each projection against its
-        // owner (a full compare, every cycle), and the event pipeline's backlog. Each on its own,
-        // so one that fails leaves the others, the run and its completed anchor standing.
         await this.runCheck(runId, 'ledger_request_mismatch', counts, () =>
           this.reconcileLedgerRequests(runId, since, until, cfg.batchSize, counts),
         );
@@ -1327,7 +1165,6 @@ export class ReconciliationService {
       }
 
       openFindings = await this.countOpenFindings();
-      // One transaction: a run is never recorded completed without its audit entry and alert.
       await this.drizzle.db.transaction(async (txn) => {
         await this.finishRun(jobRunId, status, { ...counts, openFindings }, txn);
         await this.audit.recordInTransaction(txn, {
@@ -1353,7 +1190,6 @@ export class ReconciliationService {
         resourceId: runId,
         after: { runId, ...counts },
       });
-      // A failed vendor diff throws past the completed path; the checks that failed still alert.
       if (cfg) {
         await this.drizzle.db.transaction(async (txn) =>
           this.alertIfDue(
@@ -1378,10 +1214,6 @@ export class ReconciliationService {
     return { runId };
   }
 
-  /**
-   * Alerts past the open-findings threshold, and on any check that failed or repairs it had to
-   * defer: those file nothing new every cycle, so each alerts on its own.
-   */
   private async alertIfDue(
     txn: DrizzleTx,
     runId: WalletJobRun['runId'],
@@ -1404,19 +1236,6 @@ export class ReconciliationService {
     });
   }
 
-  /**
-   * Checks every wallet balance against its own ledger, filing a `ledger_invariant_breach` for
-   * each one that does not add up. A bonus grant's balance needs no pass here: a deferred trigger
-   * refuses any commit that leaves it off its entries. Read-only
-   * over the money tables and page by page, each page one statement on one snapshot, so it never
-   * blocks play and never sees half of a move. A pair holding rows nothing prices (legacy ones,
-   * see `ledger-invariant.service.ts`) and no baseline covering them is counted as
-   * `needsBaseline` and filed once as `ledger_invariant_unchecked`, never as a breach.
-   * `backfillBaselines` first baselines those pairs: the operator's explicit step, never run by
-   * the schedule, because a baseline taken over a wallet that is already wrong makes its error
-   * the new zero. Each breach not on file before alerts at once, in the commit that files it,
-   * whatever the open-findings threshold.
-   */
   async runLedgerInvariant(
     runId: WalletJobRun['runId'] = randomUUID(),
     { backfillBaselines = false }: { backfillBaselines?: boolean } = {},
@@ -1428,7 +1247,6 @@ export class ReconciliationService {
         DEFAULT_LEDGER_INVARIANT_STALE_RUN_AFTER_MINUTES,
     );
     if (!jobRunId) {
-      // An operator asked for a backfill and it did not happen: that must be on the record.
       if (backfillBaselines) {
         await this.audit.record({
           actorType: 'system',
@@ -1440,7 +1258,6 @@ export class ReconciliationService {
       }
       return null;
     }
-    // A page's findings go in one insert at 13 bind parameters a row, under Postgres's 65535.
     const batchSize = Math.min(
       this.platformConfig?.wallet?.reconciliation?.batchSize ?? DEFAULT_BATCH_SIZE,
       LEDGER_PAGE_MAX,
@@ -1461,7 +1278,6 @@ export class ReconciliationService {
       }
       await this.checkWalletBalances(runId, batchSize, counts);
       await this.drizzle.db.transaction(async (txn) => {
-        // Taken over as stale meanwhile: the run that took it over reports, not this one.
         if (!(await this.finishRun(jobRunId, 'completed', counts, txn))) {
           return;
         }
@@ -1512,9 +1328,6 @@ export class ReconciliationService {
       const page = await backfillBaselinePage(this.drizzle.db, afterId, batchSize, runId);
       counts.baselinesInserted += page.inserted;
       counts.baselinesSkipped += page.skipped;
-      // Unchecked, not a breach: `balance_after` is stamped as a row is written, and rows are
-      // ordered by when they were created, so a row created early and completed late can put
-      // the estimate off where no money is missing. It still blocks the baseline for a human look.
       for (const pair of page.mismatches) {
         counts.baselineMismatches += 1;
         const drift = moneySubtract(pair.amount, pair.estimate);
@@ -1561,7 +1374,6 @@ export class ReconciliationService {
         }
         if (pair.unpricedRows > 0) {
           counts.needsBaseline += 1;
-          // One per pair and baseline in force, whatever the run: the key carries no count.
           findings.push({
             runId,
             providerName: LEDGER_FINDING_LABEL,
@@ -1578,7 +1390,6 @@ export class ReconciliationService {
         }
         counts.balanceBreaches += 1;
         logger.error({ runId, ...pair, drift }, 'ledger invariant: wallet balance off its ledger');
-        // A finding's amount is never negative; which way the balance is off is in the detail.
         const amount = drift.replace(/^-/, '');
         findings.push({
           runId,
@@ -1599,10 +1410,6 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * A pair filed as unchecked that a run now finds baselined and fully priced is checked like any
-   * other from here on, so its open unchecked findings close themselves, on the audit trail.
-   */
   private async closeBaselinedUnchecked(
     runId: WalletJobRun['runId'],
     pairs: readonly LedgerPairCheck[],
@@ -1631,7 +1438,6 @@ export class ReconciliationService {
             eq(walletReconciliationFinding.providerName, LEDGER_FINDING_LABEL),
             eq(walletReconciliationFinding.status, 'open'),
             inArray(pairKey, [...baselineOf.keys()]),
-            // A flagged backfill closes only by a super admin, never by a baseline that hides it.
             notLike(walletReconciliationFinding.externalId, '%:backfill:%'),
           ),
         )
@@ -1654,11 +1460,6 @@ export class ReconciliationService {
     });
   }
 
-  /**
-   * A ledger breach is money no one can account for: a page's new ones are already the alert,
-   * over a threshold of zero, committed with the findings themselves. A run failing later cannot
-   * lose it, and a rerun finds them on file and alerts nothing. Returns the new breaches.
-   */
   private async fileLedgerFindings(
     runId: WalletJobRun['runId'],
     findings: readonly ReconciliationFindingInput[],
@@ -1695,9 +1496,6 @@ export class ReconciliationService {
     }
     const events = await provider.adapter.listTransactions({ since, until });
 
-    // Every sweep (an internal transfer of vendor-side funds, never a ledger row) shows
-    // up in the vendor's own transaction list too - exclude it BEFORE diffing, or every
-    // sweep files a false missing_deposit/unmatched-withdrawal finding.
     const swept = await this.sweptExternalIds(providerName, since);
     const relevant = events.filter((event) => !swept.has(event.externalId));
 
@@ -1732,8 +1530,6 @@ export class ReconciliationService {
     await this.reconcileDeposits({ runId, providerName, deposits, ledger, seen, counts });
 
     for (const event of withdrawals) {
-      // Reconciliation is the same normalization a webhook produces, polled instead of
-      // pushed - already idempotent, already guards on status === 'processing'.
       await this.wallet.reconcileWithdrawalStatus(event, providerName);
       counts.withdrawalsReconciled += 1;
     }
@@ -1899,8 +1695,6 @@ export class ReconciliationService {
     return seen;
   }
 
-  // Single chunked inArray(...) batch read (chunks well under the parameter ceiling) -
-  // never one query per vendor transaction over a window that is routinely thousands of rows.
   private async batchLookupByProviderRefId(
     providerName: string,
     externalIds: string[],
@@ -1925,9 +1719,6 @@ export class ReconciliationService {
     return byExternalId;
   }
 
-  // wallet_transaction_status_type_created_at_idx covers the WHERE - equality on status
-  // and type, then a range on createdAt, in that column order. The ORDER BY's leading
-  // correlated EXISTS is not indexable, so the matching set is sorted before LIMIT.
   private async reconcileStuckWithdrawals(
     runId: WalletJobRun['runId'],
     stuckAfterMinutes: number,
@@ -1935,11 +1726,6 @@ export class ReconciliationService {
     counts: { unknownAtProvider: number; stuckWithdrawals: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
-    // Mirrors the externalId this loop files below, which is the findings dedup key. A row never
-    // handed to a vendor files only stuck_withdrawal_approved, so only that kind reports it.
-    // ponytail: a vendor-bound row counts as reported with either of its kinds, so once it holds
-    // an unknown_at_provider finding a later outage report for it waits for batch room; its open
-    // finding already flags it. Track the kind per row if that ever hides an outage.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} IN
@@ -1958,31 +1744,20 @@ export class ReconciliationService {
         and(
           eq(walletTransaction.status, 'processing'),
           eq(walletTransaction.type, 'withdrawal'),
-          // From approval, not request: a row that sat in the manual queue is not stuck the
-          // moment an admin approves it, while its vendor call may still be in flight.
           lt(
             sql`coalesce(${walletTransaction.reviewedAt}, ${walletTransaction.createdAt})`,
             cutoff,
           ),
         ),
       )
-      // Unreported first, then oldest. Findings dedupe on (kind, providerName, externalId), so a row
-      // already reported produces nothing on a re-run: ordering it last stops a
-      // permanent backlog from filling the batch and hiding newer stuck withdrawals,
-      // while still re-checking it at the vendor whenever the batch has room.
       .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
       .limit(batchSize);
 
     for (const tx of stuck) {
-      // One unreachable vendor or bad row must not abort the run - stuck swaps and sweeps
-      // are checked after this loop, and a row that throws would sort first forever.
       try {
         if (tx.providerName) {
           await this.reconcileStuckWithdrawal(runId, tx, counts);
         } else {
-          // Dispatch stamps the vendor before calling it, so no vendor was asked to pay this one
-          // and there is nothing to look up. Reported, then sent back to the queue so a person
-          // approves it again; its finding closes once it has left processing.
           await this.reportStuckWithdrawal(runId, tx, 'no provider recorded', counts);
           await this.wallet.requeueNeverDispatched(tx.id, cutoff);
         }
@@ -1996,12 +1771,6 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * A withdrawal past `stuckAfterMinutes` that could not be settled from the vendor (ADR-0059):
-   * filed under its saga state, approved (never handed to a vendor) or processing (handed to one),
-   * so an outage still surfaces. A report only - never a refund, the payout may still have left.
-   * A failure to file is logged and never aborts the run.
-   */
   private async reportStuckWithdrawal(
     runId: WalletJobRun['runId'],
     tx: WalletTransaction,
@@ -2068,7 +1837,6 @@ export class ReconciliationService {
         );
         return;
       }
-      // Never an automatic refund: "no record yet" does not prove the payout never left.
       counts.unknownAtProvider += 1;
       await recordReconciliationFinding(
         this.drizzle.db,
@@ -2120,16 +1888,6 @@ export class ReconciliationService {
     );
   }
 
-  /**
-   * Closes open findings of `kind` whose transaction has left the state they reported -
-   * `stillStuck` says what that state is - and returns how many. A report-side write only,
-   * matching what this table is for: it never touches a balance, a transaction status, or the
-   * transaction itself. Without it a slow-but-healthy swap, or a withdrawal a human took days
-   * to review, leaves an `open` finding describing a situation that no longer exists, and since
-   * `countOpenFindings` feeds `alertThreshold`, a growing pile of them alerts on nothing.
-   * The close and its audit rows commit together. A failure is logged and closes nothing, so the
-   * cycle still files what it finds and the next cycle tries again.
-   */
   private async resolveFindingsLeftBehind(
     kind: WalletReconciliationFindingKind,
     stillStuck: SQL,
@@ -2151,7 +1909,6 @@ export class ReconciliationService {
     }
   }
 
-  /** Closes `kind`'s open findings matching `where`, each with its system audit entry. */
   private async closeFindings(
     txn: DrizzleTx,
     kind: WalletReconciliationFindingKind,
@@ -2171,9 +1928,6 @@ export class ReconciliationService {
       )
       .returning({ id: walletReconciliationFinding.id });
 
-    // `resolvedBy` stays null: no admin acted, and the audit entry's system actor is what says
-    // who did. A finding closed here never carries a `credited` outcome, because nothing on this
-    // path moves money.
     for (const row of closed) {
       await this.audit.recordInTransaction(txn, {
         actorType: 'system',
@@ -2187,10 +1941,6 @@ export class ReconciliationService {
     return closed.length;
   }
 
-  /**
-   * Runs one integrity check of the cycle. A failure is logged and noted, never raised, so the
-   * other checks, the vendor diff and the completed run go ahead; the run's alert names it.
-   */
   private async runCheck(
     runId: WalletJobRun['runId'],
     name: string,
@@ -2204,11 +1954,6 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * Files `findings` in `txn` and, for the run's first batch of their kind that files anything,
-   * alerts in that same commit whatever the open-findings threshold: each is an integrity or
-   * enforcement gap, not backlog. One alert per check per run, however many pages it files.
-   */
   private async fileAndAlert(
     txn: DrizzleTx,
     runId: WalletJobRun['runId'],
@@ -2247,11 +1992,6 @@ export class ReconciliationService {
       : this.drizzle.db.transaction((txn) => this.fileAndAlert(txn, runId, findings));
   }
 
-  /**
-   * Every Ledger API request in the window answered applied with a wallet row, held to that row:
-   * the row must exist, be the request's move type, currency, key, amount and player. Amount and
-   * player are checked only where the request recorded them.
-   */
   private async reconcileLedgerRequests(
     runId: WalletJobRun['runId'],
     since: Date,
@@ -2274,7 +2014,6 @@ export class ReconciliationService {
       OR (${request.amount} IS NOT NULL AND ${tx.amount} <> ${request.amount})
       OR (${request.userId} IS NOT NULL AND ${wallet.userId} IS DISTINCT FROM ${request.userId})
     )`;
-    // The cursor's time stays Postgres text: a JS Date drops the microseconds it is ordered by.
     let cursor: { at: string; providerName: string; providerRefId: string } | undefined;
     for (;;) {
       const rows = await this.drizzle.db
@@ -2346,12 +2085,6 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * A bet, win or reversal in the window keyed by a provider that already moved to the Ledger
-   * API, with no request that moved money under its key: money that moved around the API. A refused
-   * request under the key does not count, so it cannot hide a direct move. A provider counts as
-   * moved from its first request on, so its rows from before are never flagged.
-   */
   private async reportUnrequestedLedgerMoves(
     runId: WalletJobRun['runId'],
     since: Date,
@@ -2410,14 +2143,6 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * One projection against its owner, page by page over every user. A drifting player with no
-   * open finding of the kind gets one, keyed `<userId>:<runId>` so a drift that comes back after
-   * one was dismissed or closed files again; an open one closes once its page finds the player in
-   * step. No money moves. A player behind is caught up from the owner's snapshot, as its event
-   * would have; one the owner's version cannot settle is re-published through the owner's writer,
-   * up to `batchSize` a cycle. The finding stays as the record until a later cycle sees it hold.
-   */
   private async reconcileProjection(
     runId: WalletJobRun['runId'],
     check: ProjectionDriftCheck,
@@ -2443,9 +2168,6 @@ export class ReconciliationService {
           )
       ).map((row) => row.userId),
     );
-    // ponytail: a fixed per-cycle cap of batchSize successful owner re-publishes, at most
-    // 2x batchSize attempts so a player who keeps failing cannot starve the rest; a config
-    // knob if a backlog needs one.
     let repairsLeft = batchSize;
     let attemptsLeft = 2 * batchSize;
     let deferred = 0;
@@ -2528,7 +2250,6 @@ export class ReconciliationService {
     }
   }
 
-  /** The oldest event the outbox has not relayed, against its threshold. */
   private async reconcileOutboxLag(
     runId: WalletJobRun['runId'],
     lagAlertMinutes: number,
@@ -2542,8 +2263,6 @@ export class ReconciliationService {
     if (lagged) {
       logger.error({ runId, oldest: lagged }, 'reconciliation: the event outbox is not relaying');
     }
-    // Keyed by the event and the run, as only an open finding dedupes: one dismissed while the
-    // outbox is still stuck files again.
     counts.deliveryIncidents += await this.trackIncident(
       runId,
       'outbox_relay_lag',
@@ -2554,7 +2273,6 @@ export class ReconciliationService {
     );
   }
 
-  /** The broker's dead letters against their threshold, when its driver can read them. */
   private async reconcileDeadLetters(
     runId: WalletJobRun['runId'],
     threshold: number,
@@ -2568,8 +2286,6 @@ export class ReconciliationService {
     if (overflowing) {
       logger.error({ runId, deadLetters }, 'reconciliation: events are dead-lettered');
     }
-    // Keyed by the newest dead letter: a report that cleared or was dismissed comes back once
-    // another event dead-letters, whatever the count.
     counts.deliveryIncidents += await this.trackIncident(
       runId,
       'event_dead_letters',
@@ -2580,11 +2296,6 @@ export class ReconciliationService {
     );
   }
 
-  /**
-   * Files `incident` unless one of `kind` is already open, or closes the open one if it cleared.
-   * The incident may be the outbox itself stalling, so a new one also alerts straight through the
-   * broker, best effort, beside the durable alert filed with it through the outbox.
-   */
   private async trackIncident(
     runId: WalletJobRun['runId'],
     kind: Extract<WalletReconciliationFindingKind, 'outbox_relay_lag' | 'event_dead_letters'>,
@@ -2626,8 +2337,6 @@ export class ReconciliationService {
     return filed;
   }
 
-  // ponytail: findings dedupe on (kind, provider, external id) whatever their status, so a
-  // withdrawal that returns to a state it was already reported in is not reported again.
   private async resolveMovedOnWithdrawalFindings(): Promise<number> {
     const processing = sql`${walletTransaction.status} = 'processing'`;
     const stillIn = [
@@ -2650,14 +2359,6 @@ export class ReconciliationService {
     return closed;
   }
 
-  // Human resolution only: a swap_out held `processing` past the cutoff is money debited from
-  // the player with nothing credited back, and the desk may or may not have filled it - so
-  // neither a refund nor a credit is safe without someone looking.
-  //
-  // wallet_transaction_status_type_created_at_idx covers the WHERE, but the ORDER BY leads
-  // with the correlated EXISTS, which no index serves: every cycle sorts the whole matching
-  // set before LIMIT. That set is bounded in practice only because resolveFindingsLeftBehind
-  // closes findings - not because the plan is cheap. Same shape as the sweep sibling.
   private async reconcileStuckSwaps(
     runId: WalletJobRun['runId'],
     stuckSwapAfterMinutes: number,
@@ -2665,7 +2366,6 @@ export class ReconciliationService {
     counts: { stuckSwaps: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - stuckSwapAfterMinutes * 60 * 1000);
-    // Mirrors the externalId this loop files below, which is the findings dedup key.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_swap'
@@ -2698,10 +2398,6 @@ export class ReconciliationService {
           currency: tx.currency,
           amount: tx.amount,
           transactionId: tx.id,
-          // The desk's own reference when there is one, as every other kind in this table
-          // does, so an operator can join findings to desk records. A leg that died before
-          // `execute` returned has none, and falls back to the local id - the same
-          // `providerRefId ?? id` shape the sweep sibling files.
           externalId: tx.providerRefId ?? tx.id,
           detail: `swap_out ${tx.id} has been processing since ${tx.createdAt.toISOString()}`,
         },
@@ -2710,18 +2406,12 @@ export class ReconciliationService {
     }
   }
 
-  /**
-   * A withdrawal requested more than STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES ago and still
-   * `pending` or `on_hold` (ADR-0059): screening or review never decided it. A report only, one
-   * per withdrawal.
-   */
   private async reportStuckRequestedWithdrawals(
     runId: WalletJobRun['runId'],
     batchSize: number,
     counts: { stuckWithdrawals: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES * 60_000);
-    // Same starvation guard as reconcileStuckWithdrawals: reported rows sort last.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_withdrawal_requested'
@@ -2761,9 +2451,6 @@ export class ReconciliationService {
     }
   }
 
-  // wallet_custody_sweep_status_created_at_idx covers the WHERE; the ORDER BY's leading
-  // correlated EXISTS is not indexable, as in the two siblings above. Human resolution
-  // only - this NEVER touches the sweep row's status or releases its in-flight guard.
   private async reconcileStuckSweeps(
     runId: WalletJobRun['runId'],
     unknownAfterMinutes: number,
@@ -2783,18 +2470,10 @@ export class ReconciliationService {
       .from(walletCustodySweep)
       .where(
         and(
-          // `pending` belongs here alongside `unknown`. A worker that dies between the
-          // claim insert and the vendor call leaves a `pending` row with no externalId:
-          // resolveInFlightSweeps skips it (nothing to poll) and the partial unique
-          // index still counts it as in-flight, so that container would never sweep
-          // again and nothing would say why. Same lost-response ambiguity as `unknown`,
-          // so it files a finding for a human rather than releasing the guard.
           inArray(walletCustodySweep.status, ['pending', 'unknown']),
           lt(walletCustodySweep.createdAt, cutoff),
         ),
       )
-      // Same starvation guard as reconcileStuckWithdrawals: already-reported sweeps go
-      // last so a permanent backlog cannot hide newer stuck ones from the operator.
       .orderBy(asc(alreadyReportedSweep), asc(walletCustodySweep.createdAt))
       .limit(batchSize);
 
@@ -2831,12 +2510,6 @@ export class ReconciliationService {
     return Number(row?.n ?? 0);
   }
 
-  /**
-   * The claim IS the insert - a partial unique index on (jobName) WHERE finishedAt IS
-   * NULL makes a conflicting insert the concurrency guard. A stale in-flight run (older
-   * than the configured staleness window - presumed crashed) is marked `abandoned` and its slot freed
-   * for this call to retry the claim once.
-   */
   private async claimRun(
     runId: WalletJobRun['runId'],
     jobName: string = JOB_NAME,
@@ -2853,12 +2526,10 @@ export class ReconciliationService {
       .from(walletJobRun)
       .where(and(eq(walletJobRun.jobName, jobName), isNull(walletJobRun.finishedAt)));
     if (!existing) {
-      // The blocking run finished between our insert conflict and this read - retry once.
       return this.retryClaim(runId, jobName);
     }
     const staleAfterMs = staleAfterMinutes * 60_000;
     if (existing.startedAt.getTime() >= Date.now() - staleAfterMs) {
-      // A live run genuinely owns the claim - return immediately, no retry loop.
       return null;
     }
 
@@ -2868,7 +2539,6 @@ export class ReconciliationService {
       .where(and(eq(walletJobRun.id, existing.id), isNull(walletJobRun.finishedAt)))
       .returning({ id: walletJobRun.id });
     if (abandoned.length === 0) {
-      // Someone else already resolved the stale run concurrently.
       return null;
     }
     return this.retryClaim(runId, jobName);
@@ -2886,11 +2556,6 @@ export class ReconciliationService {
     return inserted?.id ?? null;
   }
 
-  // Keyed on the claimed row's own id, never on runId: a job retried by the queue
-  // carries the same runId as the attempt that failed, so `WHERE run_id = ...` would
-  // reach back and rewrite that earlier row's `failed`/`abandoned` verdict to
-  // `completed` - erasing the only evidence that the first attempt went wrong. Only a run still
-  // `running` is finished: one a later claim took over as stale keeps its `abandoned` verdict.
   private async finishRun(
     jobRunId: WalletJobRun['id'],
     status: WalletJobRunStatus,

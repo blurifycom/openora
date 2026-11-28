@@ -5,33 +5,15 @@ Detail for the "infer, never hand-write" line in `conventions`. Read this when a
 - **One source of truth per shape - infer, never hand-write.** `z.infer<typeof UserSchema>`, `typeof users.$inferSelect`, `Omit<User, 'id'>`.
 - **Schema-first at every boundary** (HTTP, config, env, messages, events). Validate once at the edge, trust the type after. oRPC + Zod does this for routes; do the same for config/env/event payloads.
 - **No `any`, anywhere - tests included.** `unknown` + narrowing, or the real type. Never hand-roll a duplicate of a type that's one import away (`$inferSelect`/`$inferInsert`, a shared `@openora/core/*` type) - it silently drifts from the source of truth.
-- **Never re-infer an imported schema** - the type is exported once from the owning contract; consumers import it, never re-run `z.infer` (lint: `oss-module-shape/no-reinfer-imported-schema`).
-
-  ```ts
-  export type PlayerProfile = z.infer<typeof PlayerSchema>; // bad
-  import type { Player } from '@openora/core/contracts'; // good
-  ```
+- **Never re-infer an imported schema** - the type is exported once from the owning contract; consumers import it, never re-run `z.infer` (lint: `oss-module-shape/no-reinfer-imported-schema`). Import the type from `@openora/core/contracts` instead of aliasing the inferred schema type under a new name.
 
 - **No type casts (`as`) to silence the compiler - fix the root cause.** (`as const` is fine.) `as unknown as X` turns type-checking off entirely. If a symbol needs a type, give it one at the source (`createToken<T>()`), don't cast at use sites. Exactly two sanctioned exceptions:
   1. **Test doubles** - route through the shared `mock` helper in `packages/core/src/testing/` so the cast lives in one audited place, never inline in a test.
-  2. **Third-party type-inference boundaries** a library gives you no honest way to satisfy - one cast with a one-line `// Library boundary:` note.
+  2. **Third-party type-inference boundaries** a library gives you no honest way to satisfy - one cast with a one-line library-boundary note.
 
-  ```ts
-  // bad
-  const user = data as User;
-  const directory = { lookupPlayers } as unknown as AdminUserDirectory;
-  // good
-  const user = UserSchema.parse(data);
-  const TOKEN = createToken<Config>('CONFIG');
-  const directory = mock<AdminUserDirectory>({ lookupPlayers }); // cast confined to the helper
-  ```
+Parse untrusted data with its schema instead of casting it, and never double-cast a partial object into a port type; the shared `mock` helper confines that cast.
 
-- **Never `!` non-null assertions** - narrow or restructure instead (lint: `typescript/no-non-null-assertion`).
-
-  ```ts
-  return toDto(row!); // bad
-  return toDto(findOneOrThrow(rows, new XNotFoundError(id))); // good
-  ```
+- **Never `!` non-null assertions** - narrow or restructure instead (lint: `typescript/no-non-null-assertion`). Where a row may be missing, wrap the query result in `findOneOrThrow` with the module's not-found error.
 
 - **Under `noUncheckedIndexedAccess`: `.at()`, destructuring-with-defaults, or an explicit guard - never `arr[i]!`.** `const [first = ''] = parts;`
 - **`type` over `interface`** (lint-enforced).

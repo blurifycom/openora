@@ -89,7 +89,6 @@ export const requestEnhancedKycAction = defineActionType({
   errors: ['player_not_found', 'already_requested', 'verification_in_progress'],
 });
 
-/** At most this many queued items a queue tool lists, oldest first. */
 export const COMPLIANCE_QUEUE_MAX_ITEMS = 20;
 
 export const RgPlayerStateInputSchema = z.object({
@@ -132,10 +131,8 @@ export const RgPlayerStateOutputSchema = z.object({
       z.object({
         type: LimitTypeSchema,
         period: LimitPeriodSchema,
-        /** Money limits: the amount and its currency; null for the session limit. */
         amount: MoneyAmountSchema.nullable(),
         currency: z.string().nullable(),
-        /** The session limit's minutes; null for a money limit. */
         minutes: z.number().int().nullable(),
         pendingKind: LimitChangeKindSchema.nullable(),
         pendingRequestedAt: TimestampSchema.nullable(),
@@ -235,7 +232,6 @@ export const rgFlagsQueueTool = defineMcpTool({
   errors: [],
 });
 
-/** The KYC statuses the queue counts and lists: awaiting a decision, or the player's resubmission. */
 export const KYC_QUEUE_STATUSES = [
   'pending',
   'resubmission_requested',

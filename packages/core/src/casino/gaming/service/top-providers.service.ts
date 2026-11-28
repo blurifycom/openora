@@ -6,11 +6,6 @@ import {
   type TopProvidersInput,
 } from '../contract/index.js';
 
-/**
- * gaming.top_providers, ranked by the bound ADMIN_GAME_REPORTING as gaming.top_games is: the agent
- * counts providers as the back office game report counts their games, an operator's rebound report
- * included.
- */
 export async function topProviders(
   reporting: AdminGameReporting,
   { currency, gameType, sortBy, sortDir, limit, ...dates }: TopProvidersInput,

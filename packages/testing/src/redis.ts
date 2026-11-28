@@ -3,21 +3,10 @@ import { createClient } from 'redis';
 const BASE_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380';
 const INFRA_HINT = 'integration tests need redis - run `docker compose up -d`';
 
-/**
- * Logical databases handed to `bootTestApp`, allocated downward from 15. The core
- * harness is pinned to 0-7 (`VITEST_POOL_ID % 8`), so the two tiers stay clear of
- * each other and both integration suites can run concurrently against one Redis.
- *
- * This tier's 8 are split per worker, because the counter below is module state: every
- * worker would otherwise start at 15 and flush a database another worker was using.
- */
 const HIGHEST_DATABASE = 15;
 const LOWEST_DATABASE = 8;
 const DATABASES_PER_WORKER = 4;
 
-// Stryker runs one single-worker vitest per mutation worker (STRYKER_MUTATOR_WORKER, 0-based),
-// each with VITEST_POOL_ID 1, so its worker index picks the slice. Two slices cap the
-// `concurrency` in packages/core/stryker.config.mjs at 2.
 const workerSlice = Math.max(
   0,
   Number(process.env['STRYKER_MUTATOR_WORKER'] ?? 0) +
@@ -43,12 +32,6 @@ export type TestRedisDatabase = {
   release: () => Promise<void>;
 };
 
-/**
- * Claim a Redis logical database for one booted app and flush it, so the app's
- * broker consumer groups, BullMQ keys, cache entries and rate-limiter counters
- * cannot collide with another app booted in the same file. `release()` flushes
- * again, returning the database to the pool.
- */
 export async function acquireTestRedisDatabase(): Promise<TestRedisDatabase> {
   const database = nextDatabase;
   nextDatabase = nextDatabase > sliceBottom ? nextDatabase - 1 : sliceTop;

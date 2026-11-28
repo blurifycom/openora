@@ -16,7 +16,6 @@ import { grantAmountFor } from './grant-amount.js';
 
 const ZERO = '0';
 
-/** Free real money, bucket A (unlinked), bucket B (linked) and bucket C (bonus). */
 export type FundSplit = { free: string; unlinked: string; linked: string; bonus: string };
 export type FundBucket = keyof FundSplit;
 
@@ -30,16 +29,10 @@ export const DEFAULT_FUND_SETTINGS: BonusFundSettings = {
 
 const EMPTY_SPLIT: FundSplit = { free: ZERO, unlinked: ZERO, linked: ZERO, bonus: ZERO };
 
-/** The most restricted bucket first: where a return's rounding residue lands. */
 const RESIDUE_ORDER: readonly FundBucket[] = ['bonus', 'linked', 'unlinked', 'free'];
 
 const min = (a: string, b: string) => (moneyCompare(a, b) <= 0 ? a : b);
 
-/**
- * A deposit's buckets: C is the capped match, B the part of the deposit that C matched, A the
- * rest. Rounded down to the currency precision, so the player is never credited a fraction the
- * currency cannot hold.
- */
 export function depositBuckets(args: {
   deposit: string;
   matchPercent: string;
@@ -62,11 +55,6 @@ export function wageringBase(
   return base === 'bonus' ? buckets.bonus : moneyAdd(buckets.bonus, buckets.linked);
 }
 
-/**
- * A and B never claim more than the real balance holds: a withdrawal or a non-bonus debit may
- * have taken real money the counters still name. The shortfall comes off A before B, since B is
- * the cash the bonus was matched against.
- */
 export function clampCounters(args: { real: string; unlinked: string; linked: string }): {
   unlinked: string;
   linked: string;
@@ -84,7 +72,6 @@ export function grantLocks(
   return terms.funds?.lockWithdrawals ?? source === 'deposit';
 }
 
-/** Real money the locking grants' A and B tie up, clamped to the real balance, and the rest. */
 export function splitLocked(
   real: string,
   grants: readonly { unlinked: string; linked: string }[],
@@ -99,7 +86,6 @@ export function splitLocked(
   return { locked, free: moneyCompare(free, ZERO) > 0 ? free : ZERO };
 }
 
-/** The one figure every lock check and every read reports: only the grants that lock count. */
 export function lockedFundsOf(
   real: string,
   grants: readonly {
@@ -115,7 +101,6 @@ export function lockedFundsOf(
   );
 }
 
-/** A PvP bet is its own class whatever its weight; otherwise it contributes or it does not. */
 export function betClass(context: WagerContext, effectivePercent: string): BonusBetClass {
   if (context.product === 'pvp') {
     return 'pvp';
@@ -125,10 +110,6 @@ export function betClass(context: WagerContext, effectivePercent: string): Bonus
 
 const GRANT_BUCKETS = ['unlinked', 'linked', 'bonus'] as const satisfies readonly FundBucket[];
 
-/**
- * The buckets a bet of `cls` may draw on: free real money always, the grant buckets its class is
- * configured for (all three when it is not), and never C on a product the grant excludes.
- */
 export function allowedBuckets(
   settings: BonusFundSettings,
   cls: BonusBetClass,
@@ -144,11 +125,6 @@ export function allowedBuckets(
   return allowed;
 }
 
-/**
- * A win, refund or rollback split back across the buckets in proportion to what each paid in.
- * Each share is truncated; the residue goes to the most restricted bucket that paid, so rounding
- * never moves bonus money into a freer bucket.
- */
 export function splitReturn(amount: string, paid: FundSplit): FundSplit {
   const shares = splitAcross(
     amount,
@@ -161,10 +137,6 @@ export function splitReturn(amount: string, paid: FundSplit): FundSplit {
   return { free, unlinked, linked, bonus };
 }
 
-/**
- * `amount` across `pots` in proportion, each share truncated, the residue on the first pot that
- * holds anything - so callers list pots most restricted first. Null when every pot is empty.
- */
 export function splitAcross(amount: string, pots: readonly string[]): string[] | null {
   const total = pots.reduce((sum, pot) => moneyAdd(sum, pot), ZERO);
   if (moneyCompare(total, ZERO) <= 0) {
@@ -185,7 +157,6 @@ export function sumSplit(split: FundSplit): string {
   return moneyAdd(moneyAdd(split.free, split.unlinked), moneyAdd(split.linked, split.bonus));
 }
 
-/** Below the dust threshold, or exactly empty when there is none. */
 export function isDepleted(total: string, dust: string): boolean {
   return moneyCompare(total, ZERO) <= 0 || moneyCompare(total, dust) < 0;
 }

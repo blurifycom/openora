@@ -1,5 +1,3 @@
-// Builds a throwaway git repo with known-bad pointers and runs the real script
-// against it. Run: node --test tools/__tests__/verify-references.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';

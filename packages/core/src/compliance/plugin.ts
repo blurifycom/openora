@@ -98,8 +98,6 @@ const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
     c.has(MIRROR_TARGET_POLICY) ? c.get(MIRROR_TARGET_POLICY) : null,
   );
 
-// The migration that ships the gate seeds the projection, so no limit is unprojected at deploy.
-// This heals what a replica from before ADR-0057 wrote during the rolling deploy without publishing.
 function backfillRgLimitsAtBoot(c: TypedContainer<CoreTokenCatalog>) {
   const ledger = c.get(RG_LIMIT_LEDGER);
   const db = c.get(DRIZZLE).db;
@@ -117,9 +115,6 @@ function backfillRgLimitsAtBoot(c: TypedContainer<CoreTokenCatalog>) {
   });
 }
 
-// Each rg-monitor tick re-projects the limits changed within this window: a limit an unpublishing
-// writer (a replica from before ADR-0057, a direct SQL fix) changed reaches the ledger within a tick
-// instead of at the next boot. Several ticks wide, so one missed tick loses nothing.
 const RECENT_LIMIT_CHANGE_MS = 10 * 60_000;
 
 const RG_EVAL_QUEUE = queue('rg-eval');
@@ -136,11 +131,7 @@ const RgMonitorJobSchema = z.object({});
 const KycDecisionSyncJobSchema = z.object({
   referenceId: z.string().min(1),
   status: z.enum(KYC_VENDOR_STATUSES),
-  // Set only when the adapter's parseWebhook attributed the decision to one tier; absent
-  // for a shared-workflow vendor session, where reconcile fans the decision across tiers.
   tier: KycTierSchema.optional(),
-  // Webhook-arrival time, stamped by the router before enqueue - the monotonicity
-  // watermark `reconcile` compares against, immune to job-processing reordering.
   receivedAt: z.iso.datetime(),
 });
 const KycExemptionJobSchema = z.object({
@@ -198,8 +189,6 @@ export default {
       return new HmacKycWebhookVerifier(webhookSecret, c.get(CACHE));
     });
 
-    // svcRefs are null at registration (subscriptions wire before router factories run)
-    // but set before any real event/job arrives. See create-app.ts boot order.
     let kycRef: KycVerificationService | null = null;
     let complianceRef: ComplianceService | null = null;
     let rgRef: RgService | null = null;
@@ -213,7 +202,6 @@ export default {
         directory: c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null,
         ledger: c.get(RG_LIMIT_LEDGER),
       }));
-    // Backs the router and RG_EXCLUSION_READER; either may build it first.
     const rgService = (c: TypedContainer<CoreTokenCatalog>) =>
       (rgRef ??= new RgService({
         drizzle: c.get(DRIZZLE),
@@ -225,7 +213,6 @@ export default {
         rates: c.get(EXCHANGE_RATE_READER),
         limitsLedger: c.get(RG_LIMIT_LEDGER),
       }));
-    // What the wallet's reconciliation compares its limits projection against.
     ctx.provideSealed(RG_LIMITS_SOURCE, (c) => ({
       page: (after, limit) => rgLimitsPage(c.get(DRIZZLE).db, after, limit),
       snapshots: (userIds) => readSnapshots(c.get(DRIZZLE).db, userIds),
@@ -250,8 +237,6 @@ export default {
         return { isSelfExcluded: selfExclusion !== null, isCoolingOff: coolingOff !== null };
       },
     }));
-    // One instance backs the router, its event/job hooks and the agent tools; either factory
-    // may build it first.
     const kycVerification = (c: TypedContainer<CoreTokenCatalog>) =>
       (kycRef ??= new KycVerificationService({
         drizzle: c.get(DRIZZLE),
@@ -288,8 +273,6 @@ export default {
     ctx.mcp.tool(rgPlayerStateTool, (c) => {
       const identity = c.get(IDENTITY_READER);
       return async ({ playerId, windowDays }) => {
-        // Resolved per call: the reader's own dependencies (play eligibility, rates) are another
-        // module's, and a kernel built without them still serves compliance's other tools.
         const standing = c.get(RG_STANDING_READER);
         const userId = await userIdOfPlayer(identity, playerId);
         const state = userId ? await standing.getStanding(userId, { windowDays }) : null;
@@ -343,8 +326,6 @@ export default {
 
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
-      // kycStatusChannel is the basic-tier withdrawal-status stream; advanced-tier
-      // updates have no consumer here yet (see tag-evaluation.service.ts's same guard).
       if (!parsed.success || !realtimeTransport || !envelope || parsed.data.tier !== 'basic') {
         return;
       }
@@ -355,8 +336,6 @@ export default {
       });
     });
 
-    // Handlers await their work and throw when a dependency is missing: a failure leaves the
-    // event pending, so the broker redelivers it rather than marking it handled (ADR-0045).
     const requireJobQueue = (): JobQueueAdapter => {
       if (!jobQueueRef) {
         throw new Error('compliance job queue not bound yet');
@@ -375,10 +354,6 @@ export default {
       await kycRef.handleDeposit(parsed.data.userId);
     });
 
-    // Country-level KYC exemption is durable work: a resolver/database outage must retry
-    // rather than strand a player at pending. A failed enqueue throws, so the broker
-    // redelivers the registration; the idempotency key and the job's database guard make
-    // repeated delivery harmless.
     ctx.events.on('identity.user.registered', async (payload) => {
       const parsed = domainEventSchemas['identity.user.registered'].safeParse(payload);
       if (!parsed.success) {
@@ -460,8 +435,6 @@ export default {
       queue: RG_MONITOR_QUEUE,
       schema: RgMonitorJobSchema,
       handler: async () => {
-        // First and on its own: a failing step below must not starve the projection heal, and a
-        // failing heal must not skip the expiries.
         if (healRecentLimitsRef) {
           try {
             await healRecentLimitsRef();
@@ -517,9 +490,6 @@ export default {
       realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const kycAdapter = c.get(KYC_ADAPTER);
-      // A KYC-gated withdrawal is meaningless while an auto-approving adapter (the default
-      // MockKycAdapter) is bound: any player self-verifies and passes the gate. Fail loud -
-      // refuse to boot in production, warn everywhere else.
       if (platformConfig?.kyc?.gateWithdrawals && kycAdapter.autoApproves) {
         const msg =
           'kyc.gateWithdrawals is enabled but the bound KYC_ADAPTER auto-approves (MockKycAdapter). Bind a real provider or the withdrawal gate is a no-op.';

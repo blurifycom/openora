@@ -25,12 +25,6 @@ import { describeDevice } from './device-fingerprint.service.js';
 
 export const SessionNotFoundError = makeNotFoundError('Session');
 
-// Idle expiry (`SessionIdleService`) is lazy: it only cuts a session when a request for
-// it arrives, so `expiresAt` alone goes stale for a session nobody has used since. Both
-// "active session" reads below need this alongside `expiresAt > now()`, or a closed laptop on
-// a 15-minute player window keeps showing as logged in for up to 30 days, and a backoffice
-// session keeps showing past its fixed staff window. Built from the same contract constants
-// `SessionIdleService` reads, not restated by hand, so the two cannot disagree on a window.
 function idleWindowMinutesCase() {
   return sql.join(
     [
@@ -108,7 +102,6 @@ export class SessionService {
       ? and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`), notIdledOut())
       : eq(session.userId, userId);
     const db = this.drizzle.db;
-    // Active sessions first (expiresAt > now), then user-chosen sort within each group.
     const activeFirst = sql<number>`CASE WHEN ${session.expiresAt} > NOW() THEN 0 ELSE 1 END`;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
     const col =
@@ -140,11 +133,6 @@ export class SessionService {
     };
   }
 
-  /**
-   * Every active session on the platform, newest first, with the account each belongs
-   * to. `listSessions` needs a userId and so cannot answer "who is logged in right now",
-   * which is what a Super Admin needs before revoking someone else's session.
-   */
   async listAllActiveSessions({
     role,
     query,
@@ -205,11 +193,6 @@ export class SessionService {
     };
   }
 
-  /**
-   * Self-service revoke. Refuses the caller's own session: ending it here would look
-   * like a silent logout rather than the deliberate "sign out" action, and the session
-   * list marks it as current precisely so it is not the one you cut off.
-   */
   async revokeOwnSession(
     userId: User['id'],
     id: Session['id'],
@@ -225,8 +208,6 @@ export class SessionService {
   async revokeSession(userId: User['id'], id: string, actorId?: User['id'], meta?: ClientMeta) {
     const updated = await this.drizzle.db
       .update(session)
-      // Keep updatedAt as-is: it is the session's last-used time in the device
-      // list, and the $onUpdateFn would otherwise overwrite it with the revoke time.
       .set({ expiresAt: sql`now()`, updatedAt: session.updatedAt })
       .where(and(eq(session.id, id), eq(session.userId, userId)))
       .returning({ id: session.id });
@@ -246,7 +227,6 @@ export class SessionService {
     return { success: true as const };
   }
 
-  /** For an account that may hold MCP tokens, revokes them in the same transaction. */
   async revokeAllSessions(userId: User['id'], actorId?: User['id'], meta?: ClientMeta) {
     const mcpTokens = await this.mcpTokensOf(userId);
     if (mcpTokens) {
@@ -268,11 +248,6 @@ export class SessionService {
     return { success: true as const };
   }
 
-  /**
-   * `revokeAllSessions` on the caller's `tx`, for a block that must end the sessions only if it
-   * commits. The sign-out event goes to the outbox with it. Reads through `tx` alone, so it never
-   * takes a second pool connection while the caller holds one.
-   */
   async revokeAllSessionsIn(tx: DrizzleTx, userId: User['id']): Promise<void> {
     await expireActiveSessions(tx, userId);
     await (
@@ -291,14 +266,6 @@ export class SessionService {
     });
   }
 
-  /**
-   * After a password reset: ends the account's sessions and revokes its MCP tokens in one
-   * transaction, then signs its open tabs out. better-auth deletes the sessions and then writes
-   * the new password before its reset hook runs, so the expiry here catches a session signed in
-   * after that delete; expired first, before the revocation takes the token table's lock,
-   * none can issue a token the revocation missed. A failed revocation still ends the sessions,
-   * then is tried once more; a second failure is thrown for the caller to log.
-   */
   async endSessionsAfterPasswordReset(userId: User['id'], meta?: ClientMeta) {
     const mcpTokens = await this.mcpTokensOf(userId);
     const revocation = sessionsRevoked({ userId, actorId: userId, meta });
@@ -316,8 +283,6 @@ export class SessionService {
       } catch (fallbackErr) {
         throw new AggregateError([err, fallbackErr], 'Password reset could not end the sessions.');
       }
-      // The rollback released the token table's lock before the sessions ended, so an old
-      // session may have issued a token in between; with none live now, a retry covers it.
       try {
         await mcpTokens?.revokeAllForUser(revocation);
       } catch (retryErr) {
@@ -341,7 +306,6 @@ export class SessionService {
     }
   }
 
-  /** For a credential change that ends the user's sessions without `revokeAllSessions`. */
   async revokeMcpTokens(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
     const mcpTokens = await this.mcpTokensOf(userId);
     await mcpTokens?.revokeAllForUser(sessionsRevoked({ userId, actorId, meta }));
@@ -356,11 +320,6 @@ export class SessionService {
   }
 }
 
-/**
- * Ends every live session of the account: each expires now, so the next request with its cookie
- * is signed out and better-auth drops the row. A later reactivation or password change revives
- * none. Answers how many it ended.
- */
 export async function expireActiveSessions(
   db: DrizzleDb | DrizzleTx,
   userId: User['id'],

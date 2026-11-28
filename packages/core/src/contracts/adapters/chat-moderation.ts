@@ -26,7 +26,6 @@ export type ChatModerationRoomId = Uuid | (typeof CHAT_MODERATION_SCOPES)[number
 export type ChatModerationScope = (typeof CHAT_MODERATION_SCOPE_VALUES)[number];
 
 export type ChatModeration = {
-  /** Bans and mutes only; the send path checks read-only before this, and slow mode plus cooldowns after it. */
   assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic?: boolean): Promise<void>;
   deleteMessage(
     id: Uuid,
@@ -69,7 +68,6 @@ export type ChatModeration = {
     ip: string | null;
     userAgent: string | null;
   }): Promise<{ success: true }>;
-  /** Pass `tx` to read inside the caller's transaction, e.g. under the send lock. */
   listCooldowns(userIds?: readonly Uuid[], tx?: unknown): Promise<ChatCooldownEntry[]>;
   ban(input: {
     userId: Uuid;

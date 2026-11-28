@@ -1,10 +1,3 @@
-/**
- * Rate-limiter seam. Abuse-prone routes (auth flows, money mutations) consume
- * from this adapter so the throttling backend is swappable. It is a required
- * durable seam with no in-process fallback: REDIS_URL binds the shipped Redis
- * adapter (distributed fixed-window), an overlay can rebind RATE_LIMITER to any
- * other backend, and boot refuses to start when neither binds it.
- */
 import { createToken, type Token } from './token.js';
 
 export const RATE_LIMIT_KEYS = {
@@ -57,22 +50,14 @@ export function makeRateLimitKey(prefix: RateLimitKeyPrefix, id: string): RateLi
 }
 
 export type RateLimitOptions = {
-  /** Max allowed consumptions per window per key. */
   limit: number;
   windowMs: number;
-  /**
-   * What to do when the backing store is unreachable: 'allow' keeps availability
-   * (throttling pauses during an outage); 'deny' fails closed for keys where an
-   * unthrottled window is worse than a 429 (credential guessing). Default 'allow'.
-   */
   onUnavailable?: 'allow' | 'deny';
 };
 
 export type RateLimitResult = {
   allowed: boolean;
-  /** Milliseconds until the window resets. 0 when allowed. */
   retryAfterMs: number;
-  /** The store could not be reached: `allowed` then follows `onUnavailable`, not the count. */
   unavailable?: boolean;
 };
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +11,6 @@ const outFile = join(outDir, 'versions.ts');
 
 const readPackageJson = (dir) => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
 
-// A scaffold pins the toolchain this repo builds with, so the template never carries its own copy.
 function generateVersions() {
   const core = readPackageJson(join(repoRoot, 'packages', 'core'));
   const root = readPackageJson(repoRoot);

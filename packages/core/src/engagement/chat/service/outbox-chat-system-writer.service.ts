@@ -10,14 +10,6 @@ import type { SystemCardUpsert } from './chat-system-card.service.js';
 
 type CardArgs = Parameters<ChatSystemWriter['updateSystemMessage']>[0];
 
-/**
- * `CHAT_SYSTEM_WRITER` for a service that does not run chat: the card travels as a
- * `chat.system_message.upserted` event written on the caller's transaction, so it exists if
- * and only if the money it reports committed. Without a `tx` it writes the event in a
- * transaction of its own. The returned message is built here, the same shape the local writer
- * returns. It never publishes: the chat side publishes once it has stored the card, so a card it
- * refuses never reaches a client.
- */
 export class OutboxChatSystemWriter implements ChatSystemWriter {
   constructor(
     private readonly events: EventBus,

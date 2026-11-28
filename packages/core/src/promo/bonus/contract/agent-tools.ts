@@ -22,10 +22,8 @@ import {
 const GRANTS_SUMMARY_DEFAULT_DAYS = 30;
 export const GRANTS_SUMMARY_MAX_DAYS = 366;
 export const GRANTS_SUMMARY_MAX_CURRENCIES = 20;
-/** How far ahead `outstanding.expiringSoon` looks. */
 export const GRANTS_EXPIRING_SOON_DAYS = 7;
 
-/** bonus.grants_summary's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolveGrantsSummaryRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, GRANTS_SUMMARY_DEFAULT_DAYS, now);
 }
@@ -109,7 +107,6 @@ export const grantsSummaryTool = defineMcpTool({
   errors: [],
 });
 
-/** How far ahead bonus.grants_find's expiringWithinDays may look. */
 export const GRANTS_FIND_MAX_EXPIRING_DAYS = 90;
 
 export const GrantsFindInputSchema = z

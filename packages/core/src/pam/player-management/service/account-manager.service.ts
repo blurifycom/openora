@@ -57,20 +57,11 @@ type AccountManagerDeps = {
 export class AccountManagerService implements PlayerAccountManagerReader {
   constructor(private readonly deps: AccountManagerDeps) {}
 
-  /**
-   * Assigns, changes or, with null, removes the player's account manager. A new manager must be
-   * active staff holding `player:view`; removing is always allowed. Setting the current value
-   * again writes nothing, so it leaves no audit record and emits no event. The manager's account
-   * is re-read under a share lock with the player row, so a deactivation racing the assignment
-   * is refused instead of stored.
-   */
   async set(
     playerId: Player['id'],
     accountManagerId: User['id'] | null,
     caller: AdminCaller,
   ): Promise<{ accountManager: AccountManager | null }> {
-    // ponytail: the player:view grant is checked before the transaction, so a role revoked in
-    // that gap still assigns; lock the grant rows inside it if that window ever matters.
     const holdsView = accountManagerId !== null && (await this.holdsPlayerView(accountManagerId));
     await this.deps.drizzle.db.transaction(async (tx) => {
       const locked = findOneOrThrow(
@@ -111,14 +102,8 @@ export class AccountManagerService implements PlayerAccountManagerReader {
     return { accountManager: await this.readManager(eq(player.id, playerId)) };
   }
 
-  /**
-   * Up to `limit` active staff holding `player:view` whose name contains `search`, ordered by
-   * name. Staff are read in batches, each checked against its grants in one call, until `limit`
-   * are found or none are left, so staff without the grant never crowd out eligible ones.
-   */
   async candidates(search: string | undefined, limit: number) {
     const where = and(
-      // Matches user_staff_name_idx's predicate, so the planner can scan that partial index.
       sql`${user.role} <> 'player'`,
       inArray(user.role, STAFF_ROLES),
       eq(user.isActive, true),
@@ -145,14 +130,7 @@ export class AccountManagerService implements PlayerAccountManagerReader {
     return eligible.slice(0, limit);
   }
 
-  /**
-   * Every staff account managing at least one player of any status, deactivated ones included,
-   * ordered by name then id. A manager id with no user row, or whose user is now a player, is
-   * left out.
-   */
   async assigned(): Promise<AssignedAccountManager[]> {
-    // ponytail: unpaged, bounded by staff headcount; add an optional search/limit (non-breaking)
-    // if a deployment's manager list outgrows one response.
     const db = this.deps.drizzle.db;
     return db
       .select({ ...MANAGER_COLUMNS, email: user.email })
@@ -172,17 +150,11 @@ export class AccountManagerService implements PlayerAccountManagerReader {
       .orderBy(asc(user.name), asc(user.id));
   }
 
-  /**
-   * Locks the manager's account against a concurrent deactivation and answers its id as the
-   * database stores it, whatever letter case the caller sent; throws when it is ineligible.
-   */
   private async lockEligibleManager(
     tx: DrizzleTx,
     userId: User['id'],
     holdsView: boolean,
   ): Promise<User['id']> {
-    // A read lock on identity's row across the module boundary; it becomes a port call when
-    // identity is extracted.
     const [account] = await tx
       .select({ id: user.id, role: user.role, isActive: user.isActive })
       .from(user)

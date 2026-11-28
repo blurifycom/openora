@@ -1,20 +1,4 @@
 #!/usr/bin/env node
-/**
- * Populate the local database so the backoffice has something realistic to show.
- * Run via `pnpm db:seed`. Safe to re-run: reference data converges, demo content is recreated,
- * and the admin password is reset to the one given.
- *
- * Thin wrapper over `seedLocalData` from `@openora/core/seed/local` - a create:app consumer runs
- * the same seeder from its own `pnpm db:seed`.
- *
- *   pnpm db:seed                       # 36 players, admin@oss.dev / password1234
- *   pnpm db:seed --players=60          # more players
- *   pnpm db:seed --admin-email=me@x.io --admin-password=secret123
- *
- * Requires DATABASE_URL (falls back to the local docker default). A non-local host needs
- * OPENORA_ALLOW_REMOTE_SEED=1, since the seed wipes demo tables. Single-tenant
- * since ADR-0026 - one DB role, no RLS.
- */
 import { seedLocalData } from '@openora/core/seed/local';
 
 function arg(name: string): string | undefined {

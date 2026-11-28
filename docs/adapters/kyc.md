@@ -65,58 +65,16 @@ It is bound at boot via `pam/identity/plugin.ts`. This is intentionally permissi
 Your backend forwards documents to the vendor and the vendor decides synchronously or via
 webhook. `submit()` returns no `verificationUrl` - nothing for the consumer to redirect to.
 
-1. Create an overlay plugin:
-
-```bash
-pnpm gen plugin sumsub-kyc
-```
-
-2. Implement `KycAdapter` against the vendor's REST API:
-
-```ts
-// extensions/sumsub-kyc/src/sumsub-kyc-adapter.ts
-import type {
-  KycAdapter,
-  KycDocument,
-  KycResult,
-  KycTier,
-  KycVendorStatus,
-} from '@openora/core/contracts';
-
-export class SumsubKycAdapter implements KycAdapter {
-  async submit(userId: string, documents: KycDocument[], tier: KycTier): Promise<KycResult> {
-    // POST to the vendor's applicant API; no verificationUrl - documents were forwarded directly.
-  }
-
-  async getStatus(userId: string, tier: KycTier): Promise<KycVendorStatus> {
-    // GET applicant review status from the vendor.
-  }
-
-  parseWebhook(
-    rawBody: string,
-    headers: Record<string, string | string[] | undefined>,
-  ): KycResult | null {
-    // normalize the vendor's webhook payload into { referenceId, status }
-  }
-}
-```
-
-3. Bind it in the plugin, AFTER `identity` in `extensions.config.ts` (last registration wins):
-
-```ts
-// extensions/sumsub-kyc/plugin.ts
-import { KYC_ADAPTER } from '@openora/core/contracts';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { SumsubKycAdapter } from './src/sumsub-kyc-adapter.js';
-
-export default {
-  id: 'sumsub-kyc',
-  dependsOn: ['identity'],
-  register(ctx) {
-    ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter());
-  },
-} as const satisfies Plugin<CoreTokenCatalog>;
-```
+1. Scaffold an overlay plugin with `pnpm gen plugin`, naming it `sumsub-kyc`.
+2. Implement `KycAdapter` against the vendor's REST API. `submit` posts to the vendor's applicant
+   API and returns no `verificationUrl`, since the documents were forwarded directly. `getStatus` reads the applicant's review status from the vendor.
+   `parseWebhook` normalizes the vendor's webhook payload into referenceId+status, or null. The port
+   (`KycAdapter`, with `KycDocument`, `KycResult`, `KycTier`, `KycVendorStatus`) is declared in
+   `packages/core/src/contracts/adapters/kyc.ts`; `MockKycAdapter` in
+   `packages/core/src/pam/identity/adapters/mock/mock-kyc-adapter.ts` is a working reference.
+3. Bind it in the plugin, AFTER `identity` in `extensions.config.ts` (last registration wins).
+   The overlay plugin has id `sumsub-kyc`, depends on `identity`, and in `register` provides
+   `KYC_ADAPTER` with the new adapter.
 
 4. Register in `extensions.config.ts` **after** the `identity` entry.
 
@@ -131,82 +89,27 @@ referenceId+status, so implement `resolveDecision` to fetch the full decision
 (`documentTypes`, `decisionReason`) the `kyc-decision-sync` job needs; it runs off the
 request path, so its vendor round-trip never touches the webhook's SLA.
 
-1. Create an overlay plugin:
-
-```bash
-pnpm gen plugin hosted-kyc
-```
-
+1. Scaffold an overlay plugin with `pnpm gen plugin`, naming it `hosted-kyc`.
 2. Implement `KycAdapter.submit` to create a session and return the hosted URL,
    `parseWebhook` to normalize the vendor's async decision into a bare referenceId+status,
-   and `resolveDecision` to fetch the full decision for the `kyc-decision-sync` job:
+   and `resolveDecision` to fetch the full decision for the `kyc-decision-sync` job.
 
-```ts
-// extensions/hosted-kyc/src/hosted-kyc-adapter.ts
-import type {
-  KycAdapter,
-  KycDocument,
-  KycResult,
-  KycRiskSignals,
-  KycTier,
-  KycVendorStatus,
-} from '@openora/core/contracts';
-
-export class HostedKycAdapter implements KycAdapter {
-  async submit(userId: string, _documents: KycDocument[], tier: KycTier): Promise<KycResult> {
-    // POST to the vendor's "create session" API; the vendor collects documents itself.
-    // return { referenceId: session.id, status: 'pending', verificationUrl: session.url };
-  }
-
-  async getStatus(userId: string, tier: KycTier): Promise<KycVendorStatus> {
-    // GET the session's current decision from the vendor.
-  }
-
-  parseWebhook(
-    rawBody: string,
-    headers: Record<string, string | string[] | undefined>,
-  ): KycResult | null {
-    // normalize the vendor's webhook payload into { referenceId, status }
-  }
-
-  async resolveDecision(referenceId: string): Promise<KycResult> {
-    // GET the vendor's full decision for referenceId; the kyc-decision-sync job calls
-    // this off the request path, never the webhook handler itself.
-    // return { referenceId, status, documentTypes, decisionReason };
-  }
-
-  async resolveRiskSignals(referenceId: string): Promise<KycRiskSignals> {
-    // GET the vendor's session decision and extract device/IP risk signals into the
-    // vendor-neutral shape; the kyc-decision-sync job calls this alongside
-    // resolveDecision, off the request path.
-    // return { vpnOrTorDetected, dataCenterIpDetected, duplicateDeviceDetected,
-    //           highRiskCountryDetected, deviceFingerprints };
-  }
-}
-```
+   `submit` posts to the vendor's create-session API (the vendor collects documents itself) and
+   returns the reference id, status `pending` and the hosted `verificationUrl`. `getStatus` reads the
+   session's current decision. `parseWebhook` normalizes the vendor's webhook into a bare
+   referenceId+status, or null. `resolveDecision` fetches the full decision (referenceId, status,
+   `documentTypes`, `decisionReason`); the `kyc-decision-sync` job calls it off the request path,
+   never the webhook handler. `resolveRiskSignals` fetches the session decision and extracts
+   device and IP risk signals into the vendor-neutral `KycRiskSignals` shape (VPN or Tor, data-center
+   IP, duplicate device, high-risk country, device fingerprints); the same job calls it alongside
+   `resolveDecision`. All of these are declared on `KycAdapter` in
+   `packages/core/src/contracts/adapters/kyc.ts`.
 
 3. Implement `KycWebhookVerifier` if the vendor's signing header differs from
-   `x-kyc-signature`, and rebind both tokens together:
-
-```ts
-// extensions/hosted-kyc/plugin.ts
-import { KYC_ADAPTER, KYC_WEBHOOK_VERIFIER } from '@openora/core/contracts';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { HostedKycAdapter } from './src/hosted-kyc-adapter.js';
-import { HostedKycWebhookVerifier } from './src/hosted-kyc-webhook-verifier.js';
-
-export default {
-  id: 'hosted-kyc',
-  dependsOn: ['identity'],
-  register(ctx) {
-    ctx.provide(KYC_ADAPTER, () => new HostedKycAdapter());
-    ctx.provide(
-      KYC_WEBHOOK_VERIFIER,
-      () => new HostedKycWebhookVerifier(process.env.HOSTED_KYC_WEBHOOK_SECRET),
-    );
-  },
-} as const satisfies Plugin<CoreTokenCatalog>;
-```
+   `x-kyc-signature`, and rebind both tokens together.
+   The overlay plugin has its own id, depends on `identity`, and in `register` provides `KYC_ADAPTER`
+   with the hosted adapter and `KYC_WEBHOOK_VERIFIER` with a verifier built from the vendor's webhook
+   secret (read from env). Both tokens are declared in `packages/core/src/contracts/adapters/`.
 
 4. Register in `extensions.config.ts` **after** the `identity` entry. The consumer's
    frontend calls `submitKyc`, reads `verificationUrl` off the response, and redirects the

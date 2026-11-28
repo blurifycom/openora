@@ -2,10 +2,6 @@ import * as z from 'zod';
 import { DOMAIN_EVENT_CATALOG } from './events.js';
 import { HostAllowlistEntrySchema } from './host-allowlist.js';
 
-/**
- * `<gateway>/<vendor>/<model>`. The gateway prefix is mandatory: an agent SDK can route a bare
- * model id to a different gateway than the one the operator chose.
- */
 export const AGENT_MODEL_ID_PATTERN =
   /^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
@@ -46,10 +42,6 @@ export const AgentModelSchema = z
 
 export const MAX_AGENT_TRIGGER_TOPICS = 100;
 
-/**
- * The domain events that may start an agent run. Each listed topic costs every process that
- * listens for triggers one more subscription, so nothing is listed by default.
- */
 export const AgentTriggersConfigSchema = z
   .object({
     topics: z.array(z.enum(DOMAIN_EVENT_CATALOG)).max(MAX_AGENT_TRIGGER_TOPICS).default([]),
@@ -83,10 +75,8 @@ const McpAllowedOriginSchema = z
 
 export const McpTransportConfigSchema = z
   .object({
-    /** Off until an operator turns it on: the route is not mounted at all. */
     enabled: z.boolean().default(false),
     path: McpTransportPathSchema.default('/mcp'),
-    /** Whether output keys a tool marks as personal reach the client and, through it, a model. */
     personalFields: McpPersonalFieldModeSchema.default('drop'),
     tokenTtlDays: z
       .object({
@@ -95,10 +85,6 @@ export const McpTransportConfigSchema = z
       })
       .strict()
       .prefault({}),
-    /**
-     * Per token, every authenticated request counting, a tool call or not; and per client
-     * address before any token is looked up.
-     */
     rateLimit: z
       .object({
         perMinute: z.number().int().min(1).max(10_000).default(60),
@@ -107,7 +93,6 @@ export const McpTransportConfigSchema = z
       })
       .strict()
       .prefault({}),
-    /** Per admin: how many tokens may be active at once, and how many may be issued an hour. */
     tokenIssuance: z
       .object({
         maxActivePerAdmin: z.number().int().min(1).max(50).default(5),
@@ -115,9 +100,7 @@ export const McpTransportConfigSchema = z
       })
       .strict()
       .prefault({}),
-    /** Empty refuses every request carrying an Origin header; desktop clients send none. */
     allowedOrigins: z.array(McpAllowedOriginSchema).max(20).default([]),
-    /** Exact hostnames the route answers on. Required while enabled, so it never reaches the player domain. */
     allowedHosts: z.array(HostAllowlistEntrySchema).max(20).default([]),
   })
   .strict()
@@ -165,7 +148,6 @@ export const AgentsConfigSchema = z
       })
       .strict()
       .prefault({}),
-    /** Gateways a model id may name as its first segment. */
     modelGateways: z
       .array(AgentModelGatewaySchema)
       .min(1)

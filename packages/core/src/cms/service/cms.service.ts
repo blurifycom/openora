@@ -77,14 +77,10 @@ export class BannerScheduleOverlapError extends Error {
   }
 }
 
-// Public content is read far more than written; a short TTL bounds staleness
-// after a publish/edit to the invalidation below, not to this window alone.
 const CMS_CACHE_TTL_MS = 60_000;
 
 const pageCacheKey = (slug: string) => `cms:page:${slug}`;
 const publicBannerCacheEpochKey = (placement: string) => `cms:banner-placement:${placement}:epoch`;
-// Bump the suffix when the cached PublicBanner shape changes: an entry written by older code
-// would fail output validation.
 const publicBannerCacheKey = (placement: string, epoch: string, locale: string) =>
   `cms:banner-placement:${placement}:${epoch}:${locale}:v2`;
 const bannerConfigurationCreateLockKey = (placement: string) =>
@@ -243,8 +239,6 @@ export class CmsService {
     private readonly bannerImageCountBounds: BannerImageCountBoundsOverrides = {},
   ) {}
 
-  // Public routes (no adminGuard, HTTP-cacheable) - published-only. There is no
-  // admin equivalent yet, so a draft page is visible only via direct DB access.
   async listPages() {
     const pages = await this.drizzle.db
       .select({
@@ -266,8 +260,6 @@ export class CmsService {
     }));
   }
 
-  // Published-only, so an unpublished slug 404s the same as a nonexistent one
-  // (no draft-existence leak).
   async getPage(slug: string) {
     return cached(this.cache, pageCacheKey(slug), CMS_CACHE_TTL_MS, async () => {
       const record = findOneOrThrow(
@@ -399,8 +391,6 @@ export class CmsService {
     return { success: true };
   }
 
-  // Every existing placement (default or not), batched (no N+1) across two extra
-  // queries regardless of how many placements exist.
   async listPlacements() {
     const [placementRows, defaultRows] = await Promise.all([
       this.drizzle.db
@@ -429,13 +419,9 @@ export class CmsService {
       imagesByConfig.set(image.bannerConfigurationId, list);
     }
 
-    // Placements with no default use the most recent updatedAt across their
-    // (non-default) configurations for the summary timestamp.
     const nonDefaultPlacements = placementRows
       .map((r) => r.placement)
       .filter((p) => !defaultByPlacement.has(p));
-    // A raw sql aggregate has no column metadata for Drizzle to decode, so this comes
-    // back as Postgres's text representation, not a Date - parse it explicitly.
     const latestUpdatedByPlacement = new Map<string, Date>();
     if (nonDefaultPlacements.length > 0) {
       const rows = await this.drizzle.db
@@ -528,7 +514,6 @@ export class CmsService {
     const { record, images, created } = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, bannerConfigurationCreateLockKey(input.placement), async () => {
         if (input.reuseExisting) {
-          // The default configuration, else the newest, returned as it is whatever its layout.
           const [existing] = await tx
             .select()
             .from(bannerConfigurationTable)
@@ -591,8 +576,6 @@ export class CmsService {
         if (existing.isDefault) {
           throw new BannerConfigurationIsDefaultError();
         }
-        // Blocked unconditionally (queued, active, or expired) - no live-time
-        // computation in this guard, see D4 in the scheduling design.
         const [schedule] = await tx
           .select({ id: bannerScheduleTable.id })
           .from(bannerScheduleTable)
@@ -609,7 +592,6 @@ export class CmsService {
           .where(eq(bannerImageTable.bannerConfigurationId, id));
         const imageUrls = images.flatMap((image) => [image.desktopImageUrl, image.mobileImageUrl]);
         return withBannerImageUrlLocks(tx, imageUrls, async () => {
-          // Cascades to banner_image rows via the FK's onDelete: 'cascade'.
           await tx.delete(bannerConfigurationTable).where(eq(bannerConfigurationTable.id, id));
           return unreferencedBannerImageUrls(tx, imageUrls);
         });
@@ -791,7 +773,6 @@ export class CmsService {
               ...(replaced ? [replaced.desktopImageUrl, replaced.mobileImageUrl] : []),
             ],
             async () => {
-              // PUT semantics: an omitted optional field is stored as null, never kept from the replaced row.
               const fields = {
                 desktopImageUrl: input.desktopImageUrl,
                 mobileImageUrl: input.mobileImageUrl,
@@ -935,11 +916,6 @@ export class CmsService {
       await currentPublicBannerCacheKey(this.cache, placement, resolvedLocale),
       CMS_CACHE_TTL_MS,
       async () => {
-        // "What's live" is resolved here, at read time, not by a background job - a
-        // scheduled banner wins over the default while now() falls inside its
-        // [startsAt, endsAt] window (same auto-expiry approach as rgExclusion, see
-        // compliance/schema/index.ts). No invalidation is needed at the schedule's
-        // own start/end boundary; the pre-existing CMS_CACHE_TTL_MS bounds the lag.
         const now = new Date();
         const [scheduled] = await this.drizzle.db
           .select({
@@ -1036,8 +1012,6 @@ export class CmsService {
             .where(eq(bannerConfigurationTable.id, bannerConfigurationId)),
           new BannerConfigurationNotFoundError(bannerConfigurationId),
         );
-        // A schedule requires a default to layer onto, and can never target the
-        // default configuration itself (it is already live).
         if (config.isDefault) {
           throw new BannerConfigurationIsDefaultError();
         }
@@ -1138,8 +1112,6 @@ export class CmsService {
         if (schedule.endsAt <= now && newEndsAt > now) {
           throw new BannerScheduleExpiredError();
         }
-        // startsAt is not editable and not re-validated against now() here - ending a
-        // schedule early legitimately moves endsAt to now or the past.
 
         await this.assertNoScheduleOverlap(tx, config.placement, bannerConfigurationId, {
           startsAt: schedule.startsAt,
@@ -1207,9 +1179,6 @@ export class CmsService {
     }));
   }
 
-  // Half-open interval overlap: an existing schedule on the same placement (excluding
-  // the target configuration itself) conflicts unless it ends at-or-before the new
-  // start or starts at-or-after the new end - so touching boundaries are allowed.
   private async assertNoScheduleOverlap(
     tx: DrizzleTx,
     placement: string,
@@ -1237,7 +1206,6 @@ export class CmsService {
     }
   }
 
-  /** The placement's override for the layout, else the layout default. */
   private imageCountBounds(configuration: { placement: string; layout: BannerLayout }) {
     return (
       this.bannerImageCountBounds[configuration.placement]?.[configuration.layout] ??
@@ -1249,8 +1217,6 @@ export class CmsService {
     tx: DrizzleTx,
     configuration: { id: Uuid; placement: string; layout: BannerLayout },
   ) {
-    // Slot count is measured against base-locale rows only: locale overrides replace
-    // a slot rather than adding a publishable slot.
     const slotRows = await tx
       .select({ sortOrder: bannerImageTable.sortOrder })
       .from(bannerImageTable)
@@ -1272,8 +1238,6 @@ export class CmsService {
     }
   }
 
-  // Shared by setDefaultConfiguration/unsetDefaultConfiguration - single-placement,
-  // so the extra queries here are not the N+1 pattern listPlacements avoids.
   private async getPlacementSummary(placement: string) {
     const [defaultRow] = await this.drizzle.db
       .select()
@@ -1303,8 +1267,6 @@ export class CmsService {
       };
     }
 
-    // A raw sql aggregate has no column metadata for Drizzle to decode, so this comes
-    // back as Postgres's text representation, not a Date - parse it explicitly.
     const [latest] = await this.drizzle.db
       .select({ updatedAt: sql<string | null>`max(${bannerConfigurationTable.updatedAt})` })
       .from(bannerConfigurationTable)

@@ -46,7 +46,6 @@ class ScopeChangedDuringLockError extends Error {}
 
 const MAX_SCOPE_ATTEMPTS = 5;
 
-// Postgres returns uuids lowercase; an uppercase input id would never match its row.
 export function dedupe(ids: readonly string[] | undefined): string[] {
   return ids ? [...new Set(ids.map((id) => id.toLowerCase()))] : [];
 }
@@ -55,7 +54,6 @@ export function sortIds(ids: readonly string[]): string[] {
   return [...ids].sort();
 }
 
-// `providerGameFilter` narrows only the provider-scope games; a game named by id always matches.
 function targetCondition(gameIds: string[], providerIds: string[], providerGameFilter?: SQL) {
   return or(
     gameIds.length > 0 ? inArray(game.id, gameIds) : undefined,
@@ -65,11 +63,6 @@ function targetCondition(gameIds: string[], providerIds: string[], providerGameF
   );
 }
 
-/**
- * Bulk catalog writes over `gameIds` and/or every game of `providerIds`. Unknown game or
- * provider ids are returned in `notFound` while the rest applies; an unknown tag or
- * category id rejects the whole call. Throws `GameBulkTooManyGamesError` past 5,000 games.
- */
 export class GameBulkService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -124,8 +117,6 @@ export class GameBulkService {
               .for('update');
           }
 
-          // Under READ COMMITTED the locking scan above skips a game an uncommitted updateGame
-          // is moving onto these providers; once it commits, only a fresh read sees it.
           if (providerRows.length > 0) {
             const lockedIds = new Set(games.map((row) => row.id));
             const currentlyUnderLockedProviders = await tx2
@@ -210,8 +201,6 @@ export class GameBulkService {
           };
         });
 
-      // Enabling an unreviewed game named by id approves it; a provider-scope enable
-      // leaves it off, since nobody looked at that game.
       const namedGameIds = new Set(gameIds);
       const toFlip = games.filter((row) => row.isActive !== isActive);
       const unreviewed = isActive ? toFlip.filter((row) => isUnreviewed(row.reviewStatus)) : [];
@@ -241,10 +230,6 @@ export class GameBulkService {
         ? await unplayableAmong(tx, and(condition, eq(game.isActive, true)))
         : [];
 
-      // A flipped game or provider moves its categories' playable/unplayable split -
-      // pins are placed relative to it, so those categories must re-rank. See docs/modules/gaming.md.
-      // The ids come back from the marker itself so plugin.ts's fast-path enqueue can
-      // reuse them instead of resolving the same lookup a second time after commit.
       const dirtiedByGames = await markCategoriesRankDirtyForGames(tx, changedGameIds);
       const dirtiedByProviders = await markCategoriesRankDirtyForProviders(tx, changedProviderIds);
 
@@ -320,7 +305,6 @@ export class GameBulkService {
     };
   }
 
-  /** Moves pending games only: a named game in any other status counts as unchanged. */
   async reviewGames({
     decision,
     actorId,
@@ -348,7 +332,6 @@ export class GameBulkService {
       let unplayableGameIds: string[] = [];
       if (decision === 'approve') {
         changedGameIds = await approveGames(tx, pendingIds);
-        // Approving makes the game live, the same split move an enable makes.
         dirtiedCategoryIds = await markCategoriesRankDirtyForGames(tx, changedGameIds);
         unplayableGameIds =
           changedGameIds.length > 0
@@ -435,8 +418,6 @@ export class GameBulkService {
     const outcome = await this.drizzle.db.transaction(async (tx) => {
       await this.assertWithinGameCap(tx, condition);
 
-      // The link insert's foreign-key check takes FOR KEY SHARE on each game row anyway;
-      // taking it up front, in id order and before provider locks, avoids a deadlock.
       const { games, notFoundGameIds, notFoundProviderIds } = await this.resolveGameScope(tx, {
         gameIds,
         providerIds,
@@ -457,7 +438,6 @@ export class GameBulkService {
       const matchedGameIds = games.map((row) => row.id);
       let addedLinks: GameAddedTagLinks = [];
       if (matchedGameIds.length > 0) {
-        // Array parameters keep the insert under Postgres' 65,535 bind-parameter limit.
         const { rows } = await tx.execute<{ game_id: string; tag_id: string }>(sql`
           INSERT INTO game_tag_game (game_id, tag_id)
           SELECT g, t
@@ -518,8 +498,6 @@ export class GameBulkService {
     const outcome = await this.drizzle.db.transaction(async (tx) => {
       await this.assertWithinGameCap(tx, condition);
 
-      // The link insert's foreign-key check takes FOR KEY SHARE on each game row anyway;
-      // taking it up front, in id order and before provider locks, avoids a deadlock.
       const { games, notFoundGameIds, notFoundProviderIds } = await this.resolveGameScope(tx, {
         gameIds,
         providerIds,
@@ -536,9 +514,6 @@ export class GameBulkService {
       if (missingCategoryId) {
         throw new GameCategoryNotFoundError(missingCategoryId);
       }
-      // The whole call is rejected, like an unknown category id: a rule-mode category's
-      // games are the evaluator's alone. The key-share lock above holds off a concurrent
-      // switch to rule mode until these links have committed.
       const ruleManaged = foundCategories.find((row) => row.membershipMode === 'rule');
       if (ruleManaged) {
         throw new GameCategoryRuleManagedError(ruleManaged.id);
@@ -547,15 +522,6 @@ export class GameBulkService {
       const matchedGameIds = games.map((row) => row.id);
       let addedLinks: GameAddedCategoryLinks = [];
       if (matchedGameIds.length > 0) {
-        // Marks every target category dirty (locking `game_category`) before inserting
-        // into `game_category_game` below - GameSortRankingService.finalize locks
-        // `game_category` FOR UPDATE first and only then writes `game_category_game`,
-        // so writing the two tables in the opposite order (as this used to, marking
-        // dirty only after the insert) is an ABBA lock-order inversion Postgres resolves
-        // by aborting one side. Every requested category is marked, not only ones that
-        // gain a genuinely new link - the categories are already known to exist (checked
-        // above) and an extra dirty mark is a harmless no-op re-rank. See
-        // docs/modules/gaming.md.
         await markCategoriesRankDirty(tx, categoryIds);
         const { rows } = await tx.execute<{ game_id: string; category_id: string }>(sql`
           INSERT INTO game_category_game (game_id, category_id)
@@ -615,7 +581,6 @@ async function approveGames(tx: DrizzleTx, gameIds: string[]) {
   return rows.map((row) => row.id);
 }
 
-// Active games the player still cannot reach because their provider is off.
 async function unplayableAmong(tx: DrizzleTx, condition: SQL | undefined) {
   const rows = await tx
     .select({ id: game.id })

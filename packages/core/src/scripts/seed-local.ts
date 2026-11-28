@@ -27,10 +27,6 @@ export {
   type SeedResult,
 } from './seed-demo-data.js';
 
-/**
- * A ladder for local development and the test harness. Deliberately short and round: an
- * operator's real thresholds and payouts are their own pricing, not something this package ships.
- */
 export const EXAMPLE_RANK_LADDER: RankLadderSeed = {
   currency: 'USDT',
   tiers: [
@@ -84,7 +80,6 @@ export const EXAMPLE_RANK_LADDER: RankLadderSeed = {
 export type SeedLocalOptions = {
   databaseUrl: string;
   admin: { email: string; password: string; name?: string };
-  /** Shared by every demo player. */
   playerPassword?: string;
   playerCount?: number;
   log?: (message: string) => void;
@@ -92,13 +87,11 @@ export type SeedLocalOptions = {
 
 const LOCAL_DB_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', 'postgres']);
 
-/** The seeder wipes players and wallet ledgers, so it only touches a database on this machine. */
 function assertLocalDatabase(databaseUrl: string): void {
   if (process.env['NODE_ENV'] === 'production') {
     throw new Error('seedLocalData refuses to run with NODE_ENV=production: it wipes demo tables.');
   }
   const url = new URL(databaseUrl);
-  // pg lets a `host` query parameter (a Cloud SQL socket, say) override the URL's hostname.
   const host = url.searchParams.get('host') ?? url.hostname;
   if (!LOCAL_DB_HOSTS.has(host) && process.env['OPENORA_ALLOW_REMOTE_SEED'] !== '1') {
     throw new Error(
@@ -108,17 +101,10 @@ function assertLocalDatabase(databaseUrl: string): void {
   }
 }
 
-/**
- * Everything a local install needs to be usable: reference data, an example rank ladder, a
- * super-admin, demo players, wallets, games and chat. Wipes and recreates the demo content on
- * every run, so it refuses production and any non-local database host.
- */
 export async function seedLocalData(options: SeedLocalOptions): Promise<SeedResult> {
   assertLocalDatabase(options.databaseUrl);
   const log = options.log ?? (() => {});
   const db = createDrizzleDb(options.databaseUrl);
-  // better-auth's drizzle adapter needs the auth tables passed as schema, else
-  // user creation throws "model user not found".
   const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
 
   await seedIam(db);
@@ -137,13 +123,10 @@ export async function seedLocalData(options: SeedLocalOptions): Promise<SeedResu
     ...(options.playerCount === undefined ? {} : { playerCount: options.playerCount }),
     log,
   });
-  // After the demo games exist: the round ledger only plays games it has projected.
   await backfillLedgerGames(db);
   log('Round ledger games projected.');
-  // After the demo users exist: the ledger refuses a stake from a user it has not projected.
   await backfillPlayEligibility(db, ledgerPlayEligibilityProjection(db));
   log('Ledger play eligibility projected.');
-  // After any seeded limit: the ledger does not enforce a limit it has not projected.
   await backfillRgLimits(db, ledgerRgLimits(db));
   log('Ledger limits projected.');
   return result;

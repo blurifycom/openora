@@ -80,12 +80,6 @@ function toProviderTransaction(
 export type WalletReaderServiceDeps = {
   drizzle: DrizzleService;
   defaultCurrency?: string;
-  // Prices getLifetimeDeposit's per-currency sum into pivotCurrency (the platform's
-  // configured exchange-rate pivot, e.g. resolveExchangeRatePivot(platformConfig.exchangeRate))
-  // - a platform with no base currency can hold a player's deposits in several coins at once,
-  // so a raw SUM across them (1 BTC + 20000 DOGE = 20001) is never a valid comparison.
-  // exchangeRateReader stays optional so an fx-less install still resolves (getLifetimeDeposit
-  // then answers null for any player holding a non-pivot-currency deposit).
   exchangeRateReader?: ExchangeRateReader;
   pivotCurrency: string;
   turnover?: () => TurnoverService;
@@ -117,14 +111,10 @@ export class WalletReaderService implements WalletReader {
     return this.turnover().summary(userId, tx);
   }
 
-  // A caller already inside a transaction passes it: taking a second pool connection while
-  // holding the first is how the pool deadlocks under a burst.
   private on(tx?: unknown): DrizzleDb {
     return tx === undefined ? this.drizzle.db : (tx as DrizzleDb);
   }
 
-  /** Sum of a player's completed deposits, priced into pivotCurrency. Null when at least one
-   * currency's amount could not be priced - never a partial or fabricated total. */
   async getLifetimeDeposit(userId: string, tx?: unknown): Promise<string | null> {
     return sumInPivot(
       await this.getDepositsByCurrency(userId, tx),
@@ -181,9 +171,7 @@ export class WalletReaderService implements WalletReader {
         ),
       )
       .groupBy(walletTransaction.currency);
-    // A stake, a reversal or a win is never reviewed: it moved when it was created.
     const metric = sql<WalletWindowMetric>`case when ${walletTransaction.type} in ('win', 'win_reversal') then 'wins' else 'bets' end`;
-    // A reversal takes back from the metric of the leg it reverses.
     const signedAmount = sql`case when ${walletTransaction.type} in ('bet_reversal', 'win_reversal') then -${walletTransaction.amount} else ${walletTransaction.amount} end`;
     const play = await db
       .select({
@@ -236,7 +224,6 @@ export class WalletReaderService implements WalletReader {
   }
 
   async getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number> {
-    // TODO: count completed withdrawals for userId within the last windowDays days
     const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
     const [row] = await this.drizzle.db
       .select({ n: count() })

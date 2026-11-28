@@ -15,52 +15,23 @@ import { TurnoverCreditTypeSchema } from '../adapters/turnover.js';
 import { WagerProductSchema } from '../adapters/wager-context.js';
 import { GRANT_CONCURRENCY_MODES, RANK_PERIODIC_BASES, RANK_PROGRESS_BASES } from './promo.js';
 
-/**
- * Platform-wide T0 configuration consumed by the slot evaluation context and
- * plugin gating (see ADR-0013, Tier 0). This is the "config-only customization"
- * surface - operators (or compliance) toggle behavior without writing code.
- *
- * v1 ships a Zod schema + a file loader (YAML / JSON). The admin UI for editing
- * this config is deferred to v2.
- *
- * Distinct from `IgamingConfig` (currencies / jurisdictions / vendor selection)
- * which lives in `igaming-config.ts`. PlatformConfig is specifically about the
- * extension surface: which feature flags are on, which brand is active, RG
- * defaults per geo.
- */
-
 export const FeatureFlagsSchema = z.record(z.string(), z.boolean());
 
 export const BrandSchema = z
   .object({
-    /** Stable id used in slot `brandScope` and theme lookup. */
     id: z.string().min(1),
     name: z.string().min(1),
-    /** A daisyUI theme name or a key from `themePresets`. */
     themePreset: z.string().optional(),
-    /** Brand-specific override map for the `--bo-*` CSS variables. */
     themeOverrides: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 
 export const KycConfigSchema = z
   .object({
-    /** Provider id recorded on each verification record (e.g. 'didit', 'sumsub'). */
     provider: z.string().optional(),
-    /** Name of the env var holding the webhook HMAC secret. Default: KYC_WEBHOOK_SECRET. */
     webhookSecretEnv: z.string().optional(),
-    /** When true, withdrawals require a passing KYC status (verified|manually_overridden). */
     gateWithdrawals: z.boolean().default(false),
-    /**
-     * When true, the immediate `overrideKycStatus` and `bulkApproveKyc` endpoints also require
-     * `kyc-override-approval:approve`, so a role that may only request an override cannot apply
-     * one directly. Leave false unless an overlay owns the request/approve flow.
-     */
     requireApprovalForDirectOverride: z.boolean().default(false),
-    /**
-     * Per-currency cumulative-deposit thresholds (currency code -> decimal string)
-     * that trigger a re-KYC of a verified player. Absent currency = no threshold for that currency.
-     */
     reverifyThresholds: z.record(z.string(), MoneyAmountSchema).optional(),
   })
   .strict();
@@ -68,21 +39,13 @@ export const KycConfigSchema = z
 export const AutoWithdrawalConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    /** Amount cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
     dailyCapAmount: MoneyAmountSchema.optional(),
-    /** Count cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
     dailyCapCount: z.number().int().positive().optional(),
   })
   .strict();
 
 export type AutoWithdrawalConfig = z.infer<typeof AutoWithdrawalConfigSchema>;
 
-/**
- * Structural check on a cron expression: 5 fields, or 6 with a leading seconds field.
- * Not a full parse - the driver owns that - but it turns the typo class that would
- * otherwise surface as one `logger.error` at boot and a job that never ticks into a
- * config-validation failure.
- */
 export const CronExpressionSchema = z
   .string()
   .regex(
@@ -90,17 +53,14 @@ export const CronExpressionSchema = z
     'must be a 5- or 6-field cron expression',
   );
 
-/** The percent of a stake that counts toward turnover, per product. */
 export const TurnoverPercentSchema = z.number().int().min(0).max(100);
 
 const TURNOVER_DEFAULT_LOCKED_MESSAGE = 'Wager your deposits before withdrawing or sending funds.';
 
-/** Deposit turnover requirement (ADR-0065). `multiplier` '0' turns it off entirely. */
 export const WalletTurnoverConfigSchema = z
   .object({
     multiplier: MoneyAmountSchema.default('0'),
     creditTypes: z.array(TurnoverCreditTypeSchema).default(['deposit']),
-    /** Percent of a real stake's pivot value that counts, per product. */
     productPercent: z
       .object({
         casino: TurnoverPercentSchema.default(100),
@@ -110,12 +70,9 @@ export const WalletTurnoverConfigSchema = z
       })
       .strict()
       .prefault({}),
-    /** Products whose stake counts when its round settles rather than when it is placed. */
     countAtSettle: z.array(WagerProductSchema).default(['sportsbook']),
-    /** Remaining requirement, in the pivot currency, at or below which nothing is locked. */
     dustThreshold: MoneyAmountSchema.default('0.01'),
     pricingCron: CronExpressionSchema.default('*/5 * * * *'),
-    /** The refusal's player-facing message (errors.md). */
     lockedMessage: z.string().min(1).default(TURNOVER_DEFAULT_LOCKED_MESSAGE),
   })
   .strict();
@@ -123,44 +80,15 @@ export const WalletTurnoverConfigSchema = z
 export type WalletTurnoverConfig = z.infer<typeof WalletTurnoverConfigSchema>;
 
 export const WALLET_TRANSFER_CREDIT_MODES = ['bonus_grant', 'cash'] as const;
-/** The player-to-player credits `transferCredits` decides. */
 export const WALLET_TRANSFER_CREDIT_KINDS = ['gift', 'rain', 'donation'] as const;
 
 export const WalletConfigSchema = z
   .object({
     turnover: WalletTurnoverConfigSchema.optional(),
-    /**
-     * How a gift, rain or donation credit lands: as a bonus grant (today's behaviour) or as real
-     * cash carrying a turnover requirement. Absent = `bonus_grant`.
-     */
     transferCredits: z.enum(WALLET_TRANSFER_CREDIT_MODES).optional(),
-    /**
-     * Currency codes routed to the crypto rail by `railFor` (case-insensitive).
-     * Absent = the built-in default (BTC, ETH, USDT, USDC). Lets an operator add or
-     * swap crypto assets (eg a custody vendor's supported asset list) without a
-     * core code change.
-     */
     cryptoCurrencies: z.array(z.string().min(1)).optional(),
-    /**
-     * Active currency reported for a player who has no wallet row yet - before their first
-     * deposit or credit creates one. Absent = USD. A crypto-only operator sets its settlement
-     * coin here so a new player is never shown a fiat balance the operator does not offer.
-     */
     defaultCurrency: CurrencyTickerInputSchema.optional(),
-    /**
-     * Reference currency a deposit, withdrawal or manual adjustment is converted into for its
-     * ledger snapshot when the player has no money limit to take one from. A player's own
-     * reference currency is the currency of their deposit limit, else their wager limit.
-     * Absent = USD.
-     */
     defaultReferenceCurrency: CurrencyTickerInputSchema.optional(),
-    /**
-     * Per-currency amount (currency code -> decimal string) at or above which a single bet or a
-     * single win leaves a `wallet.large_bet.recorded` / `wallet.large_win.recorded` audit record.
-     * Compared in the transaction's own currency, with no rate lookup on the bet path, so a
-     * currency without an entry is never flagged. Absent = disabled. One transaction only; a
-     * player's total over a period is not summed.
-     */
     significantAmountThresholds: z
       .record(z.string(), MoneyAmountSchema)
       .refine(
@@ -170,82 +98,30 @@ export const WalletConfigSchema = z
         'a currency appears twice, ignoring case',
       )
       .optional(),
-    /**
-     * Vendor-side account each provider's sweeps move player funds into, keyed by the
-     * provider name in `wallet_asset.providerName` (`default` for the single bound
-     * adapter). Keyed rather than flat because one operator can run several vendors,
-     * and an account id only means something at the vendor that issued it. A provider
-     * with no entry sweeps to whatever its adapter defaults to.
-     */
     treasuryRefs: z.record(z.string().min(1), z.string().min(1)).optional(),
-    /**
-     * Custody sweep cron knobs. Static config, not a DB row - nothing here is edited
-     * during an incident. Absent means the sweep job no-ops.
-     */
     sweep: z
       .object({
         cron: z.string().default('*/15 * * * *'),
-        /**
-         * Decimal string, compared exactly (see `moneyCompare`/`moneyScaleBy`). A
-         * balance must be worth at least this many times the fee to be worth sweeping.
-         */
         feeMultiple: MoneyAmountSchema.default('5'),
-        /** Balances considered per cycle; listSweepableBalances is unbounded. */
         batchSize: z.number().int().positive().default(200),
-        /** Vendor API parallelism. Tune to the vendor's rate limit. */
         concurrency: z.number().int().positive().default(4),
-        /**
-         * How long a sweep may sit in `unknown` before reconciliation reports it for a
-         * human. `unknown` means the vendor call threw and we cannot tell whether it
-         * was received, so the in-flight guard stays held and nobody releases it
-         * automatically.
-         */
         unknownAfterMinutes: z.number().int().positive().default(60),
-        /**
-         * How long a claimed run may sit unfinished before another cycle treats it as
-         * abandoned and takes over. Distinct from `unknownAfterMinutes`: this one is
-         * about a crashed worker, that one is about an ambiguous vendor call.
-         */
         staleRunAfterMinutes: z.number().int().positive().default(30),
       })
       .strict()
       .optional(),
-    /**
-     * Reconciliation cron knobs. Static config, not a DB row - nothing here is edited
-     * during an incident. Absent means the reconciliation job no-ops.
-     */
     reconciliation: z
       .object({
         cron: z.string().default('0 * * * *'),
         lookbackHours: z.number().int().positive().default(24),
-        /** Rows a page. The ledger invariant run caps its own pages at 1000, under the bind limit. */
         batchSize: z.number().int().positive().default(200),
         stuckAfterMinutes: z.number().int().positive().default(60),
-        /**
-         * Swaps get their own cutoff because `processing` is a legitimate resting state
-         * for a swap leg: `SwapService.swap` returns it whenever the desk fills
-         * asynchronously, and the leg then waits for the desk's webhook. Measured against
-         * the withdrawal cutoff, a desk that settles slower than withdrawals would file a
-         * finding for every healthy swap. Absent falls back to `stuckAfterMinutes`.
-         */
         stuckSwapAfterMinutes: z.number().int().positive().optional(),
-        /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
         staleRunAfterMinutes: z.number().int().positive().default(30),
         alertThreshold: z.number().int().positive().default(10),
-        /**
-         * When the ledger invariant scan runs. It reads every wallet's whole ledger since its
-         * baseline, so it gets its own, rarer schedule than the hourly vendor diff. Absent: daily
-         * at 03:30.
-         */
         ledgerInvariantCron: z.string().optional(),
-        /**
-         * Run-claim takeover threshold for the ledger invariant scan, which reads every wallet's
-         * whole history and outlives the vendor diff's. Absent: 240.
-         */
         ledgerInvariantStaleRunAfterMinutes: z.number().int().positive().optional(),
-        /** The oldest event the outbox has not relayed, in minutes, past which a cycle files a finding. */
         outboxLagAlertMinutes: z.number().int().positive().default(5),
-        /** Dead-lettered events across every broker topic past which a cycle files a finding. */
         deadLetterAlertThreshold: z.number().int().nonnegative().default(0),
       })
       .strict()
@@ -257,32 +133,22 @@ export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
 const DEFAULT_WALLET_CURRENCY = 'USD';
 
-/**
- * The currency a cash prize or cashback credit lands in when its own source (a rank ladder, a
- * race, a streak milestone) is priced in something else - never the source's own currency
- * unconditionally, or crediting a crypto-only player in a fiat ticker would open a balance the
- * operator never offers. Absent `wallet.defaultCurrency` falls back to USD, the same default
- * `readWalletBalances` uses for a player with no wallet row yet.
- */
 export function resolveWalletDefaultCurrency(config: WalletConfig | undefined): string {
   return (config?.defaultCurrency ?? DEFAULT_WALLET_CURRENCY).toUpperCase();
 }
 
 const DEFAULT_REFERENCE_CURRENCY = 'USD';
 
-/** Reference currency for a player with no money limit. See `wallet.defaultReferenceCurrency`. */
 export function resolveWalletReferenceCurrency(config: WalletConfig | undefined): string {
   return (config?.defaultReferenceCurrency ?? DEFAULT_REFERENCE_CURRENCY).toUpperCase();
 }
 
-/** Turnover settings with their defaults, also when no wallet config is bound. */
 export function resolveWalletTurnoverConfig(
   config: WalletConfig | undefined,
 ): WalletTurnoverConfig {
   return WalletTurnoverConfigSchema.parse(config?.turnover ?? {});
 }
 
-/** Whether the turnover requirement is on: a multiplier above '0'. */
 export function isTurnoverEnabled({
   multiplier,
 }: Pick<WalletTurnoverConfig, 'multiplier'>): boolean {
@@ -293,7 +159,6 @@ const DEFAULT_EXCHANGE_RATE_PIVOT = 'USD';
 
 export const ExchangeRateConfigSchema = z
   .object({
-    /** Comparison currency the fx module derives a cross rate against. Absent = 'USD'. */
     pivot: CurrencyCodeSchema.default(DEFAULT_EXCHANGE_RATE_PIVOT),
     freshTtlMs: z.number().int().positive().default(60_000),
     hardMaxAgeMs: z
@@ -302,30 +167,18 @@ export const ExchangeRateConfigSchema = z
       .positive()
       .default(15 * 60_000),
     providerTimeoutMs: z.number().int().positive().default(2_000),
-    /**
-     * How long a currency stays refused after a failed vendor call, before another
-     * caller is allowed to retry it. Deliberately independent of `providerTimeoutMs`
-     * (default well above it) - otherwise a vendor outage adds a full timeout stall to
-     * every hot-path call for as long as the outage lasts, instead of failing fast from
-     * cache.
-     */
     failureCooldownMs: z.number().int().positive().default(30_000),
   })
   .strict();
 
 export type ExchangeRateConfig = z.infer<typeof ExchangeRateConfigSchema>;
 
-/** The pivot every fx conversion targets. One resolver, so no module converts against another. */
 export function resolveExchangeRatePivot(config: ExchangeRateConfig | undefined): string {
   return (config?.pivot ?? DEFAULT_EXCHANGE_RATE_PIVOT).toUpperCase();
 }
 
 export const NotificationsConfigSchema = z
   .object({
-    /**
-     * In-app notification retention knobs. Static config, not a DB row - nothing
-     * here is edited during an incident. Absent means the built-in defaults apply.
-     */
     retention: z
       .object({
         days: z.number().int().positive().default(30),
@@ -340,39 +193,17 @@ export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 
 export const RegistrationConfigSchema = z
   .object({
-    /** Version recorded beside the player's affirmative terms acceptance. */
     termsVersion: z.string().min(1),
-    /**
-     * Blocks sign-in until the player has verified their address. Off by default:
-     * unverified players stay unrestricted while the KYC toggle is off.
-     */
     requireEmailVerification: z.boolean().default(false),
-    /** Youngest age a player may declare or be verified at. Never below the legal 18. */
     minPlayerAge: z.number().int().min(MIN_PLAYER_AGE_YEARS).default(MIN_PLAYER_AGE_YEARS),
   })
   .strict();
 
-/**
- * Offset off the :00/:15/:30/:45 tick the wallet custody sweep owns, so the in-process
- * driver never runs the moderation-expiry sweep alongside a money path. Cadence sets
- * audit-trail latency only - a lapsed mute stops being enforced at its own `expiresAt`
- * with or without the job, and the entry is dated from the row, so a late run still
- * records the right instant.
- */
 export const CHAT_MODERATION_EXPIRY_DEFAULT_CRON = '7,22,37,52 * * * *';
 
-/**
- * How often the rank payout jobs tick. Static config, not a DB row: a schedule is registered with
- * the job queue at boot. These are not when a player is paid - that is the operator's business
- * decision, set as anchors in the backoffice and stored with the ladder. A tick pays only a
- * period that has closed since the last one, so ticking often is cheap and safe.
- *
- * Both defaults sit off the quarter-hour ticks the wallet custody sweep owns.
- */
 export const RANK_PAYOUT_DEFAULT_CRON = '3,13,23,33,43,53 * * * *';
 export const RANK_PERIODIC_DEFAULT_CRON = '17 * * * *';
 export const STREAK_PAYOUT_DEFAULT_CRON = '7,27,47 * * * *';
-/** Once, shortly after the UTC day turns over - the boundary the streak's own "day" is defined by. */
 export const STREAK_CLOSE_DEFAULT_CRON = '5 0 * * *';
 
 export const RAKEBACK_BASES = ['stake', 'margin'] as const;
@@ -389,58 +220,37 @@ export const PromoConfigSchema = z
   .object({
     bonus: z
       .object({
-        /**
-         * How many grants may be active at once, per currency: `single` one, `per_source` one per
-         * grant source, `multiple` no limit. A grant over the limit is created pending.
-         */
         grantConcurrency: z.enum(GRANT_CONCURRENCY_MODES).default('multiple'),
-        /**
-         * `forfeit` lets a withdrawal through and forfeits every live bonus; `block` refuses a
-         * withdrawal that would take money a locking bonus ties up.
-         */
         withdrawalWhileActive: z.enum(BONUS_WITHDRAWAL_MODES).default('forfeit'),
-        /** Fallback message on a refused outflow; a UI reads the error's `data`. */
         lockedFundsMessage: z.string().min(1).default(DEFAULT_LOCKED_FUNDS_MESSAGE),
       })
       .strict()
       .prefault({}),
     ranks: z
       .object({
-        /** How often owed level-up bonuses are settled. */
         payoutCron: CronExpressionSchema.default(RANK_PAYOUT_DEFAULT_CRON),
-        /** How often the daily, weekly and monthly payouts check whether a period has closed. */
         periodicCron: CronExpressionSchema.default(RANK_PERIODIC_DEFAULT_CRON),
-        /** `total` counts the whole eligible stake toward rank progress; `real` only its own-money part. */
         progressBasis: z.enum(RANK_PROGRESS_BASES).default('total'),
       })
       .strict()
       .prefault({}),
     streaks: z
       .object({
-        /** Unused: milestone rewards are claimed by the player. Kept so existing configs parse. */
         payoutCron: CronExpressionSchema.default(STREAK_PAYOUT_DEFAULT_CRON),
-        /** How often a UTC day is closed out, resetting anyone who missed it. */
         closeCron: CronExpressionSchema.default(STREAK_CLOSE_DEFAULT_CRON),
       })
       .strict()
       .prefault({}),
     rakeback: z
       .object({
-        /** `stake` pays the rate on the own-money stake; `margin` on stake × (1 − rtp). */
         basis: z.enum(RAKEBACK_BASES).default('stake'),
-        /** `instant` credits each bet's rakeback with the bet; `claim` accrues it until claimed. */
         payout: z.enum(RAKEBACK_PAYOUTS).default('instant'),
-        /** Smallest claim, priced in `wallet.defaultReferenceCurrency`. */
         claimMinimum: MoneyAmountSchema.default('0'),
       })
       .strict()
       .prefault({}),
     rankPeriodic: z
       .object({
-        /**
-         * `flat` pays each tier's daily, weekly and monthly bonus amount; `margin` pays the tier's
-         * percent of the period's own-money stake × (1 − rtp), capped by that amount.
-         */
         basis: z.enum(RANK_PERIODIC_BASES).default('flat'),
       })
       .strict()
@@ -452,14 +262,7 @@ export type PromoConfig = z.infer<typeof PromoConfigSchema>;
 
 export const ChatConfigSchema = z
   .object({
-    /** Hostnames a chat message attachment may be served from. Empty = attachments disabled. */
     allowedAttachmentHosts: z.array(HostAllowlistEntrySchema).default([]),
-    /**
-     * Cron knob for the sweep that audits a mute or platform ban lapsing on its own.
-     * Static config, not a DB row. Absent means the built-in default applies; the cadence
-     * only sets how soon the lapse shows in the audit trail - enforcement already stops
-     * at `expiresAt` without it.
-     */
     moderationExpiry: z
       .object({
         cron: CronExpressionSchema.default(CHAT_MODERATION_EXPIRY_DEFAULT_CRON),
@@ -472,32 +275,10 @@ export type ChatConfig = z.infer<typeof ChatConfigSchema>;
 
 export const AdminSecurityConfigSchema = z
   .object({
-    /**
-     * Every Backoffice account must hold a second factor before it can reach any
-     * admin route. Operator-level switch with no per-user opt-out: an operator under
-     * a licence that mandates 2FA turns this on, and no account can then bypass it.
-     *
-     * Off by default. Whether Backoffice 2FA is mandatory is a licensing decision the
-     * operator owns, and defaulting it on would lock every existing deployment out of
-     * its own back office on upgrade.
-     */
     requireTwoFactor: z.boolean().default(false),
-    /**
-     * Ties a Backoffice session to the browser it was issued to: a mid-session
-     * User-Agent change (or an IP change, per `ipChangePolicy`) ends the session and
-     * forces full re-authentication. Off by default for the same reason as above.
-     */
     bindSessionToDevice: z.boolean().default(false),
-    /** How long a device stays trusted after a successful second factor. */
     trustedDeviceDays: z.number().int().min(0).max(90).default(30),
-    /**
-     * Which mid-session IP change invalidates a Backoffice session, once
-     * `bindSessionToDevice` is on. `country` needs a bound GEO_IP_ADAPTER and degrades
-     * to `off` without one - never to `any`, which would end a session on every NAT or
-     * mobile-network hop.
-     */
     ipChangePolicy: z.enum(['off', 'country', 'any']).default('off'),
-    /** Consecutive failed second-factor attempts before the account locks. */
     twoFactorLockout: z
       .object({
         maxAttempts: z.number().int().min(1).max(20).default(5),
@@ -516,13 +297,7 @@ export type AdminSecurityConfig = z.infer<typeof AdminSecurityConfigSchema>;
 
 export const CmsConfigSchema = z
   .object({
-    /** Hostnames a banner image URL may be served from. Empty = no banner images allowed. */
     allowedBannerImageHosts: z.array(HostAllowlistEntrySchema).default([]),
-    /**
-     * Per-placement image-count bounds a banner configuration must meet to go live
-     * (placement -> layout -> `{ min, max }`), replacing the layout's default for that
-     * placement only. Absent = every placement uses the layout defaults.
-     */
     bannerImageCountBounds: BannerImageCountBoundsOverridesSchema.default({}),
   })
   .strict();
@@ -530,7 +305,6 @@ export type CmsConfig = z.infer<typeof CmsConfigSchema>;
 
 export const GamingConfigSchema = z
   .object({
-    /** Hostnames a game's custom thumbnail URL may be served from. Empty = no custom thumbnails allowed. */
     allowedThumbnailHosts: z.array(HostAllowlistEntrySchema).default([]),
   })
   .strict();
@@ -538,13 +312,7 @@ export type GamingConfig = z.infer<typeof GamingConfigSchema>;
 
 export const IdentityConfigSchema = z
   .object({
-    /**
-     * Hostnames a player avatar URL may be served from, on the default https port. Subdomains
-     * match too, so name the exact bucket or CDN host, never a parent domain other tenants share.
-     * With both lists empty, only `null` (no avatar) is accepted.
-     */
     allowedAvatarHosts: z.array(HostAllowlistEntrySchema).default([]),
-    /** URL prefixes a player avatar may start with: exact origin (no subdomains), then a path ending in "/". */
     allowedAvatarUrlPrefixes: z.array(UrlPrefixAllowlistEntrySchema).default([]),
   })
   .strict();
@@ -552,11 +320,6 @@ export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
 
 export const LobbyConfigSchema = z
   .object({
-    /**
-     * Lets admins save lobby layouts other than `global`. Turn it on only once every server
-     * runs a release that scopes lobby sections by layout key: an older server deletes a
-     * keyed layout's sections when it saves `global`.
-     */
     keyedLayouts: z.boolean().default(false),
   })
   .strict();
@@ -564,74 +327,30 @@ export type LobbyConfig = z.infer<typeof LobbyConfigSchema>;
 
 export const PlatformConfigSchema = z
   .object({
-    /**
-     * Feature flag map. Slot fills with `featureFlag: 'X'` render only when
-     * `features.X` is true.
-     */
     features: FeatureFlagsSchema.default({}),
-    /**
-     * Brand definitions for multi-brand operators. Empty means single-brand
-     * mode - slot fills with `brandScope` are evaluated against `null` brand
-     * and therefore hidden (unless `brandScope` is also omitted).
-     */
     brands: z.array(BrandSchema).default([]),
-    /**
-     * Id of the currently active brand (matched against `brands[*].id`). When
-     * unset, slot fills with `brandScope` do not match - operator must seed
-     * this from request context / session in multi-brand mode.
-     */
     activeBrand: z.string().optional(),
-    /**
-     * RG default limits per ISO 3166-1 alpha-2 country code (jurisdiction
-     * defaults), reusing the shared LimitsSchema shape.
-     */
     rgLimits: z.record(z.string().length(2), LimitsSchema).default({}),
     responsibleGambling: ResponsibleGamingSchema.default(defaultResponsibleGamingConfig),
-    /**
-     * KYC verification knobs: provider id, webhook secret env, withdrawal gating,
-     * and per-currency re-KYC deposit thresholds. Absent = KYC ungated, no re-KYC.
-     */
     kyc: KycConfigSchema.optional(),
-    /** Auto-approve withdrawals that clear every risk gate instead of queuing them for manual review. Absent = always manual. */
     autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
-    /** Wallet rail-routing knobs (currently: the crypto currency set). Absent = built-in default. */
     wallet: WalletConfigSchema.optional(),
-    /** Exchange-rate refresh knobs (pivot currency, refresh cron). Absent = built-in defaults. */
     exchangeRate: ExchangeRateConfigSchema.optional(),
-    /** Required before public registration is enabled. */
     registration: RegistrationConfigSchema.optional(),
-    /** In-app notification retention knobs. Absent = built-in default (30 days). */
     notifications: NotificationsConfigSchema.optional(),
-    /**
-     * Player-facing language codes the operator supports (eg `['en', 'es']`).
-     * Undefined or empty means no restriction - any value is accepted.
-     */
     supportedLanguages: z.array(z.string().min(1)).optional(),
-    /** Currencies a player may pick to display amounts in. Absent or empty = built-in default. */
     displayCurrencies: z.array(z.string().min(1)).optional(),
-    /**
-     * Handles players may not take at sign-up or rename (eg the brand name), on top of the
-     * built-in staff/system list. Case-insensitive, matched as a word inside the handle.
-     */
     reservedUsernames: z.array(z.string().min(1)).optional(),
-    /** Chat attachment host allow-list. Absent = built-in default (empty = disabled). */
     chat: ChatConfigSchema.default({ allowedAttachmentHosts: [] }),
-    /** Backoffice 2FA + session-binding policy. Absent = the schema defaults apply. */
     adminSecurity: AdminSecurityConfigSchema.prefault({}),
-    /** CMS banner image host allow-list. Absent = built-in default (empty = disabled). */
     cms: CmsConfigSchema.prefault({}),
-    /** Game custom thumbnail host allow-list. Absent = built-in default (empty = disabled). */
     gaming: GamingConfigSchema.default({ allowedThumbnailHosts: [] }),
-    /** Player avatar host and URL-prefix allow-lists. Absent = built-in default (empty = disabled). */
     identity: IdentityConfigSchema.default({
       allowedAvatarHosts: [],
       allowedAvatarUrlPrefixes: [],
     }),
-    /** Lobby layout knobs. Absent = only the `global` layout can be saved. */
     lobby: LobbyConfigSchema.prefault({}),
-    /** How often the rank payout jobs tick. Absent = the built-in defaults. */
     promo: PromoConfigSchema.prefault({}),
-    /** Agent run limits, retention and the model catalog. Absent = the schema defaults, no models. */
     agents: AgentsConfigSchema.prefault({}),
   })
   .strict()
@@ -648,15 +367,10 @@ export const PlatformConfigSchema = z
 export type PlatformConfig = z.infer<typeof PlatformConfigSchema>;
 export type PlatformConfigInput = z.input<typeof PlatformConfigSchema>;
 
-/** Promo settings with their defaults, also when no platform config is bound. */
 export function resolvePromoConfig(config: Pick<PlatformConfig, 'promo'> | undefined): PromoConfig {
   return PromoConfigSchema.parse(config?.promo ?? {});
 }
 
-/**
- * Validate and normalize a platform config. Throws a precise, agent-legible
- * error (with offending path) on malformed input.
- */
 export function definePlatformConfig(config: PlatformConfigInput): PlatformConfig {
   const result = PlatformConfigSchema.safeParse(config);
   if (!result.success) {
@@ -668,10 +382,8 @@ export function definePlatformConfig(config: PlatformConfigInput): PlatformConfi
   return result.data;
 }
 
-/** Default (empty) platform config - used when no file is present at boot. */
 export const defaultPlatformConfig: PlatformConfig = definePlatformConfig({});
 
-/** DI token to inject the active PlatformConfig into services + slot fills. */
 export const PLATFORM_CONFIG = createToken<PlatformConfig>('PLATFORM_CONFIG');
 
 export function resolveMinPlayerAge(config?: PlatformConfig): number {

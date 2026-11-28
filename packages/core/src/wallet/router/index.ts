@@ -105,11 +105,6 @@ import {
 } from '../service/reconciliation.service.js';
 import type { TurnoverService } from '../service/turnover.service.js';
 
-// Unauthenticated route: it costs a signature verification (and, for a custody vendor,
-// a DB lookup) per request with nothing else gating it. Keyed on client IP, not a
-// vendor/account identity, since an attacker chooses neither. A request with no IP
-// signal (proxy misconfiguration) still shares one bucket rather than skipping the
-// limiter outright - "no signal" must never mean "no limit".
 const WALLET_WEBHOOK_RATE_LIMIT = { limit: 120, windowMs: 60 * 1000 };
 
 async function dispatchWebhook(
@@ -120,8 +115,6 @@ async function dispatchWebhook(
   headers: Record<string, string | string[] | undefined>,
 ): Promise<{ ok: true }> {
   const provider = paymentProviders.get(providerName);
-  // A missing provider fails the exact same shape as a bad signature - the path segment
-  // must never let an attacker enumerate which vendors are bound.
   if (
     rawBody === undefined ||
     !provider ||
@@ -129,8 +122,6 @@ async function dispatchWebhook(
   ) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Invalid payment webhook signature' });
   }
-  // Always the SAME provider's adapter that verified the signature - never verify with
-  // one vendor's key and parse with another's format (signature confusion).
   const event: PaymentWebhookEvent | null | undefined = provider.adapter.parseWebhook?.(
     rawBody,
     headers,
@@ -162,19 +153,12 @@ function createWalletBalanceStream(
   );
 }
 
-/**
- * Named rather than positional. Half of these are structurally similar ports, so a
- * positional slip type-checks; and the sweep and reconciliation branches each add their
- * own dependencies here, which as positional parameters git merges into a signature that
- * declares one twice without ever reporting a conflict.
- */
 const logger = createLogger('wallet-router');
 
 export type WalletRouterDeps = {
   wallet: WalletService;
   adminGuard: AdminGuard;
   audit: AuditWritePort;
-  /** Identity's password and second-factor check, for the actions that must be the owner. */
   withdrawalSecurity: WithdrawalSecurity;
   paymentProviders: PaymentProviderRegistry;
   reconciliation: ReconciliationService;
@@ -183,15 +167,12 @@ export type WalletRouterDeps = {
   realtime: RealtimeTransport;
   turnover: TurnoverService;
   limiter?: RateLimiterAdapter<RateLimitKey>;
-  /** Absent when no SWAP_ADAPTER is bound - every swap route then refuses. */
   swap?: SwapService;
   swapWebhook?: SwapWebhookPort;
-  /** Absent when no ON_RAMP_ADAPTER is bound - every on-ramp route then refuses. */
   onRamp?: OnRampService;
   onRampWebhook?: OnRampWebhookPort;
 };
 
-/** Same pairing rule as the swap one: one vendor's key verifies that vendor's format. */
 type OnRampWebhookPort = {
   verify(
     rawBody: string,
@@ -203,8 +184,6 @@ type OnRampWebhookPort = {
   ): OnRampWebhookEvent | null;
 };
 
-/** The verifier/parser pair for an inbound swap webhook, bound together for the same reason
- * the payment one is: never verify with one vendor's key and parse with another's format. */
 type SwapWebhookPort = {
   verify(
     rawBody: string,
@@ -242,8 +221,6 @@ export function createWalletRouter({
       WALLET_WEBHOOK_RATE_LIMIT,
     );
 
-  // Every swap route funnels through this, so an operator with no swap vendor bound gets
-  // one consistent refusal instead of a 500 from an undefined service.
   const requireSwap = (): SwapService => {
     if (!swap) {
       throw new SwapUnavailableError();
@@ -276,8 +253,6 @@ export function createWalletRouter({
 
     getBalances: os.getBalances.handler(({ context }) => wallet.getBalances(getUserId(context))),
 
-    // Player-scoped: the channel is keyed by the session's userId, never an input
-    // parameter, so a player can never subscribe to another player's balance channel.
     streamBalance: os.streamBalance.handler(({ signal, context }) => {
       return createWalletBalanceStream(realtime, getUserId(context), signal);
     }),
@@ -291,8 +266,6 @@ export function createWalletRouter({
     deposit: os.deposit.handler(({ input, context }) =>
       mapErrors(
         {
-          // A disabled currency/network is a permanent policy rejection, not a state
-          // conflict: 409 would tell a status-code-branching client to retry it.
           BAD_REQUEST: [UnsupportedNetworkError, BelowMinimumDepositError, DepositDisabledError],
           CONFLICT: [IdempotencyKeyReuseError, RgLimitExceededError],
           FORBIDDEN: DepositRefusedError,
@@ -498,8 +471,6 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'auto-withdrawal-config', 'update');
-        // The before-read, upsert, and audit write all run inside one transaction in
-        // the service - an audit failure rolls back the threshold change too.
         return wallet.setAutoWithdrawalConfig(adminId, input, { ip, userAgent });
       }),
 
@@ -627,7 +598,6 @@ export function createWalletRouter({
       create: os.withdrawalAddresses.create.handler(async ({ input, context }) => {
         const userId = getUserId(context);
         const { currentPassword, totpCode, ...address } = input;
-        // Before the save, so a refused proof leaves no row and no vendor call behind.
         await withdrawalSecurity.assertReauthentication({
           userId,
           headers: context.request.headers,
@@ -684,9 +654,6 @@ export function createWalletRouter({
               BonusFundsLockedError,
             ],
             BAD_REQUEST: [InsufficientBalanceError, SwapLimitExceededError],
-            // SwapFillAmountMissingError is deliberately unmapped: the vendor filled but
-            // would not say how much, which is a 500 on our side of the seam, not a 4xx
-            // the caller can act on.
           },
           () => requireSwap().swap({ userId: getUserId(context), ...input }),
         ),
@@ -694,8 +661,6 @@ export function createWalletRouter({
 
       webhook: os.swap.webhook.handler(async ({ context }) => {
         await throttleWebhook(context);
-        // A missing binding, a bad signature and an unparseable body all answer the same
-        // way - the endpoint must never confirm which vendor is bound.
         const rawBody = context.rawBody;
         if (
           !swap ||
@@ -748,8 +713,6 @@ export function createWalletRouter({
 
       webhook: os.onRamp.webhook.handler(async ({ context }) => {
         await throttleWebhook(context);
-        // Uniform with the swap webhook: never confirm which vendor, if any, is bound. A verifier
-        // that throws has not verified anything, so it gets the same answer.
         const rawBody = context.rawBody;
         const verified =
           onRampWebhook !== undefined &&
@@ -797,10 +760,6 @@ export function createWalletRouter({
       sweep: {
         run: os.custody.sweep.run.handler(async ({ context }) => {
           await adminGuard.assert(context, 'wallet-custody', 'run');
-          // The run claim (a unique-index insert in wallet_job_run) is the sole
-          // concurrency authority, not this request - enqueue and return immediately so
-          // an HTTP timeout can never orphan a cycle. runId is minted here so the caller
-          // gets it back synchronously, before the job actually runs.
           const runId = randomUUID();
           await jobQueue.enqueue(CUSTODY_SWEEP_QUEUE, { runId });
           return { runId };
@@ -820,10 +779,6 @@ export function createWalletRouter({
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
-        // `credited` on a deposit finding and `released` put custody money on a player's
-        // balance, so they need what any other hand credit (`manualAdjustment`) needs.
-        // `rebaselined` moves the point a wallet's ledger is counted from, as a backfill does,
-        // and dismissing a ledger finding closes the only report of money no one accounts for.
         const { outcome } = input.resolution;
         if (
           outcome === 'credited' ||
@@ -856,10 +811,6 @@ export function createWalletRouter({
         );
       }),
 
-      // Enqueues the job and returns the runId immediately - never runs inline. The
-      // eventual worker's own claim (wallet_job_run's partial unique index) stays the
-      // single concurrency authority; this route does not know or care whether its
-      // claim will win.
       run: os.reconciliation.run.handler(async ({ context }) => {
         await adminGuard.assert(context, 'wallet-reconciliation', 'run');
         const runId = randomUUID();
@@ -867,8 +818,6 @@ export function createWalletRouter({
         return { runId };
       }),
 
-      // A baseline fixes the point the ledger is counted from, so taking them is the
-      // super-admin's call and on the audit trail; a plain scan only reads.
       ledgerInvariant: os.reconciliation.ledgerInvariant.handler(async ({ input, context }) => {
         const { userId: adminId } = await adminGuard.assert(
           context,

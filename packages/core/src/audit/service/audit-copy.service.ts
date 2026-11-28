@@ -14,10 +14,6 @@ const CLOSED_TRIGGER = 'audit_log_closed';
 const DRAIN_SESSION_OPTIONS = '-c lock_timeout=5s -c statement_timeout=60s';
 const USAGE = 'usage: openora-audit-copy [--apply] [--fence | --drain-outbox]';
 
-// The chain lock of the database it runs in, the key appendAuditEntries locks under. In the
-// target it keeps a live shipper's append out of a copy batch; in the main database it only
-// stops a legacy writer that takes it, which is why the fence also locks the table. In a plain
-// copy it merely serializes two copy runs.
 const CHAIN_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtext('audit_log'))`;
 
 const COLUMNS_SQL = `SELECT a.attname || ' ' || format_type(a.atttypid, a.atttypmod) AS col
@@ -62,7 +58,6 @@ const say = (line: string) => process.stdout.write(`${line}\n`);
 
 function newClient(url: string): Client {
   const client = new Client({ connectionString: url, application_name: 'openora-audit-copy' });
-  // A killed connection is reported by the query that was running, which is what ends the run.
   client.on('error', () => undefined);
   return client;
 }
@@ -100,8 +95,6 @@ async function withDb<T>(
   }
 }
 
-// The target is reached as migrate reaches it: the main database's owner credentials on the audit
-// database's name, because the owner alone may setval the sequence and create the fence trigger.
 export function targetUrlOf(adminUrl: string, auditUrl: string): string {
   const database = databaseOf(auditUrl);
   if (database === databaseOf(adminUrl)) {
@@ -162,8 +155,6 @@ async function assertInSource(source: Client, head: Head): Promise<void> {
   }
 }
 
-// One batch inside the caller's target transaction, cursored by the target's own head. The rows
-// travel as JSON text from one server to the other, never parsed here, so they land byte-equal.
 async function copyStep(source: Client, target: Client): Promise<number> {
   await target.query(CHAIN_LOCK_SQL);
   const head = await headOf(target);
@@ -208,8 +199,6 @@ async function copyBatches(source: Client, target: Client): Promise<number> {
   }
 }
 
-// A dry run reads only: the rows the source holds beyond the target's head, once that head is
-// known to be the source's own row.
 async function pendingCount(source: Client, head: Head | undefined): Promise<number> {
   if (head) {
     await assertInSource(source, head);
@@ -268,12 +257,6 @@ async function verifyChainAt(
   say(`verify ${label}: valid (${from})`);
 }
 
-/**
- * Copies the chain rows the target lacks, in batches of one target transaction each, and checks
- * the target's chain from where it was before the run. Safe to rerun: the target's own head is
- * the cursor. Refuses a target whose head is not the source's row of that seq. Without `apply`
- * it only counts.
- */
 async function copyChain({ adminUrl, auditUrl, apply }: CopyOptions): Promise<CopyReport> {
   const targetUrl = targetUrlOf(adminUrl, auditUrl);
   return withClients(adminUrl, targetUrl, async (source, target) => {
@@ -287,15 +270,6 @@ async function copyChain({ adminUrl, auditUrl, apply }: CopyOptions): Promise<Co
   });
 }
 
-/**
- * Copies the last of the chain under a lock that stops every writer of the main `audit_log`, and
- * in the same breath installs the trigger that refuses its inserts from then on. The main
- * transaction commits only once the target holds every row and its whole chain verifies, so a
- * failure leaves no fence and no gap. The target's chain is verified in full before the lock is
- * taken; under it only the rows after that point are, so run an unfenced copy first to keep the
- * window short. Needs a
- * main database that split `migrate` has marked. Without `apply` it takes no lock and only counts.
- */
 async function fenceChain(
   { adminUrl, auditUrl, apply }: CopyOptions,
   hooks: CopyHooks = {},
@@ -390,9 +364,6 @@ async function liftFence(main: Client): Promise<void> {
   }
 }
 
-// Closes the audit database to inserts in a transaction of its own, short enough that nothing waits
-// on it for long. The rows it holds are checked under the lock, so what the trigger then freezes is
-// known to be in the main database.
 async function closeTarget(legacy: Client, target: Client): Promise<void> {
   await target.query('BEGIN');
   try {
@@ -419,9 +390,6 @@ async function assertOutboxEmpty(main: Client): Promise<void> {
   }
 }
 
-// The drain's last step: with the audit database closed and the outbox empty, the main database
-// holds the chain again, so the split mark goes and single-database migrate and shipping resume.
-// Under the audit migration lock, so it never interleaves with a split migrate setting the mark.
 async function unmarkSplit(main: Client): Promise<void> {
   await main.query('BEGIN');
   try {
@@ -443,9 +411,6 @@ async function rejectedCount(main: Client): Promise<number> {
   return Number(rows[0]?.rejected ?? 0);
 }
 
-// The drain ships the outbox it reads through `outboxUrl` into the chain it reaches as the admin,
-// and the shipper takes that for a drain only when both are one database. Checked before anything
-// changes, so a mismatch never strands a lifted fence.
 async function assertSameInstance(admin: Client, outboxUrl: string): Promise<void> {
   const outbox = newClient(outboxUrl);
   try {
@@ -466,19 +431,6 @@ async function assertSameInstance(admin: Client, outboxUrl: string): Promise<voi
   }
 }
 
-/**
- * Rolls a fenced chain back. Every refusal (a split main without a shipper url, a shipper url on
- * another database than the admin url, a shipper holding
- * its lock, a row the main database lacks) comes before anything changes. Then the audit
- * database is closed to inserts by a trigger committed in a short transaction of its own, so a
- * shipper that starts later fails on its insert and keeps its batch in the outbox. Only then is the
- * main fence lifted and the outbox shipped into the main `audit_log`, which must end empty, and
- * every audit row is checked against the main database once more. Last, with the outbox still
- * empty, the split mark is cleared, so single-database migrate and shipping resume. Every writer must be stopped. A
- * failure at any point leaves the run safe to repeat: the audit database stays closed and a
- * rerun finds it so. Opening it again is a deliberate owner step: `DROP TRIGGER audit_log_closed
- * ON audit_log`.
- */
 async function drainOutboxToLegacy(
   { adminUrl, auditUrl, shipperUrl }: DrainOptions,
   { apply }: { apply: boolean },
@@ -539,7 +491,6 @@ export function required(env: Record<string, string | undefined>, key: string): 
 
 type Flags = { apply: boolean; fence: boolean; drain: boolean };
 
-// A parse error's own message can echo an argument, which may be a URL with a password.
 export function parseFlags(argv: readonly string[]): Flags {
   try {
     const { values } = parseArgs({
@@ -561,10 +512,6 @@ export function parseFlags(argv: readonly string[]): Flags {
   }
 }
 
-/**
- * The `openora-audit-copy` entry: returns the process exit code. URLs come from `env` only.
- * `hooks` is a seam for tests, not for callers.
- */
 export async function main(
   argv: readonly string[],
   env: Record<string, string | undefined>,

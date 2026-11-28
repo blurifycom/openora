@@ -65,7 +65,6 @@ export function phoneOtpShadowKey(phone: string): string {
 
 const logger = createLogger('phone-otp-shadow');
 
-/** Resend requested before the 60s cooldown elapsed. */
 export function OtpCooldownError(retryAfterMs: number) {
   return new ORPCError('TOO_MANY_REQUESTS', {
     message: 'A code was already sent. Please wait before requesting another.',
@@ -80,7 +79,6 @@ export function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtp
   });
 }
 
-/** Max wrong attempts reached; the OTP session was invalidated - restart login. */
 export function OtpCancelledError() {
   return new ORPCError('FORBIDDEN', {
     message: 'Too many incorrect attempts. Please request a new code.',
@@ -199,9 +197,6 @@ export class PhoneLoginService {
     const expiresAt = new Date(now + OTP_TTL_MS);
     const resendAfter = new Date(now + RESEND_COOLDOWN_MS);
 
-    // Role-filtered at the source: SMS is a single factor, so this flow only ever
-    // resolves a player. A backoffice account with a verified number stays on password
-    // plus its own second factor, and never becomes reachable through an SMS code.
     const [account] = await this.drizzle.db
       .select({
         id: user.id,
@@ -212,12 +207,6 @@ export class PhoneLoginService {
       .where(and(eq(user.phoneNumber, phone), eq(user.role, 'player')))
       .limit(1);
 
-    // Anti-enumeration: an unknown, unverified, non-player, or 2FA-enabled phone gets the
-    // same success-shaped response, minus the SMS. A 2FA-enabled account's phone login is
-    // always rejected once the OTP is entered (see the guard below in `verifyOtp`), so
-    // sending a real code here would just be a billable no-op; folding it into the same
-    // shadow path also keeps a caller from telling 2FA-enabled accounts apart from
-    // unknown/unverified ones by response shape alone.
     if (!account || !account.phoneVerified || account.twoFactorEnabled) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
@@ -251,8 +240,6 @@ export class PhoneLoginService {
 
     await this.sms.sendOtp({ to: phone, code });
 
-    // Emit events only after SMS delivery so a send failure leaves no misleading
-    // audit trail (no cancelled-without-requested orphan in the audit log).
     const ip = input.ip ?? null;
     const userAgent = input.userAgent ?? null;
     if (existing) {
@@ -306,11 +293,6 @@ export class PhoneLoginService {
     }
 
     if (hashCode(code) !== otp.codeHash) {
-      // Atomic increment so concurrent guesses can't each read a stale count and slip
-      // past the cap.
-      // Individual wrong-code attempts are not emitted as audit events; the final
-      // `identity.phone_otp.cancelled` event captures the outcome. High-volume
-      // per-attempt events would bloat the audit log (same rationale as chat messages).
       const [row] = await this.drizzle.db
         .update(smsOtpSession)
         .set({ failedAttempts: sql`${smsOtpSession.failedAttempts} + 1` })
@@ -318,9 +300,6 @@ export class PhoneLoginService {
         .returning({ failedAttempts: smsOtpSession.failedAttempts });
       const newAttempts = row?.failedAttempts;
 
-      // row is undefined when a concurrent request already deleted the session after
-      // hitting the cap — treat it as already cancelled; skip the emit to avoid
-      // duplicates.
       if (newAttempts === undefined || newAttempts >= MAX_VERIFY_ATTEMPTS) {
         if (newAttempts !== undefined) {
           await this.drizzle.db.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
@@ -336,8 +315,6 @@ export class PhoneLoginService {
       throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
 
-    // Resolve the account before entering the transaction so the RG check can short-
-    // circuit without consuming the OTP: a blocked user can try again once unblocked.
     let [account] = await this.drizzle.db
       .select({
         id: user.id,
@@ -402,10 +379,6 @@ export class PhoneLoginService {
       account = { ...account, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
-    // Same RG and backoffice gates as password login, from the one shared implementation.
-    // Checked after the OTP verifies, before the session-minting transaction - no session
-    // exists yet, so unlike the email paths there is nothing to revoke here; the OTP is
-    // left unconsumed so a blocked account reads the same as any other rejection.
     const playerId = await assertAccountNotBlocked(
       { drizzle: this.drizzle, events: this.events },
       account,
@@ -421,18 +394,12 @@ export class PhoneLoginService {
     );
     await assertCountryAllowed(this.geoCheck, account, ip);
 
-    // This flow mints sessions directly and cannot hand a challenge to better-auth's
-    // pending-2FA cookie. Refuse rather than silently downgrade a 2FA-protected
-    // account to a single SMS factor; a later dedicated handoff may replace this.
     if (account.twoFactorEnabled) {
       throw new ORPCError('FORBIDDEN', {
         message: 'Phone login requires an authenticator challenge for this account.',
       });
     }
 
-    // Mint the session directly only after the no-2FA guard above.
-    // Delete the OTP and insert the new session atomically: if the insert fails the
-    // OTP is not consumed and the user can retry with the same code.
     const token = randomUUID();
     const sessionExpiresAt = new Date(
       Date.now() + (rememberMe ? REMEMBER_ME_TTL_MS : SESSION_TTL_MS),
@@ -476,7 +443,6 @@ export class PhoneLoginService {
       userAgent,
     });
 
-    // Only once the OTP has cleared and the session exists.
     await captureTimezone(this.playerProvisioning, account.id, timezone);
 
     const authContext = await this.auth.$context;

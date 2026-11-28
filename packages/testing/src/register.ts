@@ -14,15 +14,10 @@ export type RegisterPlayerInput = {
   acquisition?: RegistrationAcquisition;
 };
 
-/**
- * A unique handle within the 20-char limit. The suffix is digits only: a hex suffix
- * spells words like `caca` often enough to trip the username profanity check.
- */
 export function uniqueUsername(prefix: string) {
   return `${prefix.slice(0, 7)}_${randomInt(10 ** 11, 10 ** 12)}`;
 }
 
-/** POST /identity/register with a unique handle and client IP. Does not verify the email. */
 export async function submitRegistration(app: TestApp, input: RegisterPlayerInput) {
   return app.app.request('/identity/register', {
     method: 'POST',
@@ -38,12 +33,6 @@ export async function submitRegistration(app: TestApp, input: RegisterPlayerInpu
   });
 }
 
-// 20s, not the 5s this started at: mail is not sent inline. `MailService.enqueueToUser`
-// puts a job on the real BullMQ queue (ADR-0039 - every tier binds the production seam),
-// so nothing reaches the capture until a worker has round-tripped through Redis. Under
-// `pnpm verify` both integration tiers run at once and oversubscribe the box, and that
-// round-trip was measured past 5s often enough to fail whole suites. Well inside the 30s
-// `testTimeout`, so a genuinely undelivered mail still fails the test rather than the file.
 const MAIL_ARRIVAL_TIMEOUT_MS = 20_000;
 
 export async function waitForEmail(
@@ -76,11 +65,6 @@ export async function waitForEmail(
   }
 }
 
-/**
- * The 6-digit code in the most recent verification email. Filtered by subject rather than
- * taking the newest mail outright: a sign-up on an address that already has an account
- * also mails a six-digit code, and picking that one up would silently test the wrong flow.
- */
 export async function verificationOtpFor(email: string): Promise<string> {
   const sent = await waitForEmail(email, (mail) => /verify/i.test(mail.subject));
   const otp = /\b(\d{6})\b/.exec(sent.text)?.[1];
@@ -90,15 +74,9 @@ export async function verificationOtpFor(email: string): Promise<string> {
   return otp;
 }
 
-/**
- * Enters the emailed code for real - the route consumes the OTP, rate-limits, mints the
- * session and emits `identity.email.verified`, none of which a direct `email_verified`
- * write would exercise. Returns the response so callers can assert on the session.
- */
 export async function verifyEmailByOtp(app: TestApp, email: string) {
   const res = await app.app.request('/identity/email/verify', {
     method: 'POST',
-    // Fresh client IP per attempt: the route also buckets callers by IP.
     headers: registrationRequestHeaders(),
     body: JSON.stringify({ email, otp: await verificationOtpFor(email) }),
   });
@@ -108,7 +86,6 @@ export async function verifyEmailByOtp(app: TestApp, email: string) {
   return res;
 }
 
-/** Escape hatch for tests that only need the verified state, not the route. */
 export async function forceEmailVerified(app: TestApp, userId: string) {
   await app.container
     .get(DRIZZLE)
@@ -117,10 +94,6 @@ export async function forceEmailVerified(app: TestApp, userId: string) {
     .where(eq(user.id, userId));
 }
 
-/**
- * Registers a player and returns its user id. Verification is what mints the first
- * session, so pass `verifyEmail: false` only when the test asserts on the unverified state.
- */
 export async function registerPlayer(
   app: TestApp,
   input: RegisterPlayerInput & { verifyEmail?: boolean },
@@ -143,11 +116,6 @@ export async function registerPlayer(
   return registered.id;
 }
 
-/**
- * Registers, verifies, signs in, and materialises the PAM `player` row (the profile
- * route is get-or-create), so downstream modules resolve a real `player.id` - the
- * audit trail's `resolvePlayerId` needs one.
- */
 export async function registerAndMaterializePlayer(
   app: TestApp,
   input: RegisterPlayerInput,

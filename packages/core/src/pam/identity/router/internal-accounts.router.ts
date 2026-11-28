@@ -5,12 +5,6 @@ import {
   type AccountReader,
 } from '@openora/core/contracts';
 
-/**
- * The internal API behind `ACCOUNT_READER`, for a service that runs on a database of its own.
- * Only the services named in `callers` may read; any other signed caller is refused. This
- * guards against misconfiguration only, not a compromised service: one install-wide secret
- * signs as any caller name.
- */
 export function createInternalAccountsRouter(reader: AccountReader, callers: ReadonlySet<string>) {
   const procedure = internalProcedureFor(callers, 'This service may not read accounts');
   return {

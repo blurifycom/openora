@@ -9,10 +9,8 @@ import {
   type OnRampStatus,
 } from '@openora/core/contracts';
 
-/** How long a fake checkout takes payment. */
 export const TEST_ON_RAMP_CHECKOUT_TTL_MS = 30 * 60 * 1000;
 
-/** Units of crypto the fake vendor estimates per unit of fiat, whatever the pair. */
 export const TEST_ON_RAMP_RATE = '0.5';
 
 export const TEST_ON_RAMP_GATEWAY_ID = 'test-gateway';
@@ -21,17 +19,13 @@ export const TEST_ON_RAMP_WEBHOOK_SECRET = '[redacted]';
 
 export const TEST_ON_RAMP_SIGNATURE_HEADER = 'x-test-on-ramp-signature';
 
-/** The signature header value the fake vendor would send for `rawBody`. */
 export const signTestOnRampWebhook = (rawBody: string) =>
   createHmac('sha256', TEST_ON_RAMP_WEBHOOK_SECRET).update(rawBody).digest('hex');
 
-// On the process, not the module: the app loads this file as a separate module instance from
-// the test that steers it.
 const STATUS_STORE = Symbol.for('openora.testing.on-ramp-statuses');
 const holder = globalThis as typeof globalThis & { [STATUS_STORE]?: Map<string, OnRampStatus> };
 const statuses = (holder[STATUS_STORE] ??= new Map<string, OnRampStatus>());
 
-/** What the fake vendor answers `getStatus(externalId)` with from now on. Default `pending`. */
 export const setTestOnRampStatus = (externalId: string, status: OnRampStatus) => {
   statuses.set(externalId, status);
 };
@@ -44,12 +38,6 @@ const parseJson = (rawBody: string): unknown => {
   }
 };
 
-/**
- * Binds a fake hosted-checkout on-ramp vendor: EUR 20-5000 into USDT on TRC20, one gateway
- * estimating at `TEST_ON_RAMP_RATE`, a checkout deduped on its idempotency key, a status set by
- * `setTestOnRampStatus`, and an HMAC webhook signed with `TEST_ON_RAMP_WEBHOOK_SECRET`. Opt-in
- * only - pass it in `config.plugins`.
- */
 export default {
   id: 'testing-on-ramp',
   dependsOn: ['wallet'],
@@ -99,7 +87,6 @@ export default {
           async getStatus(externalId) {
             return statuses.get(externalId) ?? 'pending';
           },
-          // The fake vendor's webhook body is the event itself.
           parseWebhook(rawBody) {
             const parsed = OnRampWebhookEventSchema.safeParse(parseJson(rawBody));
             return parsed.success ? parsed.data : null;

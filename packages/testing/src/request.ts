@@ -2,10 +2,6 @@ import type { Hono } from 'hono';
 
 let registrationRequestCount = 0;
 
-/**
- * Gives each registration helper a separate client IP for rate-limit-aware tests.
- * Uses `x-real-ip` because `extractClientMeta` never reads `x-forwarded-for`.
- */
 export function registrationRequestHeaders(): Record<string, string> {
   const count = registrationRequestCount++;
   return {
@@ -14,7 +10,6 @@ export function registrationRequestHeaders(): Record<string, string> {
   };
 }
 
-/** A thin wrapper over `app.request` that injects auth headers on every call. */
 export type TestClient = {
   request(path: string, init?: RequestInit): Promise<Response>;
   get(path: string): Promise<Response>;
@@ -54,10 +49,6 @@ export type LoginCreds = {
   password?: string;
 };
 
-/**
- * Log in via `/identity/login` (better-auth) and return a client carrying the
- * verified session cookie. Throws if the login fails or no cookie is set.
- */
 async function loginAs(
   app: Hono,
   label: string,
@@ -80,10 +71,6 @@ async function loginAs(
   return makeClient(app, { cookie });
 }
 
-/**
- * Authenticates as a player via a real better-auth session cookie (ADR-0019). Defaults
- * to `password1234`; seeded players use `player.<n>@demo.igaming.dev`.
- */
 export async function asPlayer(
   app: Hono,
   creds: LoginCreds & { email: string },
@@ -93,10 +80,6 @@ export async function asPlayer(
 
 export type AdminCreds = LoginCreds;
 
-/**
- * Log in via `/identity/login` (better-auth) and return a client carrying the
- * session cookie. Defaults to the seeded admin (`admin@oss.dev` / `password1234`).
- */
 export async function asAdmin(app: Hono, creds: AdminCreds = {}): Promise<TestClient> {
   return loginAs(app, 'asAdmin', creds.email ?? 'admin@oss.dev', creds.password ?? 'password1234');
 }

@@ -40,14 +40,6 @@ export const KYC_STATUS_SOURCES = ['vendor', 'manual', 'webhook', 'reverify', 'e
 export const KycStatusSourceSchema = z.enum(KYC_STATUS_SOURCES);
 export type KycStatusSource = z.infer<typeof KycStatusSourceSchema>;
 
-/**
- * Normalizes the deprecated `verified` value to the canonical `approved`. All new
- * writes produce `approved`; any read of a KYC status must go through this before
- * comparing, so a legacy row (or an in-flight old ECS task still writing `verified`
- * during a rolling deploy) is treated identically to a fresh `approved` one. Use this
- * everywhere a KYC status is checked for the approved state - never a scattered
- * `=== 'verified' || === 'approved'`.
- */
 export function normalizeKycStatus(status: KycStatus): KycStatus {
   return status === 'verified' ? 'approved' : status;
 }
@@ -70,16 +62,10 @@ export const PlayerSchema = z.object({
   totalWagered: MoneyAmountSchema,
   totalDeposits: MoneyAmountSchema,
   lastSeenAt: z.string().nullable(),
-  // The IANA zone the player's browser last reported; null until a device reports one.
   timezone: TimezoneSchema.nullable(),
-  // Last confirmed by a device, not last changed: it moves on every accepted capture.
   timezoneUpdatedAt: TimestampSchema.nullable(),
-  /** Shows "Incognito" in place of this player's username on a public leaderboard instead of
-   * the platform's own partial masking. Never affects the player's own standing. */
   hideUsernameOnLeaderboards: z.boolean(),
-  /** Off refuses new friend requests addressed to this player. */
   allowFriendRequests: z.boolean(),
-  /** Off hides this player's online status and last-seen time from their friends. */
   showOnlineStatusToFriends: z.boolean(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -115,7 +101,6 @@ export const PaginatedPlayerSearchArgsSchema = z.object({
 
 export type Player = z.infer<typeof PlayerSchema>;
 
-/** The backoffice staff member a player is assigned to. `isActive` false once their account is deactivated. */
 export const AccountManagerSchema = z.object({
   userId: UuidSchema,
   name: z.string(),
@@ -135,14 +120,9 @@ export const MIN_PLAYER_AGE_YEARS = 18;
 
 export const PLAYER_BIO_MAX_LENGTH = 160;
 
-// Bidi overrides and zero-width characters, except the joiner multi-part emoji need.
 const BIO_FORBIDDEN_CHARS = /[\p{Cc}\p{Cf}]/u;
 const ZERO_WIDTH_JOINER = /\u200D/g;
 
-/**
- * Untrusted text, stored unescaped: consumers must render it as text, never as HTML.
- * Blank after trimming clears the bio, the same as `null`.
- */
 export const PlayerBioSchema = z
   .string()
   .trim()
@@ -153,11 +133,6 @@ export const PlayerBioSchema = z
   .transform((value) => value || null)
   .nullable();
 
-/**
- * Compares calendar dates, not elapsed milliseconds: a leap day between the birth date
- * and the cutoff would shift a ms-based boundary by a day. The birthday that reaches `minAge`
- * passes.
- */
 export function isAdultDateOfBirth(
   dateOfBirth: string,
   now = new Date(),
@@ -168,17 +143,6 @@ export function isAdultDateOfBirth(
   return Number(dateOfBirth.replaceAll('-', '')) <= cutoff;
 }
 
-/**
- * Deliberately narrower than `PlayerSchema`: the read side stays tolerant of rows written
- * before these columns existed, while a write is held to ISO country codes and E.164
- * phones. `null` clears a field; omitting it leaves the stored value alone. `phone` is the
- * player's self-declared contact number - the verified login credential lives on the
- * identity module's `user.phoneNumber` and is never written from here.
- *
- * `timezone` is the odd one out: not nullable (worth capturing, never worth clearing), and a
- * zone the tz database does not recognise is dropped rather than rejected. `username` lives
- * on identity's `user` row, not on `player`.
- */
 export const UpdatePlayerProfileInputSchema = z
   .object({
     firstName: z.string().min(1).max(100).nullable(),

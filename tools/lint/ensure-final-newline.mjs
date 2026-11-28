@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-// Ensures every tracked text file ends with a final newline. oxfmt (run first in
-// `pnpm fix:format`) already does this for the file types it supports, but it cannot
-// format SQL (oxc#20724) and skips a few others; this is the catch-all. Operates on
-// `git ls-files` so gitignored paths are excluded by construction; binaries (NUL
-// byte) and the lockfile are skipped. Idempotent.
-//
-// Given path arguments it touches exactly those files instead - the pre-commit hook
-// passes the staged set, and rewriting a file outside it would commit work the author
-// never staged.
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -15,8 +6,6 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SKIP = new Set(['pnpm-lock.yaml']);
-// Drizzle hashes each migration file's exact bytes to decide what is already applied,
-// so appending a newline makes an applied migration re-run and fail (ADR-0027).
 const SKIP_PATTERNS = [/\/drizzle\/migrations\/.*\.sql$/];
 
 const args = process.argv.slice(2);
@@ -38,15 +27,15 @@ for (const rel of files) {
   try {
     if (!lstatSync(path).isFile()) {
       continue;
-    } // lstat, not stat: skip symlinks/submodules (don't write through a link)
+    }
     buf = readFileSync(path);
   } catch {
-    continue; // staged-deleted or unreadable
+    continue;
   }
 
   if (buf.length === 0 || buf.includes(0)) {
     continue;
-  } // empty or binary (NUL byte)
+  }
   if (buf[buf.length - 1] === 0x0a) {
     continue;
   }

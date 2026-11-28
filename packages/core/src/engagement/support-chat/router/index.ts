@@ -26,14 +26,10 @@ import {
   type SupportHistoryService,
 } from '../service/support-history.service.js';
 
-// Every call spends the operator's vendor quota.
 const SESSION_RATE_LIMIT = { limit: 10, windowMs: 60_000, onUnavailable: 'allow' } as const;
-// Every ticket lands in the operator's support queue; a double submit counts twice.
 const TICKET_RATE_LIMIT = { limit: 5, windowMs: 10 * 60_000, onUnavailable: 'allow' } as const;
-// Per admin, cache hits included: staff clicking around must not burn the vendor's API quota.
 const HISTORY_RATE_LIMIT = { limit: 30, windowMs: 60_000, onUnavailable: 'allow' } as const;
 
-/** A service is null when its port is not bound: its route then answers not configured. */
 export function createSupportChatRouter({
   session,
   history,

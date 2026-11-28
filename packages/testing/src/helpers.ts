@@ -15,7 +15,7 @@ import type { TestApp } from './app.js';
 import type { TestClient } from './request.js';
 import { registerAndMaterializePlayer, uniqueUsername } from './register.js';
 
-// oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
+// oxlint-disable-next-line typescript/no-explicit-any
 export async function readJson(res: Response): Promise<any> {
   return res.json();
 }
@@ -25,7 +25,6 @@ export type NamedAccount = Awaited<ReturnType<typeof registerAndMaterializePlaye
   email: string;
 };
 
-/** A registered player whose `user.name` is set to `name`; the email starts with `emailPrefix`. */
 export async function newPlayer(
   app: TestApp,
   emailPrefix: string,
@@ -60,7 +59,6 @@ export type Chatter = Awaited<ReturnType<typeof registerAndMaterializePlayer>> &
   username: string;
 };
 
-/** A registered player with a unique, profanity-safe handle; the email derives from it. */
 export async function registerChatter(
   app: TestApp,
   prefix: string,
@@ -74,7 +72,6 @@ export async function registerChatter(
   return { ...registered, username };
 }
 
-/** Admin override to an approved basic KYC tier. */
 export async function verifyKyc(
   admin: TestClient,
   userId: string,
@@ -90,7 +87,6 @@ export async function verifyKyc(
   }
 }
 
-/** Admin assigns a manual player tag; returns the response body. */
 export async function assignTag(
   admin: TestClient,
   playerId: string,
@@ -108,11 +104,6 @@ export async function assignTag(
   return readJson(res);
 }
 
-/**
- * Assigns a REAL DB-backed IAM role, bypassing the API (assignRole itself needs an existing
- * super-admin). AdminGuard gates on the coarse static `user.role` first, so a DB-backed role
- * needs BOTH `user.role = 'admin'` AND the `admin_role_assignment` row.
- */
 export async function assignIamRoleByKey(
   container: Container<CoreTokenCatalog>,
   userId: string,
@@ -124,7 +115,6 @@ export async function assignIamRoleByKey(
   await drizzle.insert(adminRoleAssignment).values({ userId, roleId }).onConflictDoNothing();
 }
 
-/** The id of the seeded `admin_role` with key `roleKey`; throws when there is none. */
 export async function roleIdByKey(
   container: Container<CoreTokenCatalog>,
   roleKey: string,
@@ -142,10 +132,6 @@ export async function roleIdByKey(
 
 const SCREENING_TIMEOUT_MS = 10_000;
 
-/**
- * Waits until the wallet handled the tag module's screening verdict for a withdrawal, which is
- * what runs auto-approval (ADR-0059), then returns the withdrawal's status as that decided it.
- */
 export async function screenedWithdrawalStatus(app: TestApp, transactionId: string) {
   const { db } = app.container.get(DRIZZLE);
   const deadline = Date.now() + SCREENING_TIMEOUT_MS;

@@ -35,7 +35,7 @@ export const bannerConfiguration = pgTable(
     placement: text().notNull(),
     layout: bannerLayout().notNull(),
     isDefault: boolean().notNull().default(false),
-    createdBy: uuid().notNull(), // bare id - cross-module (user from pam/identity), no FK
+    createdBy: uuid().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -43,7 +43,6 @@ export const bannerConfiguration = pgTable(
   },
   (t) => [
     index('banner_configuration_placement_idx').on(t.placement),
-    // At most one default (= "live") configuration per placement.
     uniqueIndex('banner_configuration_default_per_placement_idx')
       .on(t.placement)
       .where(sql`${t.isDefault} = true`),
@@ -81,11 +80,6 @@ export const bannerImage = pgTable(
   ],
 );
 
-// 1:0..1 with bannerConfiguration - a configuration is either the standing default
-// (isDefault=true, no schedule row), a scheduled banner (isDefault=false, exactly one
-// schedule row), or an unconfigured draft. Read-time resolution only ("what's live" is
-// computed in getPublicBanner by comparing now against startsAt/endsAt), same as
-// rgExclusion's auto-expiry (see compliance/schema/index.ts) - no background job.
 export const bannerSchedule = pgTable(
   'banner_schedule',
   {
@@ -95,14 +89,13 @@ export const bannerSchedule = pgTable(
       .references(() => bannerConfiguration.id, { onDelete: 'cascade' }),
     startsAt: timestamp({ withTimezone: true }).notNull(),
     endsAt: timestamp({ withTimezone: true }).notNull(),
-    createdBy: uuid().notNull(), // bare id - cross-module (user from pam/identity), no FK
+    createdBy: uuid().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
   (t) => [
-    // 1:0..1 with bannerConfiguration - at most one schedule row per configuration.
     uniqueIndex('banner_schedule_configuration_id_idx').on(t.bannerConfigurationId),
     index('banner_schedule_starts_ends_idx').on(t.startsAt, t.endsAt),
     index('banner_schedule_ends_at_idx').on(t.endsAt),

@@ -52,7 +52,6 @@ export const McpTokenSchema = z.object({
   revokeReason: McpTokenRevokeReasonSchema.nullable(),
 });
 
-// Every field but the id is null once the admin's account no longer exists.
 export const McpTokenAdminSchema = z.object({
   id: UuidSchema,
   email: z.string().nullable(),
@@ -62,11 +61,8 @@ export const McpTokenAdminSchema = z.object({
 
 export const McpTokenListItemSchema = McpTokenSchema.extend({ admin: McpTokenAdminSchema });
 
-/** The only response that carries the plaintext token; it cannot be read back afterwards. */
 export const IssuedMcpTokenSchema = McpTokenSchema.extend({ token: z.string() });
 
-// A live session alone does not issue a bearer that outlives it: the caller proves the password
-// again, plus a fresh second-factor code when the account has one enrolled.
 export const CreateMcpTokenInputSchema = z.object({
   label: z.string().trim().min(1).max(64),
   ttlDays: z.number().int().min(1).max(MCP_TOKEN_TTL_CEILING_DAYS).optional(),
@@ -89,7 +85,6 @@ export const McpTokenIdInputSchema = z.object({ tokenId: UuidSchema });
 
 export const RevokeAllMcpTokensOutputSchema = z.object({ revoked: z.number().int() });
 
-/** The issuance rules this deployment applies, so a client can check a request before sending it. */
 export const McpTokenPolicySchema = z.object({
   enabled: z.boolean(),
   ttlDays: z.object({

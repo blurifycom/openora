@@ -35,7 +35,6 @@ export class SportsbookReconcileService {
     return { reservesChecked, overdueFiled };
   }
 
-  /** Every stale reserve visited leaves `reserved` or spends an attempt. */
   private async reconcileReserves(cutoff: Date): Promise<number> {
     const stale = await this.drizzle.db
       .select()
@@ -86,7 +85,6 @@ export class SportsbookReconcileService {
     });
   }
 
-  /** Skips a bet already filed at this version, open or resolved. */
   private async fileOverdueSettlements(cutoff: Date): Promise<number> {
     const result = await this.drizzle.db.execute<{ id: string }>(sql`
       INSERT INTO ${sportsbookReconciliationFinding} (kind, dedupe_key, provider, bet_id, user_id, detail)

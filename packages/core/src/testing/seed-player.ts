@@ -3,12 +3,10 @@ import { player } from '../pam/profile/schema/index.js';
 import { user } from '../pam/identity/schema/index.js';
 import type { TestDb } from './real-infra.js';
 
-/** A handle unique per call, so the case-insensitive unique index never collides. */
 export function uniqueUsername(prefix = 'player'): string {
   return `${prefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 }
 
-/** Inserts a verified `user` with a unique handle. Override any column. */
 export async function seedUser(db: TestDb, overrides: Partial<typeof user.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(user)
@@ -28,7 +26,6 @@ export async function seedUser(db: TestDb, overrides: Partial<typeof user.$infer
 
 export type SeedPlayerOverrides = Partial<typeof player.$inferInsert> & { username?: string };
 
-/** Inserts a verified `user` plus its `player` row. */
 export async function seedPlayerWithUser(db: TestDb, overrides: SeedPlayerOverrides = {}) {
   const { username, ...playerOverrides } = overrides;
   const userId = playerOverrides.userId ?? randomUUID();

@@ -37,7 +37,7 @@ This is real-money regulated gambling. A defect here moves a player's money or b
 - New module, route, table, seed, schema, enum, adapter, config, hook, or integration: use the matching generator and the topical standard named by `conventions`.
 - Cross-module work: use a command port, domain event, shared contract, or read-only `/schema` subpath as defined in `docs/standards/module-structure.md`.
 - Async or cross-process work: choose the channel in `messaging-and-microservices` before implementation.
-- A bug: reproduce it before fixing it, as a failing E2E through `bootTestApp` or the flow against `pnpm dev`; the fix turns that same repro green. Can't reproduce: say what you tried and ask, never fix a guess. A login or access you don't have: ask the user.
+- A bug: reproduce it before fixing it, as a failing E2E through `bootTestApp` or the flow against `pnpm dev`; the fix turns that same repro green. Fix the cause where it lives, in the shared function or the owning module, never a patch at the call site the report names or a comment explaining the nuance. Can't reproduce: say what you tried and ask, never fix a guess. A login or access you don't have: ask the user.
 - Docs or generated configuration: edit canonical source only. `pnpm regen` owns generated artifacts; `pnpm gen:agents` owns agent mirrors.
 
 ## Root guardrails
@@ -114,6 +114,9 @@ Use pure, composable functions and explicit typed wiring. Match local naming and
 - Literal config arrays/objects (option lists, key sets) use `as const`, not an explicit union type annotation - let TypeScript infer the literal types.
 - No `any`, `interface`, decorators, reuse inheritance, suppressive casts, or default exports except `plugin.ts` and `drizzle.config.ts`.
 - Keep third-party access behind an owning adapter port. Do not import another module's internals or create cycles.
+- Zero comments in code, tests and config: no inline, block, JSDoc, `TODO`, `FIXME` or `mock:`. Meaning goes into names, types and tests; a reason goes into the commit, the PR or an ADR. Only machine-read directives survive, per `docs/standards/comments.md`.
+- Fix the root cause, in the same change, where every caller goes through. No workaround, call-site guard, retry, sleep, cast, flag or swallowed error that leaves the cause in place, and no note explaining one. Cannot fix it now: stop and ask.
+- Docs carry no code: no fenced blocks, snippets or examples, only references to files, functions and scripts, per `docs/standards/documentation.md`.
 - Do not hand-edit generated artifacts: migrations, `docs/catalog.json`, or per-tool agent mirrors.
 - State-changing work is transactional where its standard requires it. Money work is also idempotent with a durable database guard inside that transaction.
 

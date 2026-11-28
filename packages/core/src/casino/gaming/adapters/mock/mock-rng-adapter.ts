@@ -1,13 +1,5 @@
 import type { RngAdapter } from '@openora/core/contracts';
 
-/**
- * Deterministic, seedable mulberry32 RNG. Default seed is wall-clock so behavior
- * matches a non-seeded source out of the box; `seed()` switches to deterministic
- * mode for replay debugging / tests.
- *
- * NOT for real-money game outcomes - those flow through the sealed
- * `GAME_OUTCOME_AUTHORITY` token (lab-certified RGS).
- */
 export class MockRngAdapter implements RngAdapter {
   private state: number;
 

@@ -3,14 +3,10 @@ import type { SUBSCRIBED_TOPICS } from './subscribed-topics.js';
 
 type NotSubscribedTopic = Exclude<DomainEventName, (typeof SUBSCRIBED_TOPICS)[number]>;
 
-/** Why a topic the audit subscriber skips still leaves the audit trail whole. */
 export type AuditCoverage =
   | { kind: 'atSource'; writer: string; reason: string }
   | { kind: 'exempt'; reason: string };
 
-// Every topic in `domainEventSchemas` is either in SUBSCRIBED_TOPICS (recorded by the subscriber)
-// or classified here. The type is exhaustive both ways, so a new topic fails `tsc` until it is
-// placed, and a topic added to SUBSCRIBED_TOPICS fails until its entry here is removed.
 export const AUDIT_COVERAGE_GAPS = {
   'identity.authentication.succeeded': {
     kind: 'exempt',

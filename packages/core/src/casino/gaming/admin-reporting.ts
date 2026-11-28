@@ -22,7 +22,6 @@ import { union } from 'drizzle-orm/pg-core';
 import { game, gameProvider, gameRound, ledgerGame } from './schema/index.js';
 
 const rankedVolume = sumMoney(gameRound.betAmount);
-// Round revenue, not the ledger GGR (ADR-0053): negative when the games paid out more than they took in.
 const rankedRevenue = sql<string>`(${sumMoney(gameRound.betAmount)} - ${sumMoney(gameRound.winAmount)})::numeric(38, 18)`;
 const rankedRounds = sql<number>`count(*)`.mapWith(Number);
 const rankedPlayers = sql<number>`count(distinct ${gameRound.userId})`.mapWith(Number);
@@ -41,28 +40,18 @@ const PROVIDER_RANKING_FIGURES: Record<ProviderRankingSortBy, SQL> = {
   gamesPlayed: sql`count(distinct ${gameRound.gameId})`,
 };
 
-// See ADR-0017/0025.
 export class DrizzleAdminGameReporting implements AdminGameReporting {
   constructor(private readonly drizzle: DrizzleService) {}
 
   async listGamePerformance(filter: GamePerformanceFilter): Promise<GamePerformanceRow[]> {
     const db = this.drizzle.db;
 
-    // status/date/currency filters scope which ROUNDS count towards a game's metrics,
-    // so they live in the join condition, not WHERE - a game with zero completed rounds
-    // in range still appears with all-zero metrics rather than being dropped from the
-    // report. `gameType` narrows which GAMES appear at all, so it stays in WHERE.
     const roundsInRange = [
       eq(gameRound.status, 'completed'),
       filter.dateFrom ? gte(gameRound.startedAt, filter.dateFrom) : undefined,
       filter.dateTo ? lte(gameRound.startedAt, filter.dateTo) : undefined,
-      // No currency filter mixes bet/win amounts across currencies into one unconverted
-      // sum - the operator UI shows a disclaimer in that case; this is intentional.
       filter.currency ? eq(gameRound.currency, filter.currency) : undefined,
     ].filter(Boolean);
-    // A game is in the catalogue, in the ledger's never-deleted `ledger_game`, or only in its
-    // rounds (a no-stake call is never refused): every one keeps its GGR in the report, under its
-    // id once it has no name, and as unclassified once nothing types it.
     const games = union(
       db.select({ id: game.id }).from(game),
       db.select({ id: ledgerGame.gameId }).from(ledgerGame),
@@ -72,7 +61,6 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
         .where(and(...roundsInRange)),
     ).as('games');
     const gameId = games.id;
-    // An inline literal, not a bind parameter, so the select and the group by are one expression.
     const gameType = sql<
       GamePerformanceRow['gameType']
     >`coalesce(${game.gameType}::text, ${ledgerGame.gameType}::text, ${sql.raw(`'${UNCLASSIFIED_GAME_TYPE}'`)})`;
@@ -82,12 +70,10 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     }
     const where = and(
       filter.gameType ? eq(gameType, filter.gameType) : undefined,
-      // One array parameter: the list can run to thousands of ids.
       filter.gameIds ? sql`${gameId} = ANY(${sql.param([...filter.gameIds])}::uuid[])` : undefined,
     );
 
     const volume = sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`;
-    // GGR - can be negative when a game pays out more than it takes in over the range.
     const revenue = sql<string>`coalesce(sum(${gameRound.betAmount}) - sum(${gameRound.winAmount}), 0)`;
     const uniquePlayers = sql<number>`count(distinct ${gameRound.userId})`;
     const roundsPlayed = sql<number>`count(${gameRound.id})`;
@@ -110,7 +96,6 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       .leftJoin(gameRound, and(eq(gameRound.gameId, games.id), ...roundsInRange))
       .where(where)
       .groupBy(gameId, name, gameType)
-      // The game id breaks ties so equal metrics always come back in the same order.
       .orderBy(order(sortColumns[filter.sortBy ?? 'volume']), asc(gameId));
 
     return rows.map((r) => ({
@@ -168,7 +153,6 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
         revenue: rankedRevenue.as('revenue'),
         roundsPlayed: rankedRounds.as('rounds_played'),
         uniquePlayers: rankedPlayers.as('unique_players'),
-        // The game id breaks ties, so equal figures always rank in the same order.
         rank: sql<number>`row_number() over (partition by ${gameRound.currency} order by ${RANKING_FIGURES[sortBy]} ${order}, ${game.id})`.as(
           'rank',
         ),
@@ -252,7 +236,6 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
         roundsPlayed: rankedRounds.as('rounds_played'),
         uniquePlayers: rankedPlayers.as('unique_players'),
         gamesPlayed: rankedGames.as('games_played'),
-        // The provider id breaks ties, so equal figures always rank in the same order.
         rank: sql<number>`row_number() over (partition by ${gameRound.currency} order by ${PROVIDER_RANKING_FIGURES[sortBy]} ${order}, ${gameProvider.id})`.as(
           'rank',
         ),
@@ -336,7 +319,6 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     filter: GamePerformanceTrendFilter,
   ): Promise<GamePerformanceTrend | null> {
     const db = this.drizzle.db;
-    // A game the catalogue dropped, or never had, still has a trend while its rounds remain.
     const {
       rows: [known],
     } = await db.execute<{ found: boolean }>(sql`select
@@ -351,9 +333,6 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
     const step = `1 ${unit}`;
     const currency = filter.currency ? sql`and ${gameRound.currency} = ${filter.currency}` : sql``;
 
-    // Buckets are truncated in UTC so they do not shift with the session time zone.
-    // One statement with grouping sets keeps the totals row and the per-bucket rows on
-    // the same snapshot, so the points always sum to the totals.
     const result = await db.execute<{
       bucket: string | null;
       volume: string;

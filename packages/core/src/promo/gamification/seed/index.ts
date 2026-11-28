@@ -22,25 +22,11 @@ export type RankTierSeed = {
 };
 
 export type RankLadderSeed = {
-  /** What thresholds and bonuses are counted and paid in. Wagers in other currencies convert. */
   currency: string;
-  /** Lowest tier first; the first must start at zero. */
   tiers: RankTierSeed[];
-  /** A setting left out takes its column default. */
   config: RankConfigInput;
 };
 
-/**
- * Seeds a ladder and its settings. What a tier costs and pays, and in which currency, is an
- * operator's pricing, so it is passed in rather than shipped with the package.
- *
- * Idempotent, and it never overwrites a tier or a setting an operator has already edited.
- *
- * Passing a transaction does not by itself exclude a concurrent admin save: that save locks
- * `promo_rank_tier` rows with `FOR UPDATE`, which locks nothing on an empty ladder. A caller that
- * needs the check-then-install to be exclusive takes a table lock first, e.g.
- * `LOCK TABLE promo_rank_tier IN SHARE ROW EXCLUSIVE MODE`.
- */
 export async function seedRankLadder(
   db: DrizzleDb | DrizzleTx,
   ladder: RankLadderSeed,
@@ -59,10 +45,6 @@ export async function seedRankLadder(
 
 export type StreakSeed = Omit<StreakConfigInput, 'enabled'> & { enabled?: boolean };
 
-/**
- * Seeds the streak config, mirroring `seedRankLadder`: idempotent, never overwrites a setting an
- * operator has already edited. The streak stays off unless the seed turns it on.
- */
 export async function seedStreakConfig(db: DrizzleDb, config: StreakSeed): Promise<void> {
   await db
     .insert(promoStreakConfig)
@@ -80,14 +62,9 @@ export type RankChallengeTierSeed = {
 
 export type RankChallengeLadderSeed = {
   currency: string;
-  /** Lowest threshold first. */
   tiers: RankChallengeTierSeed[];
 };
 
-/**
- * Seeds the Rank Challenge ladder, mirroring `seedRankLadder`: idempotent (unique on `key` and
- * `position`), never overwrites a tier an operator has already edited.
- */
 export async function seedRankChallengeLadder(
   db: DrizzleDb,
   ladder: RankChallengeLadderSeed,

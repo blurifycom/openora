@@ -1,19 +1,7 @@
-/**
- * Audit-write seam. AML/SAR audit writes are a regulator-mandated invariant under
- * MGA/UKGC - the audit module binds the sole implementation via ctx.provideSealed()
- * (bind-once, owner-only); no overlay can rebind it (ctx.provide() rejects any
- * sealed token outright, provideSealed() itself refuses a second bind and seals it in
- * the container, and createApp closes every sealed token once booted). Other
- * modules resolve this port read-only (container.get(AUDIT_WRITER)) to call it.
- */
 import type { DomainEventName } from '../schemas/events.js';
 import type { ClientMeta } from '../schemas/common.js';
 import { createSealedToken, type SealedToken } from './token.js';
 
-/**
- * Admin actions that are recorded directly (not via a domain-event subscription)
- * and so have no entry in `domainEventSchemas`. Add new direct actions here.
- */
 export type DirectAuditAction =
   | 'admin.user.updated'
   | 'admin.player.updated'
@@ -128,12 +116,6 @@ export type DirectAuditAction =
   | 'sportsbook.bet.aligned'
   | 'sportsbook.sessions.revoked';
 
-/**
- * Every value the audit `action` column legitimately holds: a cross-module domain
- * event topic (recorded by the audit plugin's subscriptions) or a direct admin
- * action. The `string & {}` arm keeps literal autocomplete while still accepting
- * overlay-defined actions, so it constrains nothing at runtime - it just guides.
- */
 export type AuditAction = DomainEventName | DirectAuditAction | (string & {});
 
 type AuditEntry = {
@@ -144,25 +126,14 @@ type AuditEntry = {
   resourceId?: string | null;
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
-  /** Omitted: the correlation id of the context the write runs in, if any. `null` writes none. */
   correlationId?: string | null;
   result?: string | null;
 } & Partial<ClientMeta>;
 
 export type AuditWritePort = {
-  /**
-   * Topics whose publication already leaves an audit record: the ones the audit module subscribes
-   * to, and the ones whose writer appends the row at the source. A topic outside the set is exempt.
-   * A writer that omits it covers none, so the admin-mutation fallback still records its routes.
-   */
   readonly auditedTopics?: ReadonlySet<string>;
   record(entry: AuditEntry): Promise<void>;
   recordInTransaction(tx: unknown, entry: AuditEntry): Promise<void>;
-  /**
-   * Appends `entries` in order inside `tx`, reading the chain head and reserving sequence numbers
-   * once for the lot rather than once per row. Each row is the one `recordInTransaction` would
-   * write for that entry, apart from its id and timestamp; an empty list writes nothing.
-   */
   recordManyInTransaction(tx: unknown, entries: readonly AuditEntry[]): Promise<void>;
 };
 

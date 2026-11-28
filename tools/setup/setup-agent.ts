@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-/**
- * One-command agent onboarding. Run via `pnpm run setup`.
- * Checks prerequisites, boots infra, migrates DB, starts MCP dev server, prints summary.
- */
 
 import { execSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
@@ -78,7 +74,6 @@ async function main() {
     }, 1500);
   });
 
-  // db:migrate and db:seed import the built packages, not the sources.
   console.log('\n--- Building packages the db tools need ---');
   run('pnpm --filter "@openora/testing..." build');
 

@@ -4,18 +4,11 @@ import { CHAT_BLOCK_READER, CHAT_TRANSFER_CHECK } from '@openora/core/contracts'
 import { RemoteChatBlockReader } from './service/remote-chat-block-reader.service.js';
 import { RemoteChatTransferCheck } from './service/remote-chat-transfer-check.service.js';
 
-// A chat call slower than this fails: a block read throws, a transfer check refuses.
 const CHAT_CALL_TIMEOUT_MS = 500;
 
-/**
- * A service that does not load chat reaches it through the chat service: set `CHAT_SERVICE_URL`.
- * Unset, nothing is bound, and a module that requires a chat port refuses to boot.
- */
 function chatClient(): InternalClient | null {
   const url = process.env['CHAT_SERVICE_URL'];
   if (!url) {
-    // Named in a manifest, this plugin is the only thing that can bind the ports, so an unset
-    // URL is the mistake. Without a manifest it is the full install, where chat itself binds them.
     if (
       parseServiceManifest(process.env['SERVICE_MANIFEST'])?.some((m) => m.id === 'chat-remote')
     ) {
@@ -46,12 +39,6 @@ function chatClient(): InternalClient | null {
   });
 }
 
-/**
- * Binds `CHAT_BLOCK_READER` and `CHAT_TRANSFER_CHECK` to the chat service's internal API, for a
- * process that does not load the chat modules and so has no chat tables. Load it instead of
- * `chat`: the chat plugin refuses to boot while `CHAT_SERVICE_URL` is set, so the two never both
- * bind a port.
- */
 export default {
   id: 'chat-remote',
   register(ctx) {

@@ -109,13 +109,10 @@ export default {
       const catalog = new GamesFindService(c.get(DRIZZLE));
       return (input) => catalog.categories(input);
     });
-    // Replaceable (not sealed): an overlay can rebind this to add or remove sort
-    // definitions - eg an attribute or stats sort - without touching this module.
     ctx.provide(GAME_SORT_CATALOG, (c) =>
       createGameSortCatalog(createDefaultGameSorts(c.get(DRIZZLE))),
     );
 
-    // One memoized instance backs both the router and the GAMING_COMMANDS port.
     let svc: GamingService | null = null;
     const gamingService = (c: TypedContainer<CoreTokenCatalog>) =>
       (svc ??= new GamingService(
@@ -130,16 +127,12 @@ export default {
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).gaming.allowedThumbnailHosts : [],
       ));
 
-    // Replaceable (not sealed), like GAME_SORT_CATALOG: an overlay can rebind this to add
-    // or remove membership rule kinds without touching this module.
     ctx.provide(GAME_CATEGORY_RULE_CATALOG, (c) =>
       createGameCategoryRuleCatalog(
         createDefaultGameCategoryRules(c.get(DRIZZLE), c.get(ADMIN_GAME_REPORTING)),
       ),
     );
 
-    // One memoized set backs the router, the job workers, the event handlers and the
-    // GAMING_COMMANDS port - the trigger service's debounce buffer must be shared.
     type MembershipServices = {
       rules: GameCategoryRuleService;
       membership: GameCategoryMembershipService;
@@ -211,7 +204,6 @@ export default {
       requireTriggers().gamesChanged(payload);
       requireMembership().triggers.gamesChanged(payload);
     });
-    // The round ledger's projection: idempotent and order-proof by version, see ledger-game.service.ts.
     ctx.events.on('gaming.ledger_game.projected', async (payload) => {
       if (!drizzleRef) {
         throw new Error('gaming: ledger projection not constructed yet');
@@ -272,11 +264,8 @@ export default {
       },
     });
 
-    // createApp runs this factory in every process, a `:no-routes` or worker-only one included
-    // (module-registry.ts), synchronously before any event is delivered.
     ctx.routers.add('gaming', (c, options) => {
       drizzleRef = c.get(DRIZZLE);
-      // Fails closed until it lands: a stake on a game not yet projected is refused, never played.
       const bootBackfill = new AbortController();
       c.onDispose(() => bootBackfill.abort());
       const db = drizzleRef.db;
@@ -290,10 +279,8 @@ export default {
         }
       });
       const jobQueue = c.get(JOB_QUEUE);
-      // A required-only process leaves the schedules to the service that selects gaming (ADR-0050).
       const schedules = options?.mounted !== false;
       if (schedules) {
-        // The boot run alone misses a game an old process imports after it during a rolling deploy.
         void jobQueue
           .schedule(
             LEDGER_GAME_RECONCILE_QUEUE,

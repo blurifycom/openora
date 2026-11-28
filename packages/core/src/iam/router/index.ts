@@ -33,8 +33,6 @@ export function createIamRouter(
 ) {
   const os = implement(iamContract).$context<OssContext>();
 
-  // Error map for the super-admin-only mutation routes. NotSuperAdminError and
-  // GrantEscalationError -> FORBIDDEN; protected/last-super-admin -> CONFLICT.
   const adminMgmtErrors = {
     NOT_FOUND: [RoleNotFoundError, AdminUserNotFoundError],
     BAD_REQUEST: [InvalidGrantError, NotAnAdminUserError],
@@ -42,8 +40,6 @@ export function createIamRouter(
     CONFLICT: [ProtectedRoleError, LastSuperAdminError],
   };
 
-  // A failed re-authentication is FORBIDDEN, never UNAUTHORIZED: clients read a 401 as an
-  // ended session and would sign the admin out over a mistyped password.
   const mcpTokenErrors = {
     NOT_FOUND: McpTokenNotFoundError,
     BAD_REQUEST: McpTokenTtlError,
@@ -126,7 +122,6 @@ export function createIamRouter(
       return mapErrors(adminMgmtErrors, () => svc.inviteAdmin({ ...input, caller }));
     }),
 
-    // Public - invitee is not yet an admin.
     acceptInvitation: os.acceptInvitation.handler(({ input, context }) => {
       return mapErrors(
         { NOT_FOUND: InvitationNotFoundError, CONFLICT: InvitationConflictError },

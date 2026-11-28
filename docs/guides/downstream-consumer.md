@@ -11,13 +11,10 @@ tokens, events, config schema, agent tools and action types) an agent reads inst
 
 From this OSS checkout, generate a full consumer turborepo that installs `@openora/*` from npm:
 
-```bash
-pnpm create:app ../my-igaming --name my-igaming
-cd ../my-igaming
-pnpm install
-pnpm bootstrap           # .env, Postgres + Redis (Docker), schema, admin + demo data
-pnpm dev                 # api :3001
-```
+1. `pnpm create:app ../my-igaming --name my-igaming` scaffolds the repo next to this checkout.
+2. In the new repo, run `pnpm install`.
+3. Run `pnpm bootstrap`: it writes `.env`, starts Postgres and Redis in Docker, applies the schema, and seeds an admin and demo data.
+4. Run `pnpm dev` to serve the api on port 3001.
 
 The platform is **headless backend only** - it ships modules, contracts, and SDK consumption surface only. Build your entire frontend (player web, admin backoffice, components, styling, theme) in your own repo and consume the api over HTTP via `@openora/core/react`.
 
@@ -40,30 +37,14 @@ Your entire frontend lives in your own repo (the platform is headless backend on
 
 A downstream consumer imports `@openora/core/server` + `@openora/core/contracts` and creates an API
 instance. `createApp` is domain-agnostic - the consumer composes its own contract and injects
-its PAM identity tables (ADR-0025/0026: single-tenant):
+its PAM identity tables (ADR-0025/0026: single-tenant). The scaffolded entry is `tools/templates/consumer/apps/api/src/main.ts.tpl`. It calls `createApp` with:
 
-```typescript
-// my-igaming/apps/api/src/main.ts
-import { createApp } from '@openora/core/server';
-import { composeContract } from '@openora/core/contracts';
-import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
-import { identityContract } from '@openora/core/pam/contracts/identity';
-import { walletContract } from '@openora/core/wallet/contract';
-import { extensions } from './extensions.config.js'; // their own plugin list
+- `plugins`: the consumer's own plugin list from `extensions.config.ts`.
+- `contract`: built with `composeContract` from `@openora/core/contracts`, passing only the module contracts you enable (for example the identity contract from `@openora/core/pam/contracts/identity` and `walletContract` from `@openora/core/wallet/contract`); `composeContract` adds `health` itself.
+- `authSchema`: the PAM identity tables `user`, `session`, `account`, `verification` and `twoFactor` from `@openora/core/pam/schema/identity`.
+- `port` and `cors.origins`.
 
-// Compose only the modules you enable (composeContract adds `health` itself).
-const contract = composeContract({ identity: identityContract, wallet: walletContract });
-
-const { listen } = await createApp({
-  plugins: extensions,
-  contract,
-  authSchema: { user, session, account, verification, twoFactor },
-  port: 3001,
-  cors: { origins: ['https://my-igaming.example'] },
-});
-
-await listen();
-```
+Then it awaits the `listen` function `createApp` returns.
 
 `createApp` serves a live API reference at `/docs` and its matching OpenAPI document at `/openapi.json`.
 
@@ -210,22 +191,9 @@ rows - safe to run on every deploy.
 Seeding is a **standalone one-shot script**, exactly like migrations (the `openora-migrate` bin shipped
 by `@openora/core` imports every `migrate()` callable and runs them). It needs only a DB connection - it never boots the
 app (no HTTP, no auth, no plugin host), so it is cheap and carries zero footprint in the running
-server. You compose the seeders you want explicitly, then run it after migrations:
+server. You compose the seeders you want explicitly, then run it after migrations. The script, for example `apps/api/src/seed-reference.ts` in the consumer, opens a connection with `createDrizzleDb` (from `@openora/core/server`) on `DATABASE_URL`, then awaits `seedRoles` (from `@openora/core/iam/seed`) and one call per additional module seeder you enable. Run it after `db:migrate`, before or at release.
 
-```typescript
-// my-igaming/apps/api/src/seed-reference.ts  - run after `db:migrate`, before/at release
-import { createDrizzleDb } from '@openora/core/server';
-import { seedRoles } from '@openora/core/iam/seed';
-// import additional module seeders here as you enable them
-
-const db = createDrizzleDb(process.env.DATABASE_URL!);
-
-await seedRoles(db);
-// await seedOtherModule(db);
-console.log('Reference data seeded.');
-```
-
-Wire it as its own command (e.g. `"db:seed:reference": "tsx src/seed-reference.ts"`) and run it in your release
+Wire it as its own command (e.g. a `db:seed:reference` package script that runs `src/seed-reference.ts` with tsx) and run it in your release
 pipeline right after `pnpm db:migrate`. Because the seeders are idempotent upserts, re-running on
 each deploy is the intended pattern. Composition is explicit (like `extensions.config.ts`): enable
 a module's seeder by adding its one import + call - the same trade-off the migration runner makes.
@@ -234,21 +202,13 @@ a module's seeder by adding its one import + call - the same trade-off the migra
 
 Each seeder is a plain `(db) => Promise<void>` function with no runtime coupling, so you can run
 any one in isolation, in any order - you are never forced to seed everything at once. Drive this
-however suits your pipeline:
-
-```typescript
-import { createDrizzleDb } from '@openora/core/server';
-import { seedRoles } from '@openora/core/iam/seed';
-
-const db = createDrizzleDb(process.env.DATABASE_URL!);
-await seedRoles(db); // only IAM roles
-```
+however suits your pipeline. For example, open the connection with `createDrizzleDb` and await only `seedRoles` from `@openora/core/iam/seed` to seed just the IAM roles.
 
 Common orchestration patterns:
 
 - **One script per module** - `db:seed:iam`, `db:seed:casino`, ... each importing a single seeder.
 - **One script with a flag** - `pnpm db:seed --only=iam` branches on the arg.
-- **One combined script** - imports and runs them all, like the snippet above.
+- **One combined script** - imports and runs them all, like the reference script above.
 
 **Local data** is a separate, dev-only concern. The scaffolded `apps/api/src/seed.ts` calls
 `seedLocalData` from `@openora/core/seed/local`: reference data, a super-admin from `ADMIN_EMAIL` /
@@ -260,28 +220,15 @@ pipeline; production runs a reference-data script like the one above.
 
 Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@openora/core/react` (typed client, data hooks, auth, realtime transport).
 
-Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `@openora/core/react`):
-
-```tsx
-// your-frontend/app/providers.tsx (client component)
-import { ApiClientProvider } from '@openora/core/react';
-import './globals.css'; // your own styling and design system
-
-<ApiClientProvider client={{ baseUrl }}>{children}</ApiClientProvider>;
-```
+Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `@openora/core/react`). In a client component such as `app/providers.tsx`, import your own global stylesheet and render `ApiClientProvider` (`packages/core/src/react/context/api-client.tsx`) around `children`, passing the api `baseUrl` as its `client` prop.
 
 ### Styling and components
 
 The platform ships no UI - your frontend owns all components, styling, and theme. Pick whatever
 you like (Tailwind + DaisyUI, MUI, your own design system); OSS only feeds you data via the
 hooks. If you use Tailwind v4 + DaisyUI, enable it in your own CSS build with a
-`postcss.config.mjs` (`{ plugins: ['@tailwindcss/postcss'] }`) - or the `@tailwindcss/vite`
-plugin for a Vite/TanStack app - and a global stylesheet:
-
-```css
-@import 'tailwindcss';
-@plugin "daisyui";
-```
+`postcss.config.mjs` that lists the `@tailwindcss/postcss` plugin - or the `@tailwindcss/vite`
+plugin for a Vite/TanStack app - and a global stylesheet. In it, import `tailwindcss` in the global stylesheet and enable the `daisyui` plugin with Tailwind's `@plugin` directive.
 
 Cross-workspace `link:` requires a dedup alias in your frontend bundler config for `react`,
 `react-dom`, and `@tanstack/react-query` (single physical path). See ADR-0005.
@@ -299,23 +246,11 @@ Full hooks guide: `docs/standards/react-sdk.md`.
 Until OSS packages are published to npm, downstream consumers point at this workspace via
 `pnpm.overrides` + `link:`. From the consumer's `package.json`:
 
-```jsonc
-"pnpm": {
-  "overrides": {
-    // Everything is folded into one package (ADR-0025): link @openora/core and you
-    // get every domain as a subpath.
-    "@openora/core": "link:../openora/packages/core"
-  }
-}
-```
+In the consumer's `package.json`, set a `pnpm.overrides` entry that maps `@openora/core` to `link:../openora/packages/core`. Everything is folded into one package (ADR-0025): linking `@openora/core` gives every domain as a subpath.
 
 Each linked package's `main` resolves to `./dist/index.js`, so the consumer reads BUILT output.
 To keep the link hot during dev, run a watch build here in parallel with the consumer's dev
-process:
-
-```bash
-pnpm -F @openora/core build --watch
-```
+process with `pnpm -F @openora/core build --watch`.
 
 Modules under `packages/core/src/<domain>/*` are loaded by the consumer via `extensions.config.ts`
 paths pointing at built plugin files - see the load pattern below.
@@ -327,17 +262,7 @@ on every change), `file:` (snapshot copy on install, no live source).
 
 Consumer `extensions.config.ts` loads core's modules through `corePlugins()`, which resolves the
 built plugin files inside `@openora/core`, not source, because tsx in the consumer's API entry
-can't reliably resolve the tsconfig. Always build `@openora/core` before booting the consumer:
-
-```bash
-pnpm -F @openora/core build
-```
-
-For a watch loop during development:
-
-```bash
-pnpm -F @openora/core --parallel build --watch
-```
+can't reliably resolve the tsconfig. Always build `@openora/core` before booting the consumer with `pnpm -F @openora/core build`. For a watch loop during development, run `pnpm -F @openora/core --parallel build --watch`.
 
 Every path in the consumer's `extensions.config.ts` must be absolute. The plugin host imports each
 entry from inside `@openora/core`, so a relative path or a bare package name resolves from core's

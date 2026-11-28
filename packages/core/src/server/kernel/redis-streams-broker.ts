@@ -17,10 +17,8 @@ const BLOCK_MS = 5_000;
 const CLAIM_INTERVAL_MS = 30_000;
 const CLAIM_MIN_IDLE_MS = 60_000;
 const RETRY_DELAY_MS = 2_000;
-// Entries delivered to a group but not yet acknowledged; above this the consumer is falling behind.
 const PENDING_LAG_THRESHOLD = 100;
 const LAG_LOG_INTERVAL_MS = 60_000;
-// Deliveries (first read + reclaims) after which a still-failing entry is dead-lettered.
 const MAX_DELIVERIES = 5;
 
 export function streamStartIdFromEnv(raw: string | undefined, splitService: boolean): '$' | '0' {
@@ -43,11 +41,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Library boundary: node-redis types XREADGROUP/XAUTOCLAIM replies as a broad
-// RESP2/RESP3 conditional union driven by the client's negotiated protocol version,
-// which TS can't narrow generically. This client (redis-client.ts) never overrides
-// RESP/typeMapping, so at runtime the reply is always this plain shape - declared
-// once here and cast at the two call sites below.
 type StreamMessage = { id: string; message: Record<string, string> };
 type StreamReadReply = Array<{ name: string; messages: StreamMessage[] }> | null;
 type StreamClaimReply = {
@@ -59,15 +52,8 @@ type StreamClaimReply = {
 type RedisStreamsBrokerOptions = {
   serviceName: string;
 
-  // Where a consumer group starts reading, on the ONE pass that creates it (a group
-  // that already exists comes back BUSYGROUP and keeps its own cursor, so this never
-  // rewinds a running deployment). '$' - the default - takes only events published
-  // after creation; '0' replays everything still retained in the stream (up to
-  // EVENT_RETENTION_MS). See the class docstring for which to pick.
   startId?: '$' | '0';
 
-  // How often idle-pending entries are reclaimed for retry, and how long an entry must
-  // sit unacknowledged first. Tests shorten these; production keeps the defaults.
   reclaim?: { intervalMs: number; minIdleMs: number };
 };
 
@@ -85,7 +71,6 @@ export function dlqKey(streamKeyName: string): string {
   return DLQ_PREFIX + streamKeyName.slice(STREAM_PREFIX.length);
 }
 
-// A stream id is `<ms since epoch>-<seq>`, stamped by Redis on XADD.
 export function streamIdTime(id: string): number {
   return Number(id.split('-')[0]);
 }
@@ -104,55 +89,6 @@ export function isBusyGroupError(err: unknown): boolean {
   return err instanceof Error && err.message.includes('BUSYGROUP');
 }
 
-/**
- * Durable `MESSAGE_BROKER` reference driver on Redis Streams, auto-bound by
- * `createApp` when `REDIS_URL` is set (ADR-0030 - production is distributed-only,
- * core ships no in-process default).
- *
- * Every `subscribe(topic, handler)` call for the same (topic, group) - default
- * group is the deployment's `serviceName` - coalesces into ONE Redis consumer-group
- * loop that fans out to every registered local handler, then XACKs once: an event
- * is delivered to exactly one replica of the service (competing consumers across
- * replicas via the shared group), and that replica runs every local handler for
- * the topic (matches in-process fan-out semantics, but once per cluster, not once
- * per replica). A distinct `SERVICE_NAME` per split service gives each service its
- * own copy of every event; `createApp` requires one as soon as `SERVICE_MANIFEST`
- * is set, since the group name is a durable identity and can't be derived from a
- * module list that reorders and grows.
- *
- * Blocking `XREADGROUP` runs on a `client.duplicate()`d connection per loop, never
- * on the shared client - `publish` (`XADD`, non-blocking) uses the shared client,
- * so a blocked read never stalls the cache/rate-limiter commands sharing it.
- * `publish` awaits the XADD and lets errors propagate (the `OutboxRelay` marks a
- * row published only after this resolves - it must be reliable, not a silent
- * no-op). Every local handler runs even when a sibling throws; the entry is XACKed
- * only when all of them succeeded. A failure (or a crash before XACK) leaves it
- * pending, and `XAUTOCLAIM` reclaims idle-pending entries every `CLAIM_INTERVAL_MS`
- * and redelivers them - to every local handler again, so `EventBus.on` skips the
- * ones that already succeeded via `processed_events`. An entry still failing on its
- * `MAX_DELIVERIES`th delivery (or one that is not valid JSON) is copied to the
- * `oss:dlq:<topic>` stream with its group, stream id, delivery count and last
- * error, then XACKed. The DLQ is never trimmed; an operator drains it.
- *
- * ponytail: retention is time-based (`MINID ~ now - EVENT_RETENTION_MS` on every
- * XADD), so a group that falls more than 7 days behind loses the entries it never
- * read, and stream memory is bounded by traffic x 7 days, not by a count. Alert on
- * consumer-group lag; move to a broker overlay with disk-backed retention if either
- * ceiling bites.
- *
- * At-least-once holds from group creation onward, NOT before it. A group is created
- * at `startId` (default `$`) on first subscribe and persists in Redis from then on,
- * so restarts and outages are covered: the group keeps its cursor, undelivered
- * entries wait in the stream, and pending ones are reclaimed. The one uncovered
- * window is a group's FIRST-EVER creation - a service extracted after events were
- * already flowing starts from `$` and never sees the backlog. `startId: '0'` closes
- * that window by replaying everything still retained (up to EVENT_RETENTION_MS), at
- * the cost of running every handler of the new service for that backlog.
- *
- * `orderingKey` is NOT honoured - Redis Streams have no partitioning, so per-key
- * ordering across concurrent consumers isn't guaranteed (same footnote as
- * `BullMqJobQueue`'s `orderingKey`).
- */
 export class RedisStreamsBroker implements MessageBrokerAdapter {
   private readonly logger = createLogger('message-broker');
   private readonly serviceName: string;
@@ -253,14 +189,9 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
 
     const stop = (): void => {
       stopped = true;
-      // Rejects the in-flight blocking XREADGROUP (if any) immediately, instead of
-      // waiting up to BLOCK_MS for it to time out on its own.
       reader.destroy();
     };
 
-    // `ready` gates connecting + group creation, and stays false until BOTH have
-    // succeeded - so a Redis outage at loop start retries the whole handshake with
-    // backoff rather than permanently abandoning this (topic, group)'s consumption.
     const done = (async (): Promise<void> => {
       let ready = false;
       while (!stopped) {
@@ -325,9 +256,6 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     }
   }
 
-  // Walks the whole pending list each interval (XAUTOCLAIM pages until cursor 0-0), so a
-  // backlog drains at read speed rather than one page per interval. Returns the cursor to
-  // resume from if a page fails.
   private async reclaimPending(
     reader: RedisClient,
     key: string,
@@ -357,9 +285,6 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
             continue;
           }
           const deliveries = await this.deliveryCount(reader, key, group, message.id);
-          // MINID trimming is approximate and pending entries survive it, so one can outlive
-          // the processed_events rows that dedupe it. Re-running it would repeat handlers that
-          // already succeeded; it goes to the dead-letter stream for a human instead.
           if (streamIdTime(message.id) < Date.now() - EVENT_RETENTION_MS) {
             await this.deadLetter(
               reader,

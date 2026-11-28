@@ -150,8 +150,6 @@ export function parseMentionedUsernames(content: string): string[] {
   return [...usernames];
 }
 
-// A staff member stays out of a room's roster unless they own or created it, or the viewer is
-// staff too. An account the identity service does not know is listed, as "Unknown player".
 export function visibleInRoster(
   member: { userId: User['id']; role: string },
   accounts: Map<string, Account>,
@@ -274,7 +272,6 @@ const ChatRoomConfigurationNotFoundError = createDomainError(
   (id: string) => `Chat room configuration not found: ${id}`,
 );
 
-// Global-room messages are stored with a null room id.
 function perRoomMessages(query: (roomMessages: SQL | undefined) => SQL) {
   const visible = (room: SQL) =>
     and(room, eq(chatMessage.type, 'user'), eq(chatMessage.isDeleted, false));
@@ -304,7 +301,6 @@ type SendThrottle = {
   slowMode: { roomId: Uuid; slowModeSeconds: number } | null;
 };
 
-// A cooldown counts the sender's last message anywhere its scope reaches, so switching rooms does not reset it.
 function messagesInScope(t: DrizzleTx, scope: ChatModerationScope, roomId: Uuid | null) {
   switch (scope) {
     case '__all':
@@ -376,7 +372,6 @@ function configurationSettings(record: typeof chatRoomConfiguration.$inferSelect
   return settings;
 }
 
-// The restriction that lasts longest decides when a player is let back in; null is permanent.
 export function latestExpiry(expiries: (Date | null)[]) {
   const times = expiries.flatMap((expiry) => (expiry ? [expiry.getTime()] : []));
   return times.length === 0 || times.length < expiries.length ? null : new Date(Math.max(...times));
@@ -386,9 +381,6 @@ function isGlobalRoom(room: { slug: string }) {
   return room.slug === GLOBAL_CHAT_ROOM_ID;
 }
 
-// The avatar is read live off the author's account, never copied onto the row, so a changed
-// picture shows on old messages too and a client never fetches one profile per author.
-// An image that is not a URL shows as no avatar instead of failing the whole listing.
 function toAvatarUrl(image: string | null): string | null {
   return ChatAvatarUrlSchema.safeParse(image).data ?? null;
 }
@@ -403,8 +395,6 @@ function toPublicMessage(
   return { ...toMessage(record), avatarUrl: toAvatarUrl(avatarUrl) } as ChatMessage;
 }
 
-// One unreadable system message drops out of the page; the rest of the history is still
-// served. Failing the whole listing would take a room's chat down over a single old row.
 function toPublicMessages(
   rows: { message: typeof chatMessage.$inferSelect; avatarUrl: string | null }[],
 ): ChatMessage[] {
@@ -413,7 +403,6 @@ function toPublicMessages(
     .filter((message) => message !== null);
 }
 
-// The message this service just inserted, which is always a `user` row.
 function toSentMessage(
   record: typeof chatMessage.$inferSelect,
   avatarUrl: string | null,
@@ -421,8 +410,6 @@ function toSentMessage(
   return { ...toMessage(record), avatarUrl: toAvatarUrl(avatarUrl) } as ChatMessage;
 }
 
-// A system message this service just wrote: its metadata came in typed by the contract, so
-// it needs neither the legacy repair nor the re-parse a stored row does.
 export function toWrittenSystemMessage(
   record: typeof chatMessage.$inferSelect,
   metadata: CommandMetadata,
@@ -573,9 +560,6 @@ export class ChatService {
     };
   }
 
-  // ponytail: one account read per online member. Over the identity service that is a batch of
-  // ACCOUNTS_BATCH_MAX ids per call, and past the remote cache cap (10k) every count reads cold;
-  // a room that big needs an identity-side staff count instead.
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
     const onlineUsers = await this.accounts.getAccounts(onlineUserIds);
@@ -614,9 +598,6 @@ export class ChatService {
     );
   }
 
-  // The name and avatar a new message carries, stored with it for good. An identity service that
-  // is down or does not know the account gives a fixed placeholder, never a client-sent name:
-  // other players read the name to decide who is talking.
   private async resolveAuthor(userId: User['id']) {
     const account = await this.accounts
       .getAccounts([userId])
@@ -631,9 +612,6 @@ export class ChatService {
     };
   }
 
-  // Author avatars for a page of messages, read in one batch. A sender the identity service
-  // does not know, or an identity service that is down, shows no avatar: history keeps the
-  // username stored with each message, and no access decision rides on this read.
   private async withAvatars<T extends { userId: string }>(messages: T[]) {
     const accounts = await this.accounts
       .getAccounts(messages.map((m) => m.userId))
@@ -647,7 +625,6 @@ export class ChatService {
     }));
   }
 
-  // Whether the viewer is staff, who sees staff in a roster. Read fresh: it decides visibility.
   private async canSeeAdminUsers(viewerId: User['id'] | undefined) {
     if (!viewerId) {
       return false;
@@ -656,13 +633,10 @@ export class ChatService {
     return isStaffRole(viewer?.role);
   }
 
-  // The usernames a roster shows: an account the identity service does not know shows as
-  // "Unknown player" instead of a raw id.
   private rosterUsername(accounts: Map<string, Account>, userId: User['id']) {
     return accounts.get(userId)?.username ?? UNKNOWN_PLAYER_USERNAME;
   }
 
-  /** Throws ChatRoomNotFoundError or ChatRoomNotMemberError; returns the room on success. */
   async verifyRoomAccess(roomId: ChatRoom['id'], viewerId?: User['id'], tx?: DrizzleTx) {
     const db = tx ?? this.drizzle.db;
     const [room] = await db
@@ -725,7 +699,6 @@ export class ChatService {
     return room;
   }
 
-  /** Null for the global room under either id. */
   async verifyChannelAccess(roomId: ChatRoom['id'] | null, viewerId?: User['id']) {
     if (roomId === null) {
       await this.verifyGlobalAccess(viewerId);
@@ -977,8 +950,6 @@ export class ChatService {
     return toRoom(room);
   }
 
-  // Backoffice room writes reach live public rooms only, the ones listAdminRooms returns. FOR SHARE
-  // holds a concurrent soft delete until the write commits.
   private adminRoomWrite<T>(roomId: ChatRoom['id'], write: (tx: DrizzleTx) => Promise<T>) {
     return this.drizzle.db.transaction(async (tx) => {
       findOneOrThrow(
@@ -1092,7 +1063,6 @@ export class ChatService {
         .where(eq(chatRoomRule.roomId, roomId))
         .orderBy(desc(chatRoomRule.orderNum))
         .limit(1);
-      // A rule can be set to the integer column's max; ties sort by creation time, so this still lands last.
       nextOrder = Math.min((last?.orderNum ?? 0) + 1, 2 ** 31 - 1);
     }
     const [rule] = await tx
@@ -1720,7 +1690,6 @@ export class ChatService {
     }
   }
 
-  // Read-only and slow mode are enforced here, not by the moderation port.
   private async roomSendSettings(roomId: Uuid | null) {
     const [config] = await this.drizzle.db
       .select({
@@ -1759,7 +1728,6 @@ export class ChatService {
     );
   }
 
-  // Decides whether to take the send lock; the cooldowns that apply are re-read under it.
   private async sendThrottle({
     userId,
     roomId,
@@ -1778,7 +1746,6 @@ export class ChatService {
     return cooldowns.length > 0 ? { roomId, reach, slowMode } : null;
   }
 
-  // One lock per sender, so parallel sends to different rooms cannot both pass a shared cooldown.
   private async insertUserMessage(
     values: typeof chatMessage.$inferInsert & { roomId: Uuid | null },
     throttle: SendThrottle | null,
@@ -1805,7 +1772,6 @@ export class ChatService {
     });
   }
 
-  // Shared, so sends only queue behind a write holding the room lock, such as a close or a removal.
   private assertRoomStillAcceptsSender(t: DrizzleTx, room: SendRoom, userId: User['id']) {
     return withAdvisoryXactLocks(
       t,
@@ -1887,7 +1853,6 @@ export class ChatService {
     const until = Math.max(
       ...windows.map(({ createdAt, seconds }) => createdAt.getTime() + seconds * 1000),
     );
-    // now() is fixed for the transaction, so every window shares the same database clock.
     const retryAfterMs = Math.max(0, until - first.now.getTime());
     throw new ChatPlayerMutedError(new Date(until), 'slow_mode', retryAfterMs);
   }
@@ -1917,7 +1882,6 @@ export class ChatService {
     return last;
   }
 
-  // Room moderators and owners skip room slow mode only, never a cooldown.
   private async isSlowModeExempt(t: DrizzleTx, userId: User['id'], roomId: Uuid) {
     const [moderator] = await t
       .select({ id: chatRoomMember.id })
@@ -1946,7 +1910,6 @@ export class ChatService {
     content: string;
     attachment?: ChatAttachment | null;
   } & Partial<ClientMeta>) {
-    // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const room = await this.verifyRoomAccess(roomId, userId);
     if (isGlobalRoom(room)) {
       return this.postToGlobalRoom({ userId, content, attachment });
@@ -2068,7 +2031,6 @@ export class ChatService {
     content: string;
     attachment?: ChatAttachment | null;
   }) {
-    // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const slowMode = await this.roomSendSettings(null);
     await this.moderation.assertCanSend(userId, null);
     const throttle = await this.sendThrottle({ userId, roomId: null, reach: 'global', slowMode });
@@ -2142,7 +2104,6 @@ export class ChatService {
     };
   }
 
-  /** Backoffice-only, site-wide: every active block relationship, not just the caller's. */
   async adminListBlockedUsers({
     page,
     limit,
@@ -2184,15 +2145,6 @@ export class ChatService {
       throw new ChatSelfBlockError();
     }
 
-    // Idempotent: re-blocking while already (actively) blocked is a no-op, so only
-    // the first block emits an event. The pair unique index is partial (removedAt
-    // IS NULL), so a block after a prior unblock conflicts with nothing and inserts
-    // a fresh active row - the removed row stays as history. No explicit conflict
-    // target: this table has exactly one unique constraint (the partial pair index).
-    // Any active friendship dissolves on the same tx as the block insert, so a block
-    // can never leave a friendship (and the blocked user) still reachable from
-    // /social/friends. Both events go to the outbox on that tx, the friendship removal
-    // first: they exist if and only if the block committed.
     const subject = await this.relationSubject(blockerId, blockedId, meta);
     await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), async () => {
@@ -2224,8 +2176,6 @@ export class ChatService {
   }
 
   async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
-    // Soft-delete: the partial unique index guarantees at most one active (removedAt
-    // IS NULL) row per pair, so this is that row, or no-op if already unblocked.
     const subject = await this.relationSubject(blockerId, blockedId, meta);
     await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), async () => {
@@ -2252,7 +2202,6 @@ export class ChatService {
     return { success: true } as const;
   }
 
-  /** The audit fields a block or ignore event carries, resolved before its transaction opens. */
   private async relationSubject(actorId: User['id'], subjectId: User['id'], meta?: ClientMeta) {
     const [actorPlayerId, playerId] = await Promise.all([
       this.identityReader.getPlayerIdByUserIdSafe(actorId),
@@ -2301,7 +2250,6 @@ export class ChatService {
     };
   }
 
-  /** Backoffice-only, site-wide: every active ignore relationship, not just the caller's. */
   async adminListIgnoredUsers({
     page,
     limit,
@@ -2343,7 +2291,6 @@ export class ChatService {
       throw new ChatSelfIgnoreError();
     }
 
-    // Idempotent + soft-delete-aware - see blockUser's comment, same pattern.
     const subject = await this.relationSubject(ignorerId, ignoredId, meta);
     await this.drizzle.db.transaction(async (tx) => {
       const inserted = await tx
@@ -2363,7 +2310,6 @@ export class ChatService {
   }
 
   async unignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
-    // Soft-delete - see unblockUser's comment, same pattern.
     const subject = await this.relationSubject(ignorerId, ignoredId, meta);
     await this.drizzle.db.transaction(async (tx) => {
       const removed = await tx
@@ -2634,10 +2580,6 @@ export class ChatService {
     userId: User['id'];
   } & ClientMeta) {
     const deletedAt = new Date();
-    // Validation runs inside the lock, not before it: two concurrent deletes would otherwise
-    // both pass the active-room check and both emit a deletion event for one room. The lock
-    // is the same one join/leave take, so a member joining concurrently either lands before
-    // the roster snapshot (and gets revoked) or after the soft-delete (and is rejected).
     const deleted = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
         const room = findOneOrThrow(
@@ -2684,8 +2626,6 @@ export class ChatService {
       ip,
       userAgent,
     });
-    // Before the realtime cleanup: the deletion is committed, and an audit trail that depends
-    // on a transport call succeeding would go missing exactly when the transport is down.
     this.events.emit('chat.private_room.deleted', {
       roomId,
       creatorId: userId,
@@ -2699,9 +2639,6 @@ export class ChatService {
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    // The room is gone, so cut every member off the room channel rather than leaving them
-    // subscribed to a room that 404s on every call. Per-member best-effort: one unreachable
-    // client must not fail a delete that has already happened and cannot be retried.
     await mapConcurrent(deleted.members, ROOM_REVOKE_CONCURRENCY, ({ userId: memberId }) =>
       revokeChannelBestEffort(this.transport, memberId, roomId),
     );
@@ -2813,7 +2750,6 @@ export class ChatService {
         throw e;
       }
     }
-    // unreachable: loop returns or rethrows on every iteration
     throw new ChatRoomSlugConflictError();
   }
 
@@ -2840,17 +2776,12 @@ export class ChatService {
       })
       .returning();
     const msg = toWrittenSystemMessage(record, args.metadata);
-    // Only auto-publish when this call owns the write (no caller-managed transaction).
-    // When `tx` is passed, the caller's transaction hasn't committed yet - publishing
-    // here would leak a message to clients before (or even if) it actually commits.
-    // The caller must publish itself after its transaction resolves.
     if (!args.tx) {
       publishChatEvent(this.transport, roomId, msg);
     }
     return msg;
   }
 
-  // `roomId`, `actorId` and `username` are for the outbox writer; the row already holds them.
   async updateSystemMessage(args: {
     messageId: ChatMessage['id'];
     roomId: ChatRoom['id'] | null;
@@ -2866,7 +2797,6 @@ export class ChatService {
         metadata: args.metadata,
         version: sql`greatest(${chatMessage.version}, ${CHAT_SYSTEM_MESSAGE_VERSION.updated})`,
       })
-      // Only a system card: an id that names a player's message never rewrites it.
       .where(and(eq(chatMessage.id, args.messageId), eq(chatMessage.type, 'system')))
       .returning();
     if (!record) {
@@ -2909,8 +2839,6 @@ export class ChatService {
     );
   }
 
-  // The admin listings' player filter as a sender condition: undefined = no filter, null = the
-  // player id names no account, so nothing matches.
   private async playerSenderCondition(playerId: Uuid | undefined) {
     if (!playerId) {
       return undefined;

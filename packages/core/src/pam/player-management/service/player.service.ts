@@ -52,7 +52,6 @@ const playersWithTags = (db: DrizzleDb) =>
         name: accountManager.name,
         isActive: accountManager.isActive,
       },
-      // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
       tags: sql<
         string[]
       >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
@@ -90,19 +89,10 @@ export class PlayerService implements PlayerActivityTracker {
     private readonly blockReader: ChatBlockReader,
     private readonly sessionCommands: SessionCommands,
     private readonly userCommands: UserCommands,
-    // The ledger, not a counter kept here, is the source of truth for what a player deposited.
     private readonly walletReader: WalletReader,
     private readonly rates?: ExchangeRateReader,
   ) {}
 
-  /**
-   * Recomputes `totalDeposits` from the player's completed wallet deposits, priced into the
-   * player's currency. A full recompute rather than an increment, so a redelivered or
-   * reordered deposit event cannot count a deposit twice; the per-player lock makes the last
-   * writer read the latest ledger. When a deposit currency has no rate the stored total is
-   * left as it was: a guessed total would read back exactly like a real one.
-   */
-  // Resolves false when a deposit currency cannot be priced, so a retrying caller can try again.
   async refreshTotalDeposits(userId: User['id']): Promise<boolean> {
     return this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, `player_total_deposits:${userId}`, async () => {
@@ -113,7 +103,6 @@ export class PlayerService implements PlayerActivityTracker {
         if (!current) {
           return true;
         }
-        // A failed read throws out of the job, which retries; the stored total stays as it was.
         const depositsByCurrency = await this.walletReader.getDepositsByCurrency(userId, tx);
         const totalDeposits = await sumInPivot(
           depositsByCurrency,
@@ -160,12 +149,6 @@ export class PlayerService implements PlayerActivityTracker {
       conditions.push(eq(player.status, status));
     }
     if (kycStatus) {
-      // `player.kyc_status` is queried directly (this module owns the table, so there
-      // is no shared read boundary to normalize through - see
-      // pam/identity/admin-user-directory.ts for that boundary). A filter for the
-      // canonical `approved` must also match a legacy row still holding the deprecated
-      // `verified` value, or every player verified before the expand/contract migration
-      // becomes invisible to this filter.
       conditions.push(
         normalizeKycStatus(kycStatus) === 'approved'
           ? inArray(player.kycStatus, ['approved', 'verified'])
@@ -265,8 +248,6 @@ export class PlayerService implements PlayerActivityTracker {
       patch.level = data.level;
     }
 
-    // The username lives on identity's table, so it is written through USER_COMMANDS
-    // rather than joined into this transaction - identity keeps its own invariants.
     if (data.username !== undefined) {
       const { userId } = findOneOrThrow(
         await this.drizzle.db
@@ -285,8 +266,6 @@ export class PlayerService implements PlayerActivityTracker {
       if (Object.keys(patch).length > 0) {
         await trx.update(player).set(patch).where(eq(player.id, playerId));
       }
-      // Audited and, for a closure, what forfeits the player's bonuses - so committed with
-      // the change through the outbox.
       if (data.level !== undefined && data.level !== locked.level) {
         await this.events.emitInTransaction(trx, 'player.level.changed', {
           userId: locked.userId,
@@ -309,11 +288,6 @@ export class PlayerService implements PlayerActivityTracker {
       return locked;
     });
 
-    // A transition into a blocking status must kill every active session immediately -
-    // AC: "Blocking a player immediately prevents login and all platform activity."
-    // Session validity is checked on every request (SessionResolver -> better-auth
-    // getSession), so revoking here cuts off in-progress activity; IdentityService.login
-    // additionally blocks a fresh login for the same account (mirrors the RG login gate).
     if (
       data.status !== undefined &&
       data.status !== before.status &&
@@ -325,12 +299,6 @@ export class PlayerService implements PlayerActivityTracker {
     return this.fetchOneWithTags(playerId);
   }
 
-  /**
-   * Suspends a player without an admin actor, as an under-age KYC result requires: the
-   * status change and `player.status.changed` (actorId null) commit together, then every
-   * session is revoked. Balances and bonuses are untouched. A closed or self-excluded player
-   * keeps its status.
-   */
   async suspendBySystem(userId: User['id']): Promise<void> {
     await this.drizzle.db.transaction(async (trx) => {
       const [locked] = await trx
@@ -354,7 +322,6 @@ export class PlayerService implements PlayerActivityTracker {
       });
       await this.userCommands.publishPlayEligibility(userId, trx);
     });
-    // Also on a redelivery that finds the player already blocked: the revoke may be what failed.
     await this.sessionCommands.revokeAll(userId);
   }
 
@@ -476,9 +443,6 @@ export class PlayerService implements PlayerActivityTracker {
     return { total, active, newLastWeek, selfExcluded };
   }
 
-  // Ported from chat-commands' ChatCommandsService.searchPlayers - powers the
-  // chat `/profile` command's search step. Excludes players the viewer has
-  // blocked/ignored (moderation) - see AGENTS.md.
   async searchPlayers(
     q: string,
     limit: number,
@@ -502,9 +466,6 @@ export class PlayerService implements PlayerActivityTracker {
     }));
   }
 
-  // Ported from chat-commands' ChatCommandsService.getPlayerProfile. Wagered
-  // totals/currency are self-only - a viewer looking at someone else's card
-  // only sees username/level/avatar.
   async getPlayerProfile(userId: User['id'], viewerId: User['id']): Promise<PlayerProfileCard> {
     const summaries = await this.userDirectory.lookupPlayers([userId]);
     const summary = summaries.find((s) => s.userId === userId);

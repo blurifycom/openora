@@ -7,19 +7,6 @@ import {
   type AnyToken,
 } from '@openora/core/contracts';
 
-/**
- * Production is distributed-only (ADR-0030/0031, superseding ADR-0010/0014/0016/0028):
- * the in-process seam impls no longer ship on the production path, so every
- * always-needed seam must resolve to a durable binding before `createApp` finishes
- * booting. Call this AFTER `loadPlugins` + `configure` so a `REDIS_URL` auto-bind or
- * an overlay's own registration has already won (Container is last-registration-wins).
- * Modeled on `assertSealedServicesBound` (`compliance/assert.ts`) - same `has(token)`
- * shape, same "list every gap, don't stop at the first" style.
- *
- * `REALTIME_TRANSPORT` is included as of ADR-0031: `createApp` no longer binds an
- * in-process default. An overlay (e.g. Ably) still rebinds it via last-wins
- * `container.register`, same as every other seam here.
- */
 export type DurableSeamContainerView = {
   has(token: AnyToken<unknown>): boolean;
 };

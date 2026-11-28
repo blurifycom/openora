@@ -1,6 +1,3 @@
-// The consumer guard-review hook keeps an agent from pushing or opening a PR/MR on a commit the
-// `review` skill never approved. Drive it in a throwaway git repo that wires it: no review state is denied, an
-// APPROVED or GO state for HEAD is allowed, a stale or rejected one is denied, deletes pass.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

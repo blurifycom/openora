@@ -13,9 +13,6 @@ export const CHAT_COMMAND_TYPES = [
   'profile',
   'gift',
   'rain',
-  // Core registers this key and its metadata only. The money movement belongs to the consumer's
-  // overlay, which must send the `donation` wallet transaction type for both legs and notify the
-  // recipient with `chat.donation.received`.
   'donate',
   'block',
   'unblock',

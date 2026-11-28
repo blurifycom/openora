@@ -1,48 +1,17 @@
 #!/usr/bin/env node
-/**
- * Reference guard for prose. A skill is one line pointing at a standards doc, an
- * ADR points at the ADR it supersedes, a rule names a roster agent, a runbook
- * names a pnpm script. Rename any of those targets and the pointer rots
- * silently - the skill still loads, it just sends the agent nowhere. Nothing
- * else in `pnpm verify` reads prose, so nothing else catches it.
- *
- * Checks, all mechanical, no model:
- *   1. Every relative markdown link in .rulesync/ and docs/ resolves on disk.
- *   2. Every #anchor on such a link matches a heading in the target file.
- *   3. Every backtick-quoted repo path under packages/, tools/ or .rulesync/ exists.
- *   4. Every `pnpm <script>` names a package.json script or a node_modules/.bin binary.
- *   5. Every roster agent named in a rule or skill has a .rulesync/subagents/ file.
- *   6. Frontmatter carries name + description, and a skill's name matches its directory.
- *   7. ADR numbers are unique.
- *
- * Supersession symmetry is deliberately NOT checked. This repo supersedes ADRs
- * partially - ADR-0039 voided one clause of ADR-0030 and left the rest in force -
- * so a superseded ADR legitimately keeps `Status: Accepted` and records the change
- * in a dated Update block instead. No mechanical rule separates that from real rot,
- * so it stays a judgment call for the `docs` agent rather than a gate.
- */
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Defaults to this repo; an explicit root lets the test point it at a fixture.
 const repoRoot = process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), '../..');
 
-// These live in a consumer's generated repo, not here. The template's own
-// worktree helper already handles their absence.
 const CONSUMER_SCRIPTS = new Set(['link:oss', 'unlink:oss', 'oss:worktree', 'sync:agents']);
 
-// pnpm's own verbs, not scripts.
 const PNPM_BUILTINS = new Set(['install', 'exec', 'run', 'dlx', 'add', 'remove', 'why', 'setup']);
 
-// A backticked path is only checked when its first segment is a directory this
-// repo owns. `apps/api` and friends describe a consumer's generated repo, which
-// by design does not exist here.
 const CHECKED_PATH_ROOTS = ['packages/', 'tools/', '.rulesync/', 'docs/'];
 
-// This guide documents the repo the scaffolder generates, so most paths it
-// quotes are the consumer's, not ours. Its links are still checked.
 const DESCRIBES_ANOTHER_REPO = new Set(['docs/guides/downstream-consumer.md']);
 
 type Violation = { file: string; line: number; message: string };
@@ -99,7 +68,6 @@ const checkLinks = (file: string, lines: string[]) => {
 
   lines.forEach((line, index) => {
     for (const [, target] of line.matchAll(MARKDOWN_LINK)) {
-      // A leading `/` addresses the published docs site, not a repo path.
       if (/^(https?:|mailto:|#|\/)/.test(target)) {
         continue;
       }

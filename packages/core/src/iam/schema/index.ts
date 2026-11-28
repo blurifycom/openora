@@ -21,13 +21,8 @@ export const adminRole = pgTable(
   'admin_role',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Stable slug for predefined roles; null for operator-created roles.
-    // In Postgres NULL != NULL, so this unique index only deduplicates predefined slugs.
     key: text(),
-    // English fallback label; operators set it for custom roles. Localized display
-    // copy for predefined roles is resolved by `key` in the consumer (i18n), not stored.
     name: text().notNull(),
-    // System roles cannot be deleted; super-admin roles bypass all authz checks and cannot be stripped.
     isSystem: boolean().notNull().default(false),
     isSuperAdmin: boolean().notNull().default(false),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -41,8 +36,6 @@ export const adminRolePermission = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     roleId: uuid().notNull(),
     resource: text().notNull(),
-    // Sparse storage: absence of a row means `no_access`. The DEFAULT exists only to make
-    // ALTER TABLE ADD COLUMN safe on a populated table; the code never writes no_access rows.
     level: text({ enum: ['no_access', 'read', 'read_write'] })
       .notNull()
       .default('no_access'),
@@ -77,8 +70,6 @@ export const adminInvitation = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     email: text().notNull(),
     roleId: uuid().notNull(),
-    // SHA-256 hex of the invitation token. The plaintext exists only in the invitee's mail,
-    // so neither an API response nor a database read can hand anyone a redeemable link.
     tokenHash: text().notNull(),
     status: invitationStatusEnum('status').notNull().default('pending'),
     expiresAt: timestamp({ withTimezone: true }).notNull(),

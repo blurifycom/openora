@@ -1,6 +1,3 @@
-// The guard-comments hook keeps agent sessions from posting on a pull/merge request while still
-// letting them read threads and resolve the ones they fixed. Runs the repo copy and the consumer
-// template copy against the same allow and deny cases.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';

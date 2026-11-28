@@ -1,26 +1,4 @@
 #!/usr/bin/env node
-/**
- * Generates the platform CATALOG - the machine-readable surface a downstream
- * consumer's AI agent reads INSTEAD of grepping node_modules. Emits:
- *   docs/catalog.json               - structured, read by this repo's tooling and agents.
- *   packages/mcp/docs/catalog.json  - the same file, read at runtime by @openora/mcp: shipped in
- *                                     the published package, and resolved by a consumer running
- *                                     the server from a linked checkout.
- * Both are gitignored: generated on install (`prepare`), after a pull or branch switch (husky),
- * and by `pnpm regen`, so a committed copy can never go stale.
- * Human/agent-readable access is the MCP dev server (describe-module, list-routes)
- * plus each module's contract, schema, and plugin - no monolithic markdown dump.
- *
- * It captures: modules (+ tables + routes), adapter seams (+ wired-vs-stub
- * status), domain events, Zod schema index, the igaming-config shape,
- * the plugin-contract surface, and the agent surface (MCP tools + action types).
- *
- * Pure filesystem parsing - no package imports, no build - so it is cheap enough to run on every
- * install, and DETERMINISTIC (no timestamp).
- *
- * Run via `pnpm regen` (or `pnpm gen:catalog`). An optional first argument points it at
- * another repo root, which is how its tests run it against a fixture.
- */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +20,6 @@ function moduleSrcDirs(): ModuleSrc[] {
       return false;
     }
   };
-  // Domains fold into @openora/core as subpaths. See ADR-0024/0025.
   const coreSrc = join(repoRoot, 'packages', 'core', 'src');
   const engineDirs = new Set(['contracts', 'server', 'react']);
   if (existsSync(coreSrc)) {
@@ -52,7 +29,7 @@ function moduleSrcDirs(): ModuleSrc[] {
         continue;
       }
       if (hasPlugin(dsrc)) {
-        out.push({ id: d, domain: d, srcDir: dsrc }); // single-member domain (incl. compliance)
+        out.push({ id: d, domain: d, srcDir: dsrc });
       } else {
         for (const member of readdirSync(dsrc)) {
           const msrc = join(dsrc, member);
@@ -79,7 +56,7 @@ function walk(dir: string, ext: string, acc: string[] = []): string[] {
     try {
       st = statSync(full);
     } catch {
-      continue; // skip broken symlinks / vanished entries
+      continue;
     }
     if (st.isDirectory()) {
       walk(full, ext, acc);
@@ -92,12 +69,6 @@ function walk(dir: string, ext: string, acc: string[] = []): string[] {
 
 type ModuleInfo = { id: string; group: string; tables: string[]; routes: string[] };
 
-// A router nests related routes in plain object literals (`security: { me: os... }`), so a
-// route's id is its full dotted path from the router root, not just its own key - two
-// unrelated groups can otherwise both contribute a leaf key with the same name (`me`).
-// Tracked by indentation: each `key: {` line pushes a group onto the stack at its own
-// indent, popped once a later line dedents back to or past it. Blank lines are skipped
-// entirely so they never look like a dedent.
 function extractRoutes(moduleId: string, router: string): string[] {
   const stack: Array<{ indent: number; name: string }> = [];
   const routes: string[] = [];
@@ -143,8 +114,6 @@ type AdapterInfo = {
   boundIn: string[];
 };
 
-// Top-level member names of `export interface <name> {` or `export type <name> = {`
-// (two-space indented lines).
 function interfaceMembers(src: string, name: string): string[] {
   const start = src.search(new RegExp(`export (?:interface ${name}\\b[^{]*|type ${name} = )\\{`));
   if (!name || start < 0) {
@@ -158,8 +127,6 @@ function interfaceMembers(src: string, name: string): string[] {
 
 function collectAdapters(): AdapterInfo[] {
   const dir = join(repoRoot, 'packages', 'core', 'src', 'contracts', 'adapters');
-  // Scan every module plus the engine app factory, so platform-level default
-  // bindings (eg the in-process MESSAGE_BROKER seeded in create-app) count as wired.
   const moduleFiles = [
     ...moduleSrcDirs().flatMap(({ srcDir }) => walk(srcDir, '.ts')),
     ...walk(join(repoRoot, 'packages', 'core', 'src', 'server', 'runtime'), '.ts'),
@@ -181,8 +148,6 @@ function collectAdapters(): AdapterInfo[] {
     if (!token) {
       continue;
     }
-    // The token's type argument names the port; the first exported type is only a fallback,
-    // since adapter files declare their argument and result types above the interface.
     const iface =
       tokenMatch?.[2] ??
       tokenMatch?.[3] ??
@@ -209,8 +174,6 @@ function collectAdapters(): AdapterInfo[] {
   return out.sort((a, b) => a.category.localeCompare(b.category));
 }
 
-// Most events are emitted through helpers (outbox, typed wrappers), so a literal `.emit('x')`
-// scan alone misses them; the domainEventSchemas registry is the full list.
 function registeredEventNames(): string[] {
   const src = read(join(repoRoot, 'packages', 'core', 'src', 'contracts', 'schemas', 'events.ts'));
   const start = src.indexOf('export const domainEventSchemas = {');
@@ -233,7 +196,6 @@ function collectEvents(): string[] {
   return [...set].sort();
 }
 
-// Each module owns its route contract under contract/, so the schema index spans both the cross-cutting core contracts zone and every module contract dir. See ADR-0021.
 function collectSchemas(): Array<{ name: string; file: string }> {
   const out: Array<{ name: string; file: string }> = [];
   const roots = [join(repoRoot, 'packages', 'core', 'src', 'contracts')];
@@ -292,10 +254,6 @@ function collectPluginSurface(): string[] {
   return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1] ?? '').sort();
 }
 
-// The agent surface is read from the object literal passed to defineMcpTool({...}) /
-// defineActionType({...}), so the generator stays a text pass and never imports a module.
-// Only literal values are catalogued; a non-literal id is skipped with a warning.
-
 type AgentIam = { resource: string; action: string };
 
 type AgentToolInfo = {
@@ -319,14 +277,12 @@ type AgentActionInfo = {
   iam: AgentIam | null;
   reversible: boolean | null;
   benefitsPlayer: boolean | null;
-  // Null where the action type leaves it out, as the kernel's descriptor reads.
   benefitsPlayerWhen: AgentPayloadMatch | null;
   distinctBy: string | null;
 };
 
 type AgentPayloadMatch = { field: string; values: string[] };
 
-// A '/' after one of these characters or words starts a regex literal, not a division.
 const REGEX_PRECEDERS = '(,=:[!&|?{};>';
 const REGEX_PRECEDING_WORDS: ReadonlySet<string> = new Set([
   'return',
@@ -351,7 +307,6 @@ function startsRegex(prev: string, prevWord: string): boolean {
   return prev === '' || REGEX_PRECEDERS.includes(prev) || REGEX_PRECEDING_WORDS.has(prevWord);
 }
 
-// Tracks the identifier that ends right before position `i`, so `return /x/` reads as a regex.
 function nextWord(src: string, i: number, prevWord: string): string {
   const ch = src[i] ?? '';
   if (IDENTIFIER_CHAR.test(ch)) {
@@ -378,7 +333,6 @@ function skipString(src: string, start: number): number {
   return -1;
 }
 
-// A zod `.regex(/[^}]/)` inside a contract literal must not unbalance the brace count.
 function skipRegex(src: string, start: number): number {
   let inClass = false;
   for (let i = start + 1; i < src.length; i++) {
@@ -401,9 +355,6 @@ function skipRegex(src: string, start: number): number {
   return -1;
 }
 
-// Calls `visit` for every top-level character outside strings, comments and regex literals;
-// a nested bracket is visited at its opening character and then skipped whole. Returns false
-// when the text is unbalanced.
 function scanTopLevel(
   src: string,
   from: number,
@@ -465,8 +416,6 @@ function scanTopLevel(
   return true;
 }
 
-// The source with every comment blanked and every offset kept, so a call written inside a
-// comment (a JSDoc example) is never read as a registration.
 function withoutComments(src: string): string {
   const out = src.split('');
   let prev = '';
@@ -524,7 +473,6 @@ function closingBracket(src: string, open: number): number {
   return balanced ? found : -1;
 }
 
-// The object literal bodies passed as the first argument to `fnName(` or `fnName<...>(`.
 function callObjectArguments(src: string, fnName: string, file: string): string[] {
   const code = withoutComments(src);
   const out: string[] = [];
@@ -541,10 +489,8 @@ function callObjectArguments(src: string, fnName: string, file: string): string[
   return out;
 }
 
-// Comments and whitespace ahead of an entry or an element.
 const LEADING_COMMENTS = /^(?:\s*(?:\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/))*\s*/;
 
-/** `body` split on its top-level commas: never one inside a string, a comment or brackets. */
 function topLevelSegments(body: string): string[] {
   const segments: string[] = [];
   let start = 0;
@@ -614,7 +560,6 @@ function payloadMatchLiteral(value: string | undefined): AgentPayloadMatch | nul
   return field && values && values.length > 0 ? { field, values } : null;
 }
 
-/** A literal the kernel can serve, or null; a value given but not literal is warned about. */
 function optionalLiteral<T>(
   entries: Map<string, string>,
   key: string,

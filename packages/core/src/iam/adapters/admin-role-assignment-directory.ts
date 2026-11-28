@@ -31,8 +31,6 @@ export class DrizzleAdminRoleAssignmentDirectory implements AdminRoleAssignmentD
   async keepsAnotherActiveSuperAdmin(userId: string, tx: unknown): Promise<boolean> {
     const txn = tx as DrizzleTx;
     await lockSuperAdminManagement(txn);
-    // Read after the lock: under READ COMMITTED each statement sees every change committed
-    // before it began, so a competing change that held the lock is already visible here.
     const [held] = await txn
       .select({ id: adminRoleAssignment.id })
       .from(adminRoleAssignment)

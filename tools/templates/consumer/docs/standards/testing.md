@@ -69,13 +69,9 @@ replaced by a stub HTTP server the API is pointed at by env. It is the default t
   only restates the line above it. A spy may stand in for an outbound vendor call, never for the
   thing under test.
 
-```ts
-// bad - a mocked builder chain proves a call order, not a result
-const db = { select: vi.fn().mockReturnValue({ from: vi.fn().mockResolvedValue([row]) }) };
-expect(db.select).toHaveBeenCalled();
-// good - assert the outcome
-expect(await service.get(id)).toEqual(row);
-```
+A test asserts the outcome the caller sees, never the call order of a mocked builder chain. A
+service test reads the row back through the service against real Postgres; the harness and the
+stub-vendor helpers live under `@openora/testing`.
 
 ## How to write them
 

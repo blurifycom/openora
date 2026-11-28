@@ -53,5 +53,8 @@ Use pure, composable functions and explicit typed wiring. Match local naming and
 - Literal config arrays/objects (option lists, key sets) use `as const`, not an explicit union type annotation - let TypeScript infer the literal types.
 - No `any`, `interface`, decorators, reuse inheritance, suppressive casts, or default exports except `plugin.ts` and `drizzle.config.ts`.
 - Keep third-party access behind an owning adapter port. Do not import another module's internals or create cycles.
+- Zero comments in code, tests and config: no inline, block, JSDoc, `TODO`, `FIXME` or `mock:`. Meaning goes into names, types and tests; a reason goes into the commit, the PR or an ADR. Only machine-read directives survive, per `docs/standards/comments.md`.
+- Fix the root cause, in the same change, where every caller goes through. No workaround, call-site guard, retry, sleep, cast, flag or swallowed error that leaves the cause in place, and no note explaining one. Cannot fix it now: stop and ask.
+- Docs carry no code: no fenced blocks, snippets or examples, only references to files, functions and scripts, per `docs/standards/documentation.md`.
 - Do not hand-edit generated artifacts: migrations, `docs/catalog.json`, or per-tool agent mirrors.
 - State-changing work is transactional where its standard requires it. Money work is also idempotent with a durable database guard inside that transaction.

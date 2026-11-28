@@ -12,11 +12,6 @@ import { isGamePlayable, isRankDirty, rankDirtyPatch } from '../../shared/game-c
 
 const logger = createLogger('gaming');
 
-/**
- * Merges `pins` (gameId -> 0-based slot) into `order`: each pinned game claims its
- * slot, a slot past the end clamps to the tail (several such overflowing pins stack
- * there in ascending slot order), and a pin whose game isn't in `order` is ignored.
- */
 export function mergePinnedOrder(
   order: readonly string[],
   pins: ReadonlyMap<string, number>,
@@ -36,10 +31,6 @@ type RankClaim = Pick<GameCategory, 'rankSeq' | 'sortKey' | 'sortDirection' | 's
 
 const MAX_RANK_ATTEMPTS = 3;
 
-/**
- * Materializes a complete permutation with playable pins. Every attempt claims a
- * sequence; stale attempts retry from fresh input, failures preserve the last success.
- */
 export class GameSortRankingService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -69,8 +60,6 @@ export class GameSortRankingService {
     }
   }
 
-  // Claims only a dirty category, so a job queued behind one that already ranked the
-  // current version returns without recomputing.
   private async claim(categoryId: GameCategory['id']) {
     const [claim] = await this.drizzle.db
       .update(gameCategory)
@@ -108,9 +97,6 @@ export class GameSortRankingService {
 
     const ranked = await definition.rank({ categoryId, gameIds, direction, params });
 
-    // The definition's own order, sanitized to the category's actual members - a member
-    // it omitted (or duplicated) still gets a rank, appended after in original member
-    // order, rather than the old null "unranked" bucket.
     const memberIdSet = new Set(gameIds);
     const seen = new Set<string>();
     const definedOrder: string[] = [];
@@ -123,10 +109,6 @@ export class GameSortRankingService {
     const omittedOrder = gameIds.filter((id) => !seen.has(id));
     const fullOrder = [...definedOrder, ...omittedOrder];
 
-    // Pinning is relative to what a player can see - see the class docstring. A pin on a
-    // currently-unplayable member sits unused in the DB until the game (or its provider)
-    // becomes playable again and a re-rank picks it back up (the dirty-marking triggers
-    // in shared/game-catalog.ts cover every path that can flip playability).
     const playableIds = new Set(
       memberRows
         .filter((row) =>

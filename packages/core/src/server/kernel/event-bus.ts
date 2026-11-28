@@ -18,8 +18,6 @@ import {
   notePublishedTopic,
 } from './request-context.js';
 
-// How long a published event stays redeliverable: the Redis Streams retention, and the
-// age past which outbox and processed_events rows are pruned. See ADR-0045.
 export const EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 export type EventHandler<T = unknown> = (
@@ -28,53 +26,29 @@ export type EventHandler<T = unknown> = (
 ) => void | Promise<void>;
 
 export type SubscribeHandlerOptions = {
-  // Stable identity of this handler across restarts and replicas. When set, a
-  // redelivered event skips the handler once it has succeeded for that event.
   consumer?: string;
-  // Broker consumer group to subscribe in. Omitted: the broker's own default, one group per
-  // service. Services sharing a name compete for each event, so it is how a subscription
-  // runs once per deployment instead of once per service.
   consumerGroup?: string;
 };
 
-// Records which (eventId, consumer) pairs already ran to completion. A port so the
-// kernel stays ORM-free; the Drizzle implementation lives next to the outbox.
 export type ProcessedEventLog = {
   has(eventId: string, consumer: string): Promise<boolean>;
   record(eventId: string, consumer: string): Promise<void>;
 };
 
-// Typed app-facing event API. Services depend on this, never on the broker directly.
-// The optional second arg to handlers exposes the full envelope; existing (payload)-only
-// handlers continue to work unchanged.
 export type EventBus = {
-  // Best-effort, post-commit fan-out: the publish is fire-and-forget, so a broker
-  // outage loses the event. For informational and cache-invalidation events only.
-  // Throws synchronously when a known event's payload fails its schema.
   emit<K extends DomainEventName>(event: K, payload: DomainEventPayload<K>): void;
-  // Escape hatch for plugin-defined dynamic topics not in domainEventSchemas.
   emitRaw(event: string, payload: unknown): void;
-  // Durable, transaction-atomic emit. Call INSIDE a db.transaction, passing the
-  // transaction handle: the envelope is written to the outbox within `tx` and the
-  // OutboxRelay publishes it after commit, so the event exists if and only if the
-  // state change committed. Required for anything that reports a committed change on
-  // a money or compliance path. Rejects (rolling `tx` back) on an invalid payload.
   emitInTransaction<K extends DomainEventName>(
     tx: unknown,
     event: K,
     payload: DomainEventPayload<K>,
   ): Promise<void>;
-  // A handler that throws is retried by the broker and dead-lettered after repeated
-  // failures (see RedisStreamsBroker), so it must be idempotent.
   on<K extends DomainEventName>(
     event: K,
     handler: EventHandler<DomainEventPayload<K>>,
     options?: SubscribeHandlerOptions,
   ): () => void;
   on(event: string, handler: EventHandler, options?: SubscribeHandlerOptions): () => void;
-  // Runs `tap` inside every `emitInTransaction`, in its transaction, after the outbox write, so
-  // a record that must commit with the event (its audit row) does not wait for delivery. A tap
-  // that rejects rolls the emitter's transaction back.
   tapTransactional(tap: TransactionalTap): void;
 };
 
@@ -107,7 +81,6 @@ function buildEnvelope(event: string, payload: unknown): EventEnvelope {
   };
 }
 
-// Applies a known event's schema (defaults included); throws when the payload fails it.
 function parseKnownPayload(event: string, payload: unknown): unknown {
   if (!isKnownEvent(event)) {
     return payload;
@@ -120,7 +93,6 @@ function parseKnownPayload(event: string, payload: unknown): unknown {
   return result.data;
 }
 
-/** Typed facade over a MessageBrokerAdapter: validates payloads, builds the envelope, dedups handlers. */
 export function createEventBus({
   broker,
   outbox,

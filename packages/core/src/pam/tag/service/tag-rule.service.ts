@@ -73,7 +73,6 @@ export class TagRuleService {
       thresholdDays: input.thresholdDays,
       thresholdCount: input.thresholdCount,
     };
-    // Exclude the conflict-target column from the update set.
     const { tagId: _id, ...updateValues } = values;
     const row = findOneOrThrow(
       await this.drizzle.db

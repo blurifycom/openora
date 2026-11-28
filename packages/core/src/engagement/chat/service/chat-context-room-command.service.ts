@@ -21,16 +21,6 @@ type ContextRoomCommandDeps = {
   cards: ChatSystemCardService;
 };
 
-/**
- * Applies a command `OutboxChatContextRoomCommands` issued. Each converges on redelivery: ensure
- * creates the ref's room or returns it, adding members only to an open room, close sets the room
- * read-only once, and a post inserts on its `messageId` once, stamped with `issuedAt`.
- *
- * Commands are not applied in issue order. One that cannot apply yet or ever throws, so the
- * broker redelivers it and dead-letters it after its last delivery: a post or close for a ref
- * with no room yet (it waits for its ensure), an ensure naming another room id than the ref's
- * (rolled back, nobody joins), a post whose id names another message or whose room is deleted.
- */
 export async function applyContextRoomCommand(
   command: ContextRoomCommand,
   { drizzle, rooms, cards }: ContextRoomCommandDeps,

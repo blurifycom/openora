@@ -49,9 +49,6 @@ export function createBackofficeRouter(
       const before = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         backofficeService.getUser(input.userId),
       );
-      // `player:update` covers players only. Disabling, re-enabling or changing a staff
-      // account - a super-admin's included - and writing `user.role` (which grants staff
-      // status) are super-admin-only, or a junior staffer could lock out or promote others.
       if (before.role !== 'player' || input.role !== undefined) {
         await adminGuard.assertSuperAdmin(context);
       }

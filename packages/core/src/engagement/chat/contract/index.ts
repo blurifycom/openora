@@ -61,7 +61,6 @@ const QueryBooleanSchema = z.preprocess(
   z.boolean(),
 );
 
-// kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
 export const ChatRoomSlugSchema = z
   .string()
   .trim()
@@ -92,10 +91,8 @@ export const ChatRoomSchema = z.object({
   id: UuidSchema,
   name: z.string(),
   slug: z.string(),
-  // The synthetic __global room has no category; categorized rooms use the enum.
   category: ChatRoomCategorySchema.nullable(),
   isPublic: z.boolean(),
-  // Null for public rooms; populated for private rooms when the viewer is a member.
   joinCode: z.string().nullable(),
   creatorId: UuidSchema.nullable(),
   createdAt: TimestampSchema,
@@ -106,9 +103,7 @@ export const ChatRoomSchema = z.object({
 export type ChatRoom = z.infer<typeof ChatRoomSchema>;
 
 export const AdminChatRoomSchema = ChatRoomSchema.extend({
-  // Null for the global room: every player reads it without joining.
   memberCount: z.number().int().nonnegative().nullable(),
-  // Player messages that are not deleted, within the requested activityWindowHours.
   recentMessageCount: z.number().int().nonnegative(),
   lastMessageAt: TimestampSchema.nullable(),
 });
@@ -123,8 +118,6 @@ export const ChatRoomMemberSchema = z.object({
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
-// Payload of the CHAT_MEMBER_ROLE_CHANGED_SIGNAL realtime signal. Deliberately just the
-// identifiers and the new role: it tells a client what to refetch, it is not the roster.
 export const ChatMemberRoleChangedSignalSchema = z.object({
   roomId: UuidSchema,
   userId: UuidSchema,
@@ -146,9 +139,6 @@ export type ChatRoomScheduledForDeletionSignal = z.infer<
 export const ChatRoomClosedSignalSchema = z.object({ roomId: UuidSchema });
 export type ChatRoomClosedSignal = z.infer<typeof ChatRoomClosedSignalSchema>;
 
-// Envelope of the room channel's SIGNAL lane, served by `streamRoom`. `payload` stays
-// `unknown` because the vocabulary of names is open: a client parses the ones it asked for
-// (eg ChatMemberRoleChangedSignalSchema for `chat:member-role-changed`) and ignores the rest.
 export const ChatSignalSchema = z.object({ name: z.string(), payload: z.unknown() });
 export type ChatSignal = z.infer<typeof ChatSignalSchema>;
 
@@ -209,10 +199,7 @@ const UserChatMessageSchema = z.object({
   roomId: UuidSchema.nullable(),
   userId: UuidSchema,
   username: z.string(),
-  // Read live from the author's account, so it is current on every message, old ones included.
   avatarUrl: ChatAvatarUrlSchema,
-  // UNTRUSTED user text: profanity-gated and URL-defanged server-side but NOT HTML-escaped.
-  // Consumers MUST render as text or escape before injecting into HTML.
   content: z.string(),
   type: z.literal('user'),
   metadata: CommandMetadataSchema.nullable(),
@@ -271,8 +258,6 @@ export const IGNORED_USER_SORT_BY_VALUES = ['createdAt'] as const;
 export const IgnoredUserSortBySchema = z.enum(IGNORED_USER_SORT_BY_VALUES).default('createdAt');
 export type IgnoredUserSortBy = z.infer<typeof IgnoredUserSortBySchema>;
 
-// Backoffice-only, site-wide views (distinct from the per-caller BlockedUserSchema/
-// IgnoredUserSchema above): who blocked/ignored whom, across every user.
 export const AdminBlockedUserSchema = z.object({
   blockerId: UuidSchema,
   blockedId: UuidSchema,
@@ -287,7 +272,6 @@ export const AdminIgnoredUserSchema = z.object({
 
 export const ChatOnlineCountSchema = z.object({ count: z.number().int().min(0) });
 
-// `.loose()` keeps this an open union so a managed-vendor overlay (eg Ably) can return extra fields without a contract change.
 export const ChatConnectionGrantSchema = z
   .object({
     provider: z.string(),
@@ -317,12 +301,10 @@ export const ChatRoomRestrictionTypeSchema = z.enum(CHAT_ROOM_RESTRICTION_TYPES)
 export type ChatRoomRestrictionType = z.infer<typeof ChatRoomRestrictionTypeSchema>;
 export const ChatRoomRestrictionSourceSchema = z.enum(CHAT_ROOM_RESTRICTION_SOURCES);
 export type ChatRoomRestrictionSource = z.infer<typeof ChatRoomRestrictionSourceSchema>;
-// A room-moderator restriction reports scope `room` with its room id.
 export const ChatRoomRestrictionSchema = ChatModerationEntrySchema.extend({
   type: ChatRoomRestrictionTypeSchema,
   source: ChatRoomRestrictionSourceSchema,
   username: z.string().nullable(),
-  // Null for a room-moderator ban, which records no reason.
   reason: z.string().nullable(),
   setByName: z.string().nullable(),
   cooldownSeconds: z.number().int().positive().nullable(),
@@ -393,7 +375,6 @@ const RoomPostingConfigurationInputSchema = z.object({
   readOnlyMode: z.boolean().optional(),
 });
 export type RoomPostingConfigurationInput = z.infer<typeof RoomPostingConfigurationInputSchema>;
-// Strict, so a caller still sending the removed `userId` gets a 400, not every player's entries.
 const ModerationListInputSchema = z.strictObject({
   userIds: queryArraySchema(UuidSchema, CHAT_MODERATION_LOOKUP_MAX_USERS).optional(),
 });
@@ -500,7 +481,6 @@ export const chatContract = {
     .input(
       z.object({
         roomId: UuidSchema,
-        // Bounded so a caller cannot request an unbounded page.
         limit: z.number().int().min(1).max(100).optional(),
         before: z.iso.datetime({ offset: true }).optional(),
       }),
@@ -536,13 +516,13 @@ export const chatContract = {
     .input(ChatStreamInputSchema)
     .output(eventIterator(ChatRoomStreamEventSchema)),
 
-  /** @deprecated Use `streamRoom`, which carries this lane and the signal lane on one connection. */
+  /** @deprecated Use `streamRoom`. */
   streamMessages: oc
     .route({ method: 'GET', path: '/chat/stream', deprecated: true })
     .input(ChatStreamInputSchema)
     .output(eventIterator(ChatMessageSchema)),
 
-  /** @deprecated Use `streamRoom`, which carries this lane and the message lane on one connection. */
+  /** @deprecated Use `streamRoom`. */
   streamSignals: oc
     .route({ method: 'GET', path: '/chat/signals', deprecated: true })
     .input(ChatStreamInputSchema)
@@ -720,8 +700,6 @@ export const chatContract = {
     .input(RoomUserInput)
     .output(z.object({ success: z.literal(true) })),
 
-  // Grants and revokes the moderator role only - `owner` is deliberately not assignable
-  // here; ownership transfer is a separate route with its own rules.
   setMemberRole: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/members/{userId}/role' })
     .input(RoomUserInput.extend({ role: ChatRoomAssignableRoleSchema }))
@@ -783,7 +761,6 @@ export const chatContract = {
     )
     .output(ChatRoomSchema),
 
-  // Active restrictions set in the room plus the platform-wide scopes that cover its kind.
   adminListRoomRestrictions: oc
     .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}/restrictions' })
     .input(ListRoomRestrictionsInputSchema)

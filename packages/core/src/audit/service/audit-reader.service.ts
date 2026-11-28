@@ -12,9 +12,6 @@ const EMAIL_CHANGED = 'identity.email.changed';
 
 type Change = Omit<AuditEmailChange, 'queued'> & { eventId: string | null };
 
-// ponytail: seq scan of the outbox, fine while the shipper keeps it near empty; if a stalled
-// shipper makes these reads slow, add a partial index on (entry->>'resourceId') for email changes.
-// The key goes in as a literal so such an expression index can match.
 const queuedField = (key: 'action' | 'resourceType' | 'resourceId') =>
   sql`${auditOutbox.entry}->>${sql.raw(`'${key}'`)}`;
 const QUEUED_CHANGE = {
@@ -30,12 +27,6 @@ const CHAINED_CHANGE = {
   at: auditLog.createdAt,
 };
 
-/**
- * Reads `audit_outbox` in the caller's main-database transaction, then `audit_log` in the same
- * transaction or, when the chain has a database of its own, through that. The shipper deletes a
- * row only once it is chained, so the queued rows read first are either still queued or chained
- * by the time the log is read: those found in the log are dropped, and each record counts once.
- */
 export class AuditReaderService implements AuditReader {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -100,14 +91,11 @@ export class AuditReaderService implements AuditReader {
           .from(auditLog)
           .where(
             and(
-              // A literal, not a bound parameter, and the email expressions as the audit migration
-              // declares its partial indexes: only then can a generic plan prove it may use them.
               sql`${auditLog.action} = ${sql.raw(`'${EMAIL_CHANGED}'`)}`,
               or(
                 sql`lower(${auditLog.before}->>'email') = lower(${email})`,
                 sql`lower(${auditLog.after}->>'email') = lower(${email})`,
               ),
-              // Both clauses stay, since excluding by subject type alone would drop other accounts.
               or(ne(auditLog.resourceType, 'player'), ne(auditLog.resourceId, playerId)),
               or(ne(auditLog.resourceType, 'user'), ne(auditLog.resourceId, userId)),
             ),

@@ -15,9 +15,6 @@ import {
   FriendRequestNotFoundError,
 } from '../service/social.service.js';
 
-// oRPC router factory for Social. plugin.ts builds the service from the
-// container and passes it here; each procedure delegates to the service. Keep this
-// thin: resolve the caller, call the service, map domain errors - no business rules.
 export function createSocialRouter(social: SocialService) {
   const os = implement(socialContract)
     .$context<OssContext>()

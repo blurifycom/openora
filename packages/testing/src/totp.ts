@@ -1,9 +1,5 @@
 import { createHmac } from 'node:crypto';
 
-/**
- * RFC 4648 base32 decode (no padding) - just enough to turn the `secret` query
- * param of an `otpauth://` URI back into the raw bytes better-auth signed with.
- */
 function decodeBase32(input: string): Buffer {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   let bits = '';
@@ -21,12 +17,6 @@ function decodeBase32(input: string): Buffer {
   return Buffer.from(bytes);
 }
 
-/**
- * RFC 6238 TOTP, 30s step / 6 digits / SHA-1 - the defaults `otpOptions` in
- * `server/auth/auth.ts` leaves unconfigured, matching what better-auth itself
- * verifies. Computed straight from the secret rather than pulling in an OTP
- * library.
- */
 export function totpCode(base32Secret: string, atMs = Date.now()): string {
   const key = decodeBase32(base32Secret);
   const counter = Buffer.alloc(8);

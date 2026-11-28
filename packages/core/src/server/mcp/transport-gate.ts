@@ -44,9 +44,6 @@ export function servesHost(hostname: string, allowedHosts: readonly string[]) {
   return allowedHosts.includes(hostname.toLowerCase());
 }
 
-/**
- * An empty allow-list refuses every request that carries an Origin header.
- */
 export function originVerdict(
   origin: string | null,
   allowedOrigins: readonly string[],
@@ -83,10 +80,6 @@ async function consumeWindow(
   return rateLimitVerdict(await limiter.consume(key, { ...window, onUnavailable: 'deny' }));
 }
 
-/**
- * Consumes one request from the client address's minute window, failing closed when the
- * limiter is unreachable. A request whose address is unknown is not limited here.
- */
 export async function consumeAddressRateLimit(
   limiter: RateLimiterAdapter<RateLimitKey>,
   ip: ClientMeta['ip'],
@@ -101,11 +94,6 @@ export async function consumeAddressRateLimit(
   });
 }
 
-/**
- * Consumes one request from the token's minute window, then from its day window. Both fail
- * closed when the limiter is unreachable; a request the minute window refuses does not count
- * against the day.
- */
 export async function consumeTokenRateLimit(
   limiter: RateLimiterAdapter<RateLimitKey>,
   tokenId: Uuid,
@@ -151,9 +139,6 @@ export function methodNotAllowed() {
   );
 }
 
-/**
- * No `resource_metadata` in the challenge: it would send an MCP client into OAuth discovery.
- */
 export function bearerRequired() {
   return jsonRpcError(
     401,
@@ -192,9 +177,6 @@ export function rateLimitRefused(refusal: RateLimitRefusal) {
     : rateLimited(refusal.retryAfterSeconds);
 }
 
-/**
- * No WWW-Authenticate: the SDK client answers an `insufficient_scope` 403 by starting OAuth.
- */
 export function accessDenied() {
   return jsonRpcError(403, {
     code: JSON_RPC_SERVER_ERROR,

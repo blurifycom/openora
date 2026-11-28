@@ -1,7 +1,3 @@
-/**
- * Identity options token. Downstream operators can provide this to configure
- * identity behaviors such as login rate-limiting/lockouts.
- */
 import { createToken, type Token } from './token.js';
 
 export type IdentityLockoutOptions = {
@@ -11,17 +7,6 @@ export type IdentityLockoutOptions = {
   bypassForAdmins?: boolean;
 };
 
-/**
- * Coarse per-IP throttle on login attempts, separate from the per-account lockout
- * above. Protects against credential stuffing across many accounts from one source
- * (eg a botnet or a leaked-credential list), which the per-account counter can't see
- * because each guess lands on a different account. Must stay well above the
- * per-account threshold so a shared network (office NAT) never blocks legitimate
- * users signing into their own accounts.
- *
- * The IP is the socket peer, or the client address appended to X-Forwarded-For by one of
- * `createApp`'s explicitly configured `trustedProxies`.
- */
 export type IdentityLoginIpRateLimitOptions = {
   enabled?: boolean;
   limit?: number;
@@ -43,25 +28,12 @@ export type SessionCommands = {
 export const SESSION_COMMANDS: Token<SessionCommands> =
   createToken<SessionCommands>('SESSION_COMMANDS');
 
-/**
- * Writes to identity-owned user columns. Sibling modules may read `user` through the
- * `/schema` subpath but must mutate it here, so identity keeps its own invariants.
- */
 export type UserCommands = {
-  /** Throws if the handle is taken; comparison is case-insensitive. `tx` joins the caller's transaction. */
   setUsername(userId: string, username: string, tx?: unknown): Promise<{ success: boolean }>;
-  /**
-   * Creates a back-office user that signs in with this email and password. Throws `CONFLICT`
-   * with `data.reason: 'email_taken'` if any account holds the email. `tx` joins the caller's transaction.
-   */
   createAdmin(
     input: { email: string; name: string; password: string },
     tx?: unknown,
   ): Promise<{ id: string }>;
-  /**
-   * Writes the user's play eligibility to the ledger's projection on `tx`, after the caller
-   * changed an input to it (the player status), so both commit or roll back together.
-   */
   publishPlayEligibility(userId: string, tx: unknown): Promise<void>;
 };
 

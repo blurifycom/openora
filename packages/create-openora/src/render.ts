@@ -52,7 +52,6 @@ function isSet(flag: string | undefined): boolean {
   return flag !== undefined && ['1', 'true', 'yes'].includes(flag.trim().toLowerCase());
 }
 
-// Mirrors `isTelemetryEnabled` in core's server/runtime/telemetry.ts; change both together.
 export function isTelemetryEnabled(telemetry: boolean, env: NodeJS.ProcessEnv): boolean {
   return (
     telemetry &&
@@ -123,9 +122,6 @@ export function emitTree(srcRoot: string, vars: Record<string, string>, targetDi
   }
 }
 
-// Operator coordinates the agent files reference. A fresh scaffold gets placeholders;
-// the consumer fills them in once in .rulesync/sync.json and `pnpm sync:agents`
-// re-renders every template-owned file from them.
 export function buildVars(name: string, versions: Record<string, string>): Record<string, string> {
   return {
     name,
@@ -140,8 +136,6 @@ export function buildVars(name: string, versions: Record<string, string>): Recor
     teamChannel: '#<your-team-channel>',
     gitRemotePath: '<group>/<repo>',
     ossDir: '../openora',
-    // Only meaningful once the consumer links a local platform checkout; until then the
-    // guard-core hook simply never matches.
     ossFromRoot: '../openora',
     mrTarget: 'dev',
   };

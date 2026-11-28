@@ -4,13 +4,6 @@ import type { ContextRoomCommand } from './chat-context-room-command.service.js'
 
 const NOTHING_AFTER_COMMIT = { afterCommit: async () => {} };
 
-/**
- * `CHAT_CONTEXT_ROOM_COMMANDS` for a service that does not run chat: each write is a
- * `chat.context_room.command_issued` event on the caller's transaction, so the room changes if
- * and only if the caller's own write committed. Without a `tx` it writes the event in a
- * transaction of its own. Chat publishes once it has applied the command; commands are not
- * applied in issue order (see `ChatContextRoomCommands`).
- */
 export class OutboxChatContextRoomCommands implements ChatContextRoomCommands {
   constructor(
     private readonly events: EventBus,

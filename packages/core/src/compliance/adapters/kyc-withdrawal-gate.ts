@@ -11,13 +11,6 @@ import {
   GLOBAL_KYC_ENABLED_DEFAULT,
 } from '../schema/index.js';
 
-/**
- * The compliance-owned implementation of `KYC_WITHDRAWAL_POLICY`. Fail-closed: a withdrawal or
- * a deposit currency that cannot be priced into the pivot requires KYC, and a failed deposits
- * read rejects, which refuses the request and leaves an auto-approval to a human.
- *
- * Country exemptions need no check here: an exempt player is approved at registration.
- */
 export class KycWithdrawalGate implements KycWithdrawalPolicy {
   constructor(
     private readonly drizzle: DrizzleService,

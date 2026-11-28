@@ -3,36 +3,12 @@ import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
 import { DEFAULT_PAYMENT_PROVIDER } from '@openora/core/contracts';
 import type { Wallet, WalletJobRun, WalletReconciliationFinding } from '../schema/index.js';
 
-/**
- * The ledger invariant: per (wallet, currency), the balance a wallet holds equals its latest
- * baseline (zero when it has none) plus the real-balance effect of every ledger row after it.
- * Each statement below reads one snapshot, so a bet or win committing meanwhile is either wholly
- * in it (row and balance) or wholly out. Nothing here takes a lock or writes a balance; the only
- * writes are baseline rows, an append-only history whose latest `as_of` is the one in force.
- *
- * A row's effect, as the code that writes it moves the balance:
- * - deposit: +amount once `completed`; pending, failed, held and refunded ones never credited.
- * - withdrawal: -amount from the request on; `failed`/`rejected` put it back, except a failure
- *   an admin settled by hand with a manual credit to the same wallet (an `unknown_at_provider`
- *   finding resolved that way), which returns nothing because the manual credit row carries the
- *   money.
- * - swap_out: -amount from the request on; `failed` puts it back, except one an admin settled by
- *   hand with a manual credit (a `stuck_swap` finding resolved that way), for the same reason.
- * - anything else: only when `completed`, signed by `direction`, by `real_share` when set (a
- *   bonus-split bet, win or reversal moves the real balance by that part only) else `amount`.
- */
 const TERMINAL_STATUSES = sql.raw(`('completed', 'failed', 'rejected', 'cancelled', 'refunded')`);
 
-/** The provider a swap leg is filed under when the desk gave it none. */
 export const SWAP_DESK_PROVIDER_LABEL = 'swap-desk';
 
-/** Findings the platform files about its own ledger, not about a vendor's report. */
 export const LEDGER_FINDING_LABEL = 'ledger';
 
-// The finding of an `unknown_at_provider` withdrawal or a `stuck_swap` is filed under the held
-// row's provider and reference, or its id when it had none yet (a reference may land after);
-// resolving it overwrites the finding's transaction id with the manual credit, so the key is the
-// only link back to the held row.
 const settledByHand = (kind: 'unknown_at_provider' | 'stuck_swap', defaultProvider: string) =>
   sql`exists (
   select 1 from wallet_reconciliation_finding f
@@ -60,10 +36,6 @@ const effect = sql`case
   else -coalesce(t.real_share, t.amount)
 end`;
 
-// A row that moved money by an amount nothing on it records: written before `balance_after`
-// (and with it a win's `real_share`), before `direction`, or a bet from before bets recorded
-// their real part that emptied the balance (it may have been bonus-split). A correction's `bet`
-// re-collects from the real balance only, so emptying it says nothing about a bonus split.
 const unpriced = sql`(t.amount <> 0 and (${moves}) and (
   t.balance_after is null
   or (t.type not in ('deposit', 'withdrawal', 'swap_out') and t.direction is null)
@@ -72,11 +44,6 @@ const unpriced = sql`(t.amount <> 0 and (${moves}) and (
 
 const pairRows = sql`t.wallet_id = p.wallet_id and upper(t.currency) = p.currency`;
 
-/**
- * What the pair `p` held at `asOf` by the ledger's own stamps: the last `balance_after` of a row
- * that moved money at or before it, carried forward by the rows after that one. No row when
- * nothing was stamped.
- */
 function stampedEstimate(asOf: SQL): SQL {
   return sql`(
     select r.balance_after + (
@@ -90,7 +57,6 @@ function stampedEstimate(asOf: SQL): SQL {
       order by t.created_at desc, t.id desc limit 1) r)`;
 }
 
-/** Sum of effects and count of unpriced rows for the pair `p`, over rows after `asOf`. */
 function ledgerAfter(asOf: SQL): SQL {
   return sql`(
     select coalesce(sum(${effect}), 0) as total, count(*) filter (where ${unpriced}) as unpriced
@@ -98,20 +64,13 @@ function ledgerAfter(asOf: SQL): SQL {
     where ${pairRows} and (${asOf} is null or t.created_at > ${asOf}))`;
 }
 
-/** The baseline in force for the pair `p`: the latest one. */
 const latestBaseline = sql`(
   select bl.id, bl.amount, bl.as_of from wallet_balance_baseline bl
   where bl.wallet_id = p.wallet_id and bl.currency = p.currency
   order by bl.as_of desc, bl.created_at desc limit 1)`;
 
-// ponytail: assumes no wallet transaction stays uncommitted longer than this. One that did,
-// started before the cut and committed after the snapshot, would land in neither the baseline
-// nor the rows after it. A commit-ordered sequence on the ledger would remove the assumption.
 const BASELINE_GRACE = sql.raw(`interval '1 hour'`);
 
-// The latest point a baseline may sit at for the pair `p`: an hour back, and before its oldest
-// row still in a non-terminal status, so every row at or before it is final and never moves
-// money again.
 const cut = sql`least(now() - ${BASELINE_GRACE}, (
   select min(o.created_at) - interval '1 microsecond' from wallet_transaction o
   where o.wallet_id = p.wallet_id and upper(o.currency) = p.currency
@@ -123,16 +82,10 @@ function balancePage(afterId: string | null, limit: number): SQL {
     order by b.id limit ${limit}`;
 }
 
-/** The finding key every ledger finding about one (wallet, currency) pair starts with. */
 export function ledgerPairKey(walletId: Wallet['id'], currency: string): string {
   return `wallet:${walletId}:${currency}`;
 }
 
-/**
- * A breach is keyed on the baseline it was measured from and the drift, which play after it
- * leaves unchanged: a rerun files nothing new, while a further, different error does, and so
- * does the same error again once a clean check has moved the baseline on.
- */
 export function ledgerBreachKey(
   walletId: Wallet['id'],
   currency: string,
@@ -142,10 +95,6 @@ export function ledgerBreachKey(
   return `${ledgerPairKey(walletId, currency)}:${baselineId ?? 'none'}:${drift}`;
 }
 
-/**
- * A pair nothing can check yet, keyed on the baseline in force: a pair that is checked again
- * and later falls back to unchecked is filed anew, not matched to the closed finding.
- */
 export function ledgerUncheckedKey(
   walletId: Wallet['id'],
   currency: string,
@@ -154,7 +103,6 @@ export function ledgerUncheckedKey(
   return `${ledgerPairKey(walletId, currency)}:${baselineId ?? 'none'}`;
 }
 
-/** A backfill whose amount disagrees with the balance the ledger last stamped. */
 export function backfillMismatchKey(
   walletId: Wallet['id'],
   currency: string,
@@ -163,10 +111,6 @@ export function backfillMismatchKey(
   return `${ledgerPairKey(walletId, currency)}:backfill:${drift}`;
 }
 
-/**
- * An unchecked pair's detail, carrying the balance it held when filed: the key does not, so a
- * rerun still dedups onto it, and a re-baseline later shows what that balance became.
- */
 export function ledgerUncheckedDetail(
   pair: Pick<LedgerPairCheck, 'walletId' | 'currency' | 'balance' | 'unpricedRows'>,
 ): string {
@@ -175,7 +119,6 @@ export function ledgerUncheckedDetail(
 
 const BALANCE_AT_FILING = /\(balance at filing: (-?\d+(?:\.\d+)?)\)$/;
 
-/** The balance an unchecked pair held when filed, null for one filed before it was recorded. */
 export function parseBalanceAtFiling(detail: string | null): string | null {
   return (detail === null ? null : BALANCE_AT_FILING.exec(detail)?.[1]) ?? null;
 }
@@ -183,7 +126,6 @@ export function parseBalanceAtFiling(detail: string | null): string | null {
 const PAIR_KEY = /^wallet:([0-9a-f-]{36}):([^:]+)(?::|$)/;
 const BREACH_KEY = /^wallet:[0-9a-f-]{36}:[^:]+:([0-9a-f-]{36}|none):(-?\d+(?:\.\d+)?)$/;
 
-/** The pair a ledger finding is about, read back from its key. */
 export function parseLedgerPairKey(
   externalId: string | null,
 ): { walletId: string; currency: string } | null {
@@ -191,7 +133,6 @@ export function parseLedgerPairKey(
   return match?.[1] && match[2] ? { walletId: match[1], currency: match[2] } : null;
 }
 
-/** The baseline a breach was measured from and its signed drift, read back from its key. */
 export function parseLedgerBreachKey(
   externalId: string | null,
 ): { baselineId: LedgerPairCheck['baselineId']; drift: string } | null {
@@ -205,7 +146,6 @@ export function parseLedgerBreachKey(
 const UNCHECKED_KEY =
   /^wallet:[0-9a-f-]{36}:[^:]+:(?:([0-9a-f-]{36}|none)|backfill:(-?\d+(?:\.\d+)?))$/;
 
-/** What an unchecked finding was filed against, read back from its key. */
 export function parseLedgerUncheckedKey(
   externalId: string | null,
 ): { baselineId: LedgerPairCheck['baselineId'] } | { backfillDrift: string } | null {
@@ -216,11 +156,9 @@ export function parseLedgerUncheckedKey(
   return match?.[2] ? { backfillDrift: match[2] } : null;
 }
 
-// Same shape as `ledgerBreachKey`, built in SQL for the pair `c`.
 const breachKeyPrefix = sql`'wallet:' || c.wallet_id || ':' || c.currency || ':'
   || coalesce(c.baseline_id::text, 'none') || ':'`;
 
-/** Each pair of `pairs` beside its baseline in force and what its ledger adds up to from it. */
 function checkedPairs(pairs: SQL): SQL {
   return sql`select p.id, p.wallet_id, p.currency, p.amount as balance, bl.id as baseline_id,
       bl.as_of as base_as_of, coalesce(bl.amount, 0) + l.total as expected, l.unpriced,
@@ -237,19 +175,10 @@ export type LedgerPairCheck = {
   balance: string;
   expected: string;
   unpricedRows: number;
-  /** The baseline `expected` starts from, null when the pair has none. */
   baselineId: string | null;
-  /** The baseline the check moved the pair to when it came out clean, else null. */
   advancedTo: string | null;
 };
 
-/**
- * One page of wallet balances, each beside what its ledger adds up to. A pair that comes out
- * clean has its baseline moved to the cut, priced from the ledger alone (the old baseline plus
- * the rows up to the cut), never from the balance: the rows it absorbs are final and were just
- * shown to add up. It moves only when there is something to absorb, or when a breach was filed
- * against the baseline in force, so the same error coming back later is filed again.
- */
 export async function checkLedgerPage(
   db: DrizzleDb,
   afterId: string | null,
@@ -306,15 +235,9 @@ export async function checkLedgerPage(
 }
 
 export type LedgerPairState = Pick<LedgerPairCheck, 'baselineId' | 'unpricedRows'> & {
-  /** Balance less what the ledger adds up to, signed. */
   drift: string;
 };
 
-/**
- * Locks a pair's balance row on its own statement. A lock taken inside the statement that sums the
- * ledger would, after waiting out a bet, read the bet's new balance beside the ledger as it stood
- * before the bet; the next statement sees both.
- */
 async function lockBalanceRow(txn: DrizzleTx, walletId: Wallet['id'], currency: string) {
   await txn.execute(sql`
     select 1 from wallet_balance
@@ -322,11 +245,6 @@ async function lockBalanceRow(txn: DrizzleTx, walletId: Wallet['id'], currency: 
     for update`);
 }
 
-/**
- * One pair checked now, as a run checks it, for an admin resolving a finding about it. Locks the
- * pair's balance row until the caller's transaction ends, so nothing moves the drift between
- * this check and what the resolution does about it. Null when the pair holds no balance.
- */
 export async function lockAndCheckLedgerPair(
   txn: DrizzleTx,
   walletId: Wallet['id'],
@@ -348,12 +266,6 @@ export async function lockAndCheckLedgerPair(
     : null;
 }
 
-/**
- * The backfill's cross-check of one pair now, for an admin resolving a flagged backfill: the
- * balance less the rows after the cut, less what the ledger's stamps carry forward to at the cut
- * (null when nothing was stamped), beside the baseline in force. Locks the balance row as
- * `lockAndCheckLedgerPair` does. Null when the pair holds no balance.
- */
 export async function lockAndEstimateBackfill(
   txn: DrizzleTx,
   walletId: Wallet['id'],
@@ -380,23 +292,12 @@ export type BackfillMismatch = {
   estimate: string;
 };
 
-// A pair whose backfill was flagged stays unbaselined until a super admin resolves the finding: a
-// later stamp written off the wrong balance would otherwise agree with it and make it the zero.
 const heldByBackfillMismatch = sql`exists (
   select 1 from wallet_reconciliation_finding f
   where f.kind = 'ledger_invariant_unchecked' and f.provider_name = ${LEDGER_FINDING_LABEL}
     and f.status = 'open'
     and starts_with(f.external_id, 'wallet:' || p.wallet_id || ':' || p.currency || ':backfill:'))`;
 
-/**
- * Baselines one page of (wallet, currency) pairs whose history holds an unpriced row and that
- * have no baseline yet, at the cut. A pair with an unpriced row after the cut cannot be
- * baselined and is counted as skipped. The amount (the balance less every row after the cut)
- * is cross-checked against the last `balance_after` the ledger stamped at or before the cut,
- * carried forward by the rows between: a pair where the two disagree is returned as a mismatch
- * and not baselined, because a baseline over a wallet already wrong makes its error the new zero.
- * Inserts only; a pair already baselined, or held by a mismatch still open, is left as it is.
- */
 export async function backfillBaselinePage(
   db: DrizzleDb,
   afterId: string | null,
@@ -479,19 +380,10 @@ export type BaselineMove = {
   before: BaselinePoint | null;
   after: BaselinePoint;
   balance: string;
-  /** What the ledger's own stamps carry forward to at the new baseline, null when none. */
   estimate: string | null;
-  /** The new baseline less that estimate: what the re-baseline vouches for beyond the stamps. */
   mismatch: string | null;
 };
 
-/**
- * Re-baselines one pair at the balance it holds now, for a super admin resolving a ledger
- * finding against it: the new baseline sits at the cut (never before the one in force) at the
- * balance less every row after it, linked to the finding, beside the backfill's cross-check
- * against the ledger's stamps for the record. Null when a row after the cut is unpriced, so
- * nothing could be baselined.
- */
 export async function rebaselinePair(
   db: DrizzleDb | DrizzleTx,
   walletId: Wallet['id'],

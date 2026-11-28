@@ -3,7 +3,6 @@ import type { DrizzleDb } from '@openora/core/server';
 import { tag, tagRule } from '../schema/index.js';
 import { DEFAULT_TAG_RULES } from './data/default-tag-rules.js';
 
-/** Idempotently seeds the default tag rules. Re-running updates isEnabled; thresholds are not overwritten so operator values are preserved. */
 export async function seedTagRules(db: DrizzleDb): Promise<void> {
   const tags = await db.select({ id: tag.id, key: tag.key }).from(tag);
   const tagIdByKey = new Map(tags.map((t) => [t.key, t.id]));

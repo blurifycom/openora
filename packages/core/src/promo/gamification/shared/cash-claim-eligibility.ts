@@ -11,8 +11,6 @@ const CLAIM_BLOCKED_STATUSES = ['suspended', 'closed'] as const;
 
 export type CashClaimBlocker = RankRewardClaimBlocker;
 
-/**
- */
 export async function cashClaimBlocker(
   db: DrizzleDb | DrizzleTx,
   ledger: LedgerPlayEligibilityPort | undefined,
@@ -54,11 +52,6 @@ export async function autoPayoutCandidates(
   });
 }
 
-/**
- * Whether a player's unclaimed cash is paid without a claim: a closed account or a
- * self-exclusion. An RG block is also a cooling-off, which keeps the cash for the player to claim
- * later.
- */
 export async function isDueForAutoPayout(
   exclusions: RgExclusionReader | undefined,
   userId: Uuid,

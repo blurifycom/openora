@@ -25,7 +25,6 @@ import { isAtThreshold, thresholdPct } from './rg-eval.js';
 
 const logger = createLogger('compliance-rg-monitoring');
 
-/** Every sportsbook money leg moves loss-limit spend, an admin debt collect included, so each one re-evaluates the thresholds. */
 export const SPORTSBOOK_RG_EVAL_TOPICS = [
   'sportsbook.bet.placed',
   'sportsbook.bet.cancelled',
@@ -33,7 +32,6 @@ export const SPORTSBOOK_RG_EVAL_TOPICS = [
   'sportsbook.bet.reopened',
   'sportsbook.debt.changed',
 ] as const;
-// The recompute trigger carried on the enqueued job - which upstream event fired.
 export const RG_EVAL_TRIGGERS = [
   'wallet.deposit.completed',
   'gaming.round.ended',
@@ -45,8 +43,6 @@ export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 
 const SESSION_LIMIT = { type: 'session', period: 'session' } as const;
 
-// Cap in-flight flag writes per sweep so a large session-limit population can't exhaust the
-// shared pg pool. ponytail: fixed cap; raise only if a single sweep can't keep up.
 const SWEEP_CONCURRENCY = 10;
 
 export type RgMonitoringDeps = {
@@ -69,8 +65,6 @@ export class RgMonitoringService {
   async evaluateUser(userId: User['id'], trigger: RgEvalTrigger) {
     const now = new Date();
     if (trigger === 'rg.exclusion.login_blocked') {
-      // Label the flag with the exclusion kind so dashboards distinguish a cooling-off
-      // login attempt from a self-exclusion one.
       const active = await this.drizzle.db
         .select({ kind: rgExclusion.kind })
         .from(rgExclusion)
@@ -93,7 +87,6 @@ export class RgMonitoringService {
       .where(eq(userLimit.userId, userId));
 
     for (const limit of limits) {
-      // Money-type limits only (deposit/wager/loss); the session-type limit is handled by sweep().
       if (limit.period === 'session' || limit.type === 'session' || limit.amount === null) {
         continue;
       }
@@ -123,8 +116,6 @@ export class RgMonitoringService {
         );
         continue;
       }
-      // Threshold comparison is a review-flag decision, not a ledger write - moneyToNumber
-      // is the documented single conversion point (see the helper's own doc comment).
       if (isAtThreshold(moneyToNumber(actualAmount), moneyToNumber(limitAmount))) {
         await this.raiseFlag(userId, 'limit_threshold', limit.type, {
           actual: actualAmount,
@@ -138,9 +129,6 @@ export class RgMonitoringService {
     }
   }
 
-  // Recurring session-time sweep: raises session_time flags for players whose current
-  // active session is at >= 80% of their configured session-minute limit, and clears
-  // flags for players who have since ended or rolled over their session.
   async sweep() {
     const now = new Date();
     const sessionLimits = await this.drizzle.db
@@ -251,12 +239,6 @@ export class RgMonitoringService {
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  /**
-   * Spend counted against one money limit inside its period window, converted into
-   * `limitCurrency` and returned as a decimal string. The ledger owns the query (ADR-0057).
-   * Throws `RgRateUnavailableError` when a source currency has no available conversion rate,
-   * rather than treating that group as zero.
-   */
   spendFor(
     db: DrizzleDb | DrizzleTx,
     userId: User['id'],

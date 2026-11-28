@@ -15,8 +15,6 @@ export { InvitationStatusSchema, PermissionLevelSchema } from '@openora/core/con
 
 export const AdminRoleSchema = z.object({
   id: UuidSchema,
-  // Stable slug for predefined roles (null for custom); the consumer maps it to
-  // localized display copy. `name` is an English fallback / custom-role label.
   key: z.string().nullable(),
   name: z.string(),
   isSystem: z.boolean(),
@@ -24,7 +22,6 @@ export const AdminRoleSchema = z.object({
   createdAt: TimestampSchema,
 });
 
-// A missing module entry means no_access; only non-no_access cells are stored.
 export const RolePermissionLevelSchema = z.object({
   resource: z.string(),
   level: PermissionLevelSchema,
@@ -46,7 +43,6 @@ export const AdminRoleAssignmentDetailSchema = AdminRoleAssignmentSchema.extend(
   roleKey: z.string().nullable(),
 });
 
-// Carries no token: the redeemable link goes only to the invitee, by mail, once.
 export const AdminInvitationSchema = z.object({
   id: UuidSchema,
   email: z.email(),

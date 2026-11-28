@@ -1,7 +1,3 @@
-/**
- * Wallet command port: another module moves money on the caller's own `tx`, so the move is
- * atomic with the caller's writes yet the modules stay decoupled and independently extractable. ADR-0017.
- */
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 import type { WagerContext } from './wager-context.js';
@@ -13,7 +9,6 @@ import type { AddTurnoverRequirementArgs, AddTurnoverRequirementResult } from '.
 export type WalletProviderRef = {
   providerName: string;
   providerRefId: string;
-  /** RG spend nets a round's legs by this id; a leg without one never offsets a stake. */
   externalRoundId?: string;
   responseSnapshot?: unknown;
 };
@@ -22,42 +17,20 @@ export type WalletDebitArgs = {
   userId: string;
   amount: string;
   type: WalletTransactionType;
-  /** Which of the player's balances to take from. Omit it and the debit falls on the player's active currency (`wallet.currency`). */
   currency?: string;
   providerRef?: WalletProviderRef;
-  /**
-   * What the bet was placed on, when this debit is one. The bonus engine resolves a wagering
-   * weight from it and gamification counts qualifying wagers off it, so a provider seam that
-   * drops it silently stops both. Absent for a debit that is not a bet (a withdrawal, a swap).
-   */
   context?: WagerContext;
 };
 
-/**
- * `moved: true` means this call changed the balance and wrote the `wallet_transaction` row
- * `transactionId` names; the caller emits `wallet.balance.changed` with it once its own
- * transaction commits, since this port never emits it itself (see WalletCommandsService).
- * `moved: false` is a success that moved nothing: the informational `loss` row or a
- * replayed `providerRef`.
- */
 export type WalletDebitOutcome =
   | {
       ok: true;
       moved: true;
       transactionId: string;
-      /** Real balance after the debit. Bonus funds are not part of it - they live on the grant. */
       newBalance: string;
       currency: string;
-      /** Part of the stake paid out of bonus funds, as a decimal string. Absent when none was. */
       bonusSpent?: string;
-      /** Bonus funds left across the player's active grants in this currency; `'0'` when the bet was attributed to none. */
       bonusBalance?: string;
-      /**
-       * Whatever `WAGER_TRACKING` credited to the real balance alongside this bet (rank rakeback),
-       * inside the same transaction. Empty when nothing was. The caller emits `wallet.balance.
-       * changed` for each once its own transaction commits, the same rule it follows for the bet
-       * debit itself - this port never emits it.
-       */
       wagerTrackingCredits?: WagerTrackingWalletCredit[];
     }
   | {
@@ -65,96 +38,40 @@ export type WalletDebitOutcome =
       moved: false;
       newBalance: string;
       currency: string;
-      /** The row a replay answered from. Not a move: never emit `wallet.balance.changed` for it. */
       replayedTransactionId?: string;
-      /** Grants a `loss` closing their last open round completed, already converted. */
       completed?: BonusCompletion[];
     }
-  /**
-   * `available` is the most this bet could have staked: the real balance plus the bonus funds that
-   * could cover it, less any bucket its bet class may not use (so it can be below the real balance).
-   */
   | { ok: false; available: string };
 
 export type WalletCreditArgs = {
   userId: string;
   amount: string;
   currency: string;
-  /**
-   * A `gift`/`rain`/`donation` credit follows `wallet.transferCredits`. In `'bonus_grant'` mode
-   * (the default) it is a bonus grant whose source is this type, answers `moved: false`, and
-   * writes no ledger row. In `'cash'` mode it is a ledger credit of this type on the real balance,
-   * answers `moved: true` with its `transactionId`, and adds a turnover requirement when the type
-   * is in `wallet.turnover.creditTypes`. Cash mode locks each recipient's wallet row, so a caller
-   * moving money between players first calls `lockWallets` with the sender and every recipient,
-   * then credits the recipients in ascending `userId` order. A new transfer
-   * type must be in `WALLET_TRANSACTION_TYPES`, in `BONUS_GRANT_SOURCES` and in the wallet's
-   * transfer check, or the credit is written as plain cash; the notifications plugin also skips
-   * the bonus-credited email only for those three sources.
-   */
   type: WalletTransactionType;
-  /** Allow crediting a currency the player does not hold a balance in yet, creating the `wallet_balance` row. Off by default. */
   allowNewCurrency?: boolean;
-  /** Allow crediting a player who has no `wallet` row at all yet, creating it in the caller's transaction. Off by default. */
   allowNewWallet?: boolean;
-  /**
-   * Required for a `gift`/`rain`/`donation` credit: `providerRefId` is its idempotency key. A
-   * bonus grant matches it per recipient and type without `providerName`, so it must be unique per
-   * transfer across provider names; a cash ledger row matches it per recipient, type and
-   * `providerName`. Such a credit returns `{ ok: false }` rather than throwing for
-   * "wallet not found" and "currency mismatch", so a caller that has already debited the sender
-   * in the same transaction must throw on `ok: false` to roll that debit back. Also required for a
-   * `referral_reward` credit, whose replay it is: a retried payout with the same ref books nothing.
-   */
   providerRef?: WalletProviderRef;
-  /**
-   * Terms a `gift`/`rain`/`donation` credit's underlying bonus grant is created under in
-   * `'bonus_grant'` mode. Ignored in `'cash'` mode and by any other credit type. Omit it and the grant falls back to the bonus module's own default
-   * terms.
-   */
   terms?: BonusGrantTerms;
-  /**
-   * A `bet_reversal` only: the bet row it returns, a completed `bet` debit of this wallet with the
-   * same `providerName` and `externalRoundId`, and no less than `amount`. A bet is reversed at
-   * most once, so a second reversal naming it answers `WALLET_BET_ALREADY_REVERSED`. Name it
-   * whenever the bet is known: an unnamed reversal is only accepted on a round of this wallet
-   * that still holds that much unreversed stake.
-   */
   reversesTransactionId?: string;
-  /** A `win` or `bet_reversal` the provider marked as its round's last result. */
   closesRound?: boolean;
 };
 
-/**
- * The `reason` of a `bet_reversal` credit refused because its bet was already reversed: it named
- * a bet another reversal named, or the round's reversals would exceed its stakes.
- */
 export const WALLET_BET_ALREADY_REVERSED = 'bet already reversed';
 
-/**
- * The `reason` of a `bet_reversal` credit that matches no stake: it named a row that is not a
- * completed bet of this wallet's round (or not a uuid), or more than that bet, or it named no bet
- * and carries no round id or one with no stake in its currency. With bonus wagering on, any
- * reversal with no round id. Final: a retry gets the same answer, so a bridge maps it to a code
- * its provider does not retry.
- */
 export const WALLET_REVERSAL_UNMATCHED = 'bet reversal matches no stake';
 
-/** `moved` as on `WalletDebitOutcome`; `moved: false` is a replayed `providerRef`. */
 export type WalletCreditOutcome =
   | {
       ok: true;
       moved: true;
       transactionId: string;
       newBalance: string;
-      /** Bonus grants this settlement completed, already converted into the real balance. */
       completed?: BonusCompletion[];
     }
   | {
       ok: true;
       moved: false;
       newBalance: string;
-      /** The row a replay answered from. Not a move: never emit `wallet.balance.changed` for it. */
       replayedTransactionId?: string;
     }
   | { ok: false; reason: string };
@@ -165,14 +82,9 @@ export type WalletCloseRoundArgs = {
   providerRef: { providerName: string; externalRoundId: string };
 };
 
-/** Debit types a correction may take back: a reversed payout, or the stake of a voided bet a reopen puts back in play. */
 export const WALLET_CORRECTION_DEBIT_TYPES = ['win_reversal', 'bet'] as const;
 export type WalletCorrectionDebitType = (typeof WALLET_CORRECTION_DEBIT_TYPES)[number];
 
-/**
- * Thrown by `correctionDebit` for a type outside `WALLET_CORRECTION_DEBIT_TYPES`, and by `debit` and
- * `credit` for `win_reversal`, which only a correction, with its round, may write.
- */
 export class WalletCorrectionTypeError extends Error {
   readonly type: string;
 
@@ -183,15 +95,9 @@ export class WalletCorrectionTypeError extends Error {
   }
 }
 
-/**
- * Thrown by `correctionDebit` when its `providerRef` is already on a ledger move it did not write,
- * or a replay does not match the first call. Nothing it collected is kept, even if the caller
- * catches it and commits.
- */
 export class WalletCorrectionRefConflictError extends Error {
   readonly providerName: string;
   readonly providerRefId: string;
-  /** The `wallet_transaction` row that holds the reference. */
   readonly transactionId: string;
 
   constructor(providerName: string, providerRefId: string, transactionId: string) {
@@ -205,10 +111,6 @@ export class WalletCorrectionRefConflictError extends Error {
   }
 }
 
-/**
- * Thrown by `debit`, `credit` and `correctionDebit` before anything is written when the amount is
- * not a positive decimal with at most 18 places (`1e1`, a 19th decimal, a negative, `NaN`).
- */
 export class WalletCommandAmountError extends Error {
   readonly operation: string;
   readonly amount: string;
@@ -223,17 +125,9 @@ export class WalletCommandAmountError extends Error {
   }
 }
 
-/**
- * Thrown by `debit` and `credit` when their `providerRef` is already on a ledger move a different
- * request wrote: another wallet, type, direction, amount, currency or round, or a correction. A
- * true replay still returns `moved: false`. This one moved nothing, even when another wallet takes
- * the reference mid-move and the caller catches the error and commits: a debit's balance and bonus
- * wagering, and a credit's row, settlement and balance, run in a savepoint that rolls back.
- */
 export class WalletReplayMismatchError extends Error {
   readonly providerName: string;
   readonly providerRefId: string;
-  /** The `wallet_transaction` row that holds the reference. */
   readonly transactionId: string;
 
   constructor(providerName: string, providerRefId: string, transactionId: string) {
@@ -247,7 +141,6 @@ export class WalletReplayMismatchError extends Error {
   }
 }
 
-/** Thrown by `correctionDebit` when its `providerRef` names no round, which RG spend could not net. */
 export class WalletCorrectionRoundError extends Error {
   readonly providerName: string;
   readonly providerRefId: string;
@@ -260,11 +153,6 @@ export class WalletCorrectionRoundError extends Error {
   }
 }
 
-/**
- * Thrown by `correctionDebit` asking more than its round has left to take back: the round's `win`
- * credits less its `win_reversal` debits, or its `bet_reversal` credits less its correction `bet`
- * debits, counting what was collected. Nothing is collected.
- */
 export class WalletCorrectionExceedsRoundError extends Error {
   readonly providerName: string;
   readonly externalRoundId: string;
@@ -291,7 +179,6 @@ export class WalletCorrectionExceedsRoundError extends Error {
   }
 }
 
-/** Thrown by `placeWithdrawalHold` for a player with no wallet row, which has nothing to hold. */
 export class WalletHoldWithoutWalletError extends Error {
   readonly userId: string;
 
@@ -307,19 +194,9 @@ export type WalletCorrectionDebitArgs = {
   amount: string;
   currency: string;
   type: WalletCorrectionDebitType;
-  /**
-   * Required, with its round: a retry with the same reference collects once. One already on another
-   * ledger move, or a replay asking a different amount than the first call, is refused.
-   */
   providerRef: WalletProviderRef & { externalRoundId: string };
 };
 
-/**
- * Collects min(real balance, amount); `shortfall` is the rest, which the caller records as debt.
- * `moved: false` means nothing was collected now: a zero balance, or a replayed `providerRef`, which
- * returns what the first call collected. Every call writes its ledger row and its audit row in
- * `tx`, a zero one included, so a retry replays it instead of collecting again.
- */
 export type WalletCorrectionDebitOutcome =
   | {
       moved: true;
@@ -333,18 +210,15 @@ export type WalletCorrectionDebitOutcome =
       collected: string;
       shortfall: string;
       newBalance: string;
-      /** The row a replay answered from. Not a move: never emit `wallet.balance.changed` for it. */
       replayedTransactionId?: string;
     };
 
 export type WalletWithdrawalHoldArgs = {
   userId: string;
-  /** The owning module's key. A source releases only its own hold. */
   source: string;
   reason: string;
 };
 
-/** Debits `debit` never checks against bonus-locked funds: play, and the operator's own debits. Any other debit over the movable funds is refused with `BonusFundsLockedError`. */
 export const WALLET_LOCK_EXEMPT_DEBIT_TYPES = ['bet', 'loss', 'manual_debit'] as const;
 
 export const WALLET_FUNDS_LOCKS = ['turnover', 'bonus'] as const;
@@ -358,71 +232,26 @@ export type MovableFunds = {
 };
 
 export type WalletCommands = {
-  /**
-   * A replay that names no currency answers in the currency the first call moved.
-   * @throws WalletReplayMismatchError when `providerRef` is already on a different request's move.
-   * @throws BonusFundsLockedError when a type outside `WALLET_LOCK_EXEMPT_DEBIT_TYPES` dips into bonus-locked money.
-   * @throws TurnoverLockedError when a type outside `WALLET_LOCK_EXEMPT_DEBIT_TYPES`, other than `swap_out`, moves money while the player's turnover requirement is unmet (ADR-0065); a `withdrawal` debit reports `outflow: 'withdrawal'`, any other `transfer`.
-   */
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;
-  /**
-   * The player's real balance in `currency` and how much of it a live bonus locks. Takes the
-   * wallet row and balance row locks a debit takes, so a debit later in `tx` sees the same figure;
-   * a transfer check, not a display read. Optional so a custom binding written before it compiles.
-   * While the turnover requirement is unmet, `locked` is the whole balance and `free` is '0',
-   * because a transfer debit would throw `TurnoverLockedError`. `lockedBy` names the lock when
-   * `locked` is above zero: `turnover` when the requirement is unmet, which wins over a bonus lock.
-   */
   movableFunds?(tx: unknown, args: MovableFundsArgs): Promise<MovableFunds>;
-  /** @throws WalletReplayMismatchError when `providerRef` is already on a different request's move. */
   credit(tx: unknown, args: WalletCreditArgs): Promise<WalletCreditOutcome>;
-  /**
-   * A correction is never refused for a short balance, and skips play eligibility, RG limits and
-   * the bonus engine: it takes back money already paid, it is not a wager. It is refused with
-   * `WalletCorrectionExceedsRoundError` for more than its round paid, a player with no wallet included.
-   */
   correctionDebit(
     tx: unknown,
     args: WalletCorrectionDebitArgs,
   ): Promise<WalletCorrectionDebitOutcome>;
-  /**
-   * Blocks every withdrawal until released. Placing an existing hold updates its reason. A hold
-   * placed, re-reasoned or released writes its audit row in `tx`. Throws
-   * `WalletHoldWithoutWalletError` for a player with no wallet.
-   */
   placeWithdrawalHold(tx: unknown, args: WalletWithdrawalHoldArgs): Promise<{ placed: boolean }>;
   releaseWithdrawalHold(
     tx: unknown,
     args: Omit<WalletWithdrawalHoldArgs, 'reason'>,
   ): Promise<{ released: boolean }>;
-  /**
-   * Reports a round that settled with nothing to pay - a lost bet - so a bonus grant waiting on
-   * it can complete or deplete. Moves the converted bonus, if any, into the real balance.
-   */
   closeRound?(
     tx: unknown,
     args: WalletCloseRoundArgs,
   ): Promise<{ completed: BonusCompletion[]; newBalance: string | null }>;
-  /**
-   * Adds a turnover requirement of `requiredInCurrency` (ADR-0065) in `tx`, once per `sourceRef`:
-   * a repeat answers the first entry with `replayed: true`. Priced into the pivot now, or `pending`
-   * until a rate exists. Optional so a custom binding written before it compiles.
-   * @throws TurnoverDisabledError while `wallet.turnover.multiplier` is '0'.
-   * @throws WalletCommandAmountError when `requiredInCurrency` is not above zero.
-   * @throws WalletReplayMismatchError when `sourceRef` already holds another player's, currency's or amount's entry.
-   */
   addTurnoverRequirement?(
     tx: unknown,
     args: AddTurnoverRequirementArgs,
   ): Promise<AddTurnoverRequirementResult>;
-  /**
-   * Takes the wallet row lock a debit takes for every listed player in `tx`, in ascending `userId`
-   * order, creating nothing; a player with no wallet is skipped. A caller moving money between
-   * players calls it first with the sender and every recipient, so two transfers in opposite
-   * directions queue instead of deadlocking. The core wallet binding always provides it. It is
-   * optional only so a custom binding written before it compiles; on a binding without it, a
-   * caller moving money between players in cash mode has no deadlock-free ordering.
-   */
   lockWallets?(tx: unknown, args: { userIds: readonly string[] }): Promise<void>;
 };
 

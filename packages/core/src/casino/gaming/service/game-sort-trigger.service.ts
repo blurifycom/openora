@@ -24,13 +24,10 @@ import {
 
 const logger = createLogger('gaming');
 
-// A claim stamps rankDirtyAt, so for a failed category it is the time of its last attempt.
-// The exponent is capped so power() cannot overflow on a long failure streak.
 function retryDue() {
   return sql`(${gameCategory.rankFailures} = 0 OR ${gameCategory.rankDirtyAt} <= now() - make_interval(secs => least(${RANK_RETRY_BASE_MS / 1000}::float8 * power(2, least(${gameCategory.rankFailures} - 1, 30)), ${RANK_RETRY_MAX_MS / 1000}::float8)))`;
 }
 
-// BullMQ retains completed job IDs, so category IDs cannot serve as enqueue idempotency keys.
 export function enqueueGameCategoryRank(
   jobQueue: JobQueueAdapter,
   categoryId: GameCategory['id'],
@@ -128,7 +125,6 @@ export class GameSortTriggerService {
       });
   }
 
-  // Keeps updatedAt, like a claim: nothing about the category itself changed.
   private async markStaleRefreshingSorts() {
     const stale = this.catalog
       .list()
@@ -149,7 +145,6 @@ export class GameSortTriggerService {
   }
 
   async sweep() {
-    // A failing refresh must not stop the dirty categories below from being ranked.
     await this.markStaleRefreshingSorts().catch((err: unknown) => {
       logger.error({ err }, 'gaming.category.rank-sweep refresh marking failed');
     });

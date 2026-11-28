@@ -4,21 +4,6 @@ import { pino, levels, type Logger } from 'pino';
 import { reportError } from './error-reporter.js';
 import { getCurrentRequestContext } from './request-context.js';
 
-/**
- * One logger.error({ err }, msg) both logs and reports: this hook forwards every
- * error-level log carrying an `err` to the bound error reporter (an ERROR_TRACKING
- * overlay - Sentry/PostHog/...), so no call site makes a separate capture call and
- * child loggers are covered too. `report: false` opts a noisy/expected error out of
- * forwarding (still logged); a log without `err` is never reported.
- */
-/**
- * pino reads no environment of its own; this is where LOG_LEVEL is honoured.
- *
- * `silent` is served by discarding the output rather than by pino's own silent level:
- * a disabled level never reaches `logMethod`, and the error-reporter hook below lives
- * there - so asking for quiet logs would silently also stop reporting errors to the
- * bound tracker. The test suites run at this setting.
- */
 const DISCARD = { write() {} };
 
 function levelAndDestination(): [string, typeof DISCARD | undefined] {
@@ -87,7 +72,6 @@ function valueFields(err: Error) {
   return sqlState(err) === undefined ? NO_VALUE_FIELDS : PG_VALUE_FIELDS;
 }
 
-/** Postgres data exceptions quote the rejected input, and RAISE EXCEPTION text is free-form. */
 function safeMessage(err: Error) {
   if (err instanceof DrizzleQueryError) {
     return `Failed query: ${err.query}`;
@@ -177,15 +161,10 @@ function withoutText(serialized: Record<string, unknown>) {
   );
 }
 
-/** pino's own err serializer duck-types its input although its typings say `Error`. */
 function stockErr(value: unknown): unknown {
   return Reflect.apply(pino.stdSerializers.err, undefined, [value]);
 }
 
-/**
- * pino's default `err` serializer writes a drizzle query error's message and stack, which
- * carry the bound parameters; a postgres error's `detail` and `where` carry row values.
- */
 function safeErr(err: unknown) {
   return isError(err) && carriesBoundValues(err, new Set())
     ? scrubbed(err, new Set())
@@ -207,7 +186,6 @@ function reportable(err: Error, ancestors: ReadonlySet<Error>): Error {
   );
 }
 
-/** The error the bound reporter receives: the original unless it carries bound values. */
 function reportableError(err: unknown) {
   return isError(err) && carriesBoundValues(err, new Set()) ? reportable(err, new Set()) : err;
 }
@@ -231,7 +209,6 @@ function censoredField(key: string, value: unknown) {
   );
 }
 
-/** One level deep: pino's own `*.key` redact paths cost about ten times more per line. */
 function censoredFields(fields: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(fields).map(([key, value]) => [key, censoredField(key, value)]),
@@ -251,7 +228,6 @@ function messageSource(first: unknown): unknown {
   return Reflect.get(first, 'msg') === undefined ? Reflect.get(first, 'err') : undefined;
 }
 
-/** pino falls back to the raw error's message as `msg` when the call passes none. */
 function fallbackMessage(first: unknown) {
   const err = messageSource(first);
   if (!isError(err)) {
@@ -270,7 +246,6 @@ export function createLogger(name: string): Logger {
       mixin: activeTraceLogFields,
       serializers: { err: safeErr },
       formatters: { log: censoredFields },
-      // Child bindings skip `formatters`; these top-level paths cover them.
       redact: { paths: [...REDACTED_FIELDS], censor: REDACTED },
       hooks: {
         logMethod(inputArgs, method, level) {

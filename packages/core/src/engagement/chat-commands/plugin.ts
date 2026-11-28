@@ -25,9 +25,6 @@ export default {
         contextSendPolicy: c.get(CHAT_CONTEXT_SEND_POLICY),
       });
     ctx.provide(CHAT_TRANSFER_CHECK, localTransferCheck);
-    // The check for a service that does not load chat. It serves this database itself, never the
-    // bound check, which such a service rebinds to a client of this very route. Unset
-    // CHAT_TRANSFER_CHECK_CALLERS refuses every caller.
     const transferCheckCallerNames = parseInternalCallers(
       process.env['CHAT_TRANSFER_CHECK_CALLERS'],
     );

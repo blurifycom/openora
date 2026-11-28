@@ -14,7 +14,6 @@ export async function isPlayerRestricted(
   return row !== undefined;
 }
 
-/** Why the player may not play now; `player_blocked` when the bound port cannot name it. */
 export async function playRefusal(
   playEligibility: PlayEligibilityPort,
   userId: User['id'],

@@ -34,8 +34,6 @@ export class PlayEligibilityService implements PlayEligibilityPort {
     return isRgBlocked(row);
   }
 
-  // Locks the player row before the user row: a status writer holds the player row while it
-  // publishes, which takes the user row, so the other order could deadlock with it.
   async checkPlay(userId: User['id'], tx?: unknown): Promise<PlayRefusal | null> {
     const db = (tx as DrizzleDb | undefined) ?? this.drizzle.db;
     const profileQuery = db
@@ -93,24 +91,13 @@ const snapshotState = (s: PlayEligibilitySnapshot) => ({
   banExpires: s.banExpires === null ? null : new Date(s.banExpires),
 });
 
-/**
- * Writes a user's play eligibility to the ledger, the only place a stake is checked. Every
- * writer of an input (the RG block, `isActive`, the player status) calls `publish` in its own
- * transaction, after its change, so the ledger's row commits or rolls back with it.
- */
 export class PlayEligibilityPublisher {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
-    /** Resolved per call: wallet loads after identity, and a split may run identity alone. */
     private readonly projection: () => PlayEligibilityProjectionPort | undefined,
   ) {}
 
-  /**
-   * Bumps the user's version, which locks the row so publishes for one user run one at a time,
-   * then writes the ledger's row on `tx`. The outbox event carries the same snapshot to a
-   * process without the projection, and repairs one that lost it.
-   */
   async publish(tx: DrizzleTx, userId: User['id']): Promise<void> {
     const [account] = await tx
       .update(user)
@@ -140,18 +127,11 @@ export class PlayEligibilityPublisher {
     await this.events.emitInTransaction(tx, 'identity.play_eligibility.changed', snapshot);
   }
 
-  /** `publish` in a transaction of its own, for a writer that changed nothing it must roll back. */
   sync(userId: User['id']): Promise<void> {
     return this.drizzle.db.transaction((tx) => this.publish(tx, userId));
   }
 }
 
-/**
- * Hands every user's committed play eligibility to the ledger in keyset batches, and returns
- * how many rows the ledger wrote. Heals a user registered by a replica that predates the
- * publisher, or a direct write that skipped it. Locks nothing on this side; the ledger rewrites
- * only rows that are missing or behind. An aborted `signal` stops it between batches.
- */
 export async function backfillPlayEligibility(
   db: DrizzleDb,
   projection: PlayEligibilityProjectionPort,
@@ -185,7 +165,6 @@ const committedState = (db: DrizzleDb) =>
     .from(user)
     .leftJoin(player, eq(player.userId, user.id));
 
-/** Up to `limit` users' committed play eligibility in user id order, after `after` when given. */
 export async function playEligibilityPage(
   db: DrizzleDb,
   after: User['id'] | null,
@@ -198,7 +177,6 @@ export async function playEligibilityPage(
   return rows.map((row) => snapshotOf(row.userId, row));
 }
 
-/** The committed play eligibility of `userIds`; an unknown user is left out. */
 export async function playEligibilityOf(
   db: DrizzleDb,
   userIds: readonly User['id'][],

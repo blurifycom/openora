@@ -9,7 +9,6 @@ import {
 } from '@openora/core/server';
 import { eq, inArray } from 'drizzle-orm';
 import type { AdminGrant, User } from '@openora/core/contracts';
-// Read-only cross-domain schema import (sanctioned): the grant rule falls back to `user.role`.
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRolePermission, adminRoleAssignment } from '../schema/index.js';
 
@@ -49,12 +48,6 @@ export function grantsOf(rows: readonly AssignedGrantRow[]): AdminGrant[] {
   return grants;
 }
 
-/**
- * The DB grants of each of `userIds` holding a role assignment, read through `db` - a
- * transaction included - without the grant cache. A user with no assignment is absent from the
- * map, which the resolver reports as no grants at all (ADMIN_PERMISSION_RESOLVER: once a
- * resolver is bound its answer is authoritative, there is no static-role fallback).
- */
 export async function loadAdminGrants(db: DrizzleDb | DrizzleTx, userIds: readonly User['id'][]) {
   const rows = await db
     .select({
@@ -77,7 +70,6 @@ export async function loadAdminGrants(db: DrizzleDb | DrizzleTx, userIds: readon
   return new Map([...rowsByUser].map(([userId, userRows]) => [userId, grantsOf(userRows)]));
 }
 
-/** Of `userIds`, those AdminGuard's grant rule refuses `mcp-access:use`, read uncached through `db`. */
 export async function usersWithoutMcpAccess(
   db: DrizzleDb | DrizzleTx,
   userIds: readonly User['id'][],

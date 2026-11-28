@@ -72,7 +72,6 @@ export const sportsbookFindingStatusEnum = pgEnum(
   SPORTSBOOK_FINDING_STATUSES,
 );
 
-// A missing row means sportsbook is off: session issue and reserve refuse.
 export const sportsbookConfig = pgTable('sportsbook_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique('sportsbook_config_singleton_key_unique').default('global'),
@@ -94,7 +93,6 @@ export const sportsbookConfig = pgTable('sportsbook_config', {
     .$type<SportsbookPromotionsConfig>()
     .notNull()
     .default(SPORTSBOOK_PROMOTIONS_DEFAULTS),
-  // Cross-module (identity admin user), bare uuid.
   updatedBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true })
@@ -107,7 +105,6 @@ export const sportsbookSession = pgTable(
   'sportsbook_session',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cross-module (identity), bare uuid.
     userId: uuid().notNull(),
     provider: text().notNull(),
     currency: text().notNull(),
@@ -115,7 +112,6 @@ export const sportsbookSession = pgTable(
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     revokedAt: timestamp({ withTimezone: true }),
     providerRevokedAt: timestamp({ withTimezone: true }),
-    // Set once issue's provider call succeeded; a revoke sent before it never acknowledges the session.
     providerOpenedAt: timestamp({ withTimezone: true }),
     providerRevokeAttemptedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -137,7 +133,6 @@ export const sportsbookBet = pgTable(
   'sportsbook_bet',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cross-module (identity), bare uuid.
     userId: uuid().notNull(),
     provider: text().notNull(),
     providerBetId: text().notNull(),
@@ -145,24 +140,19 @@ export const sportsbookBet = pgTable(
       .notNull()
       .references(() => sportsbookSession.id),
     currency: text().notNull(),
-    // The decimals the currency was configured with at reserve; settlement checks against them.
     currencyDecimals: integer().notNull(),
     status: sportsbookBetStatusEnum().notNull(),
     result: sportsbookBetResultEnum(),
     stake: money().notNull(),
     potentialPayout: money().notNull(),
-    // What the current settlement paid; zero while the bet is open.
     payoutTotal: money().notNull().default('0'),
-    // Resolved from the promotion declaration at reserve; every later step reads these, never the declaration.
     cashStake: money().notNull(),
     voidPayout: money().notNull(),
     maxLossRefund: money().notNull().default('0'),
     promotionType: text(),
     promotionId: text(),
-    // Read from the funder map at reserve, so a later map change never moves a bet's cost.
     promotionFunder: sportsbookPromotionFunderEnum(),
     promotionPotential: money(),
-    // The part of payoutTotal a promotion funded.
     promotionPaid: money().notNull().default('0'),
     version: integer().notNull().default(1),
     legs: jsonb().$type<SportsbookBetLeg[]>().notNull(),
@@ -190,7 +180,6 @@ export const sportsbookBet = pgTable(
       .where(
         sql`${t.status} = 'reserved' and ${t.reconcileAttempts} < ${sql.raw(String(SPORTSBOOK_RECONCILE_MAX_ATTEMPTS))}`,
       ),
-    // The operator-wide settlement read: bets settled in a range, whoever placed them.
     index('sportsbook_bet_settled_at_idx')
       .on(t.settledAt)
       .where(sql`${t.status} = 'settled'`),
@@ -226,8 +215,6 @@ export const sportsbookBet = pgTable(
   ],
 );
 
-// Append-only: one row per applied provider transaction, the replay answer and the retry guard
-// of every wallet move it made. A cancel for a bet core never saw is a row with no bet: the tombstone.
 export const sportsbookBetTransaction = pgTable(
   'sportsbook_bet_transaction',
   {
@@ -236,11 +223,9 @@ export const sportsbookBetTransaction = pgTable(
     providerTxId: text().notNull(),
     providerBetId: text().notNull(),
     betId: uuid().references(() => sportsbookBet.id),
-    // Cross-module (identity), bare uuid.
     userId: uuid(),
     kind: sportsbookTransactionKindEnum().notNull(),
     amount: money().notNull().default('0'),
-    // The terms a reserve placed or a confirm accepted at; null when the confirm kept them.
     potentialPayout: money(),
     legs: jsonb().$type<SportsbookBetLeg[]>(),
     promotionPotential: money(),
@@ -248,7 +233,6 @@ export const sportsbookBetTransaction = pgTable(
     fingerprint: text().notNull(),
     result: sportsbookBetResultEnum(),
     cancelReason: sportsbookCancelReasonEnum(),
-    // Cross-module (wallet ledger rows), bare uuids.
     walletTransactionIds: uuid()
       .array()
       .notNull()
@@ -263,7 +247,6 @@ export const sportsbookBetTransaction = pgTable(
       t.provider,
       t.providerTxId,
     ),
-    // A reserve and a tombstone for one bet cannot both commit: whichever comes second retries and sees the first.
     uniqueIndex('sportsbook_bet_transaction_bet_origin_idx')
       .on(t.provider, t.providerBetId)
       .where(sql`${t.kind} = 'reserve' OR ${t.betId} IS NULL`),
@@ -275,12 +258,9 @@ export const sportsbookBetTransaction = pgTable(
   ],
 );
 
-// A row is a restriction; lifting it deletes the row.
 export const sportsbookPlayerRestriction = pgTable('sportsbook_player_restriction', {
-  // Cross-module (identity), bare uuid.
   userId: uuid().primaryKey(),
   reason: text().notNull(),
-  // Cross-module (identity admin user), bare uuid.
   restrictedBy: uuid().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
@@ -289,7 +269,6 @@ export const sportsbookPlayerDebt = pgTable(
   'sportsbook_player_debt',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cross-module (identity), bare uuid.
     userId: uuid().notNull(),
     currency: text().notNull(),
     owed: money().notNull().default('0'),
@@ -297,7 +276,6 @@ export const sportsbookPlayerDebt = pgTable(
     writtenOff: money().notNull().default('0'),
     outstanding: money().notNull().default('0'),
     status: sportsbookDebtStatusEnum().notNull().default('open'),
-    // Cross-module (identity admin user), bare uuid.
     writtenOffBy: uuid(),
     writtenOffReason: text(),
     writtenOffAt: timestamp({ withTimezone: true }),
@@ -318,12 +296,10 @@ export const sportsbookPlayerDebt = pgTable(
   ],
 );
 
-// A reopen's uncollected part, so a collect takes it back in the round that owed it.
 export const sportsbookDebtShortfall = pgTable(
   'sportsbook_debt_shortfall',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Written under the player lock, so it orders a player's shortfalls by commit.
     seq: bigserial({ mode: 'number' }).notNull(),
     debtId: uuid()
       .notNull()
@@ -341,7 +317,6 @@ export const sportsbookDebtShortfall = pgTable(
   ],
 );
 
-// The admin request that collected or wrote off a debt, so a retry answers what it answered.
 export const sportsbookDebtAction = pgTable('sportsbook_debt_action', {
   id: uuid().primaryKey().defaultRandom(),
   idempotencyKey: uuid().notNull().unique('sportsbook_debt_action_idempotency_key_unique'),
@@ -351,7 +326,6 @@ export const sportsbookDebtAction = pgTable('sportsbook_debt_action', {
   action: sportsbookDebtActionEnum().notNull(),
   reason: text(),
   result: jsonb().$type<SportsbookDebt>().notNull(),
-  // Cross-module (identity admin user), bare uuid.
   actorId: uuid().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
@@ -363,12 +337,10 @@ export const sportsbookReconciliationFinding = pgTable(
     kind: sportsbookFindingKindEnum().notNull(),
     provider: text(),
     betId: uuid().references(() => sportsbookBet.id),
-    // Cross-module (identity), bare uuid.
     userId: uuid(),
     dedupeKey: text().notNull(),
     detail: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     status: sportsbookFindingStatusEnum().notNull().default('open'),
-    // Cross-module (identity admin user), bare uuid.
     resolvedBy: uuid(),
     resolvedAt: timestamp({ withTimezone: true }),
     resolutionNote: text(),

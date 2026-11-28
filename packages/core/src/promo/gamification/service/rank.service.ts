@@ -44,7 +44,6 @@ type LadderRung = Pick<PromoRankTier, 'id' | 'position' | 'wagerThreshold'>;
 const tierFor = <T extends LadderRung>(ladder: readonly T[], lifetime: string) =>
   ladder.filter((tier) => moneyCompare(tier.wagerThreshold, lifetime) <= 0).at(-1);
 
-// An empty list counts every bet. A bet always names its product, so there is no third case.
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
   eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
@@ -58,18 +57,6 @@ export class RankService implements WagerTrackingCommands {
     private readonly progressBasis: RankProgressBasis = 'total',
   ) {}
 
-  /**
-   * Adds a bet's stake to the player's lifetime wagered and moves them up the ladder, recording a
-   * level-up bonus for every tier crossed for the payout job to settle.
-   *
-   * Counts the raw stake, not the bonus engine's weighted one: that weight comes from whichever
-   * bonus the player holds, and a player's standing must not depend on it. What counts is decided
-   * by the ladder's own `eligibleProducts`, and under `progressBasis: 'real'` only the
-   * real-funded part of the stake counts.
-   *
-   * Not idempotent on its own: call it only inside the wallet's debit transaction, below its
-   * duplicate-bet guard, so a replayed bet never reaches it.
-   */
   async recordWager(tx: DrizzleTx, args: WagerTrackingArgs): Promise<WagerTrackingWalletCredit[]> {
     if (moneyCompare(args.amount, '0') <= 0) {
       return [];
@@ -104,7 +91,6 @@ export class RankService implements WagerTrackingCommands {
         ? args.amount
         : await this.rates.convert(args.amount, args.currency, lowest.currency, tx);
     if (amount === null) {
-      // ponytail: a wager with no rate is not counted; store unconverted wagers and replay them if this shows up in logs
       this.logger.warn(
         {
           userId: args.userId,
@@ -122,7 +108,6 @@ export class RankService implements WagerTrackingCommands {
         ? amount
         : moneyMultiplyDivide(amount, args.realAmount, args.amount);
 
-    // Counted under both periodic bases, so the counter is already full when an operator switches.
     const nativeMargin = eligible ? houseEdge(args.realAmount, args.context.rtp) : '0';
     const margin =
       args.currency === lowest.currency
@@ -158,9 +143,6 @@ export class RankService implements WagerTrackingCommands {
       return [];
     }
 
-    // What the player wagered inside each open period, for the payouts that settle them. Upserted
-    // per bet under the period's own key, so a bet placed after a period closed lands on the new
-    // one and can never answer for the old.
     await tx
       .insert(promoRankPeriodWager)
       .values(
@@ -216,8 +198,6 @@ export class RankService implements WagerTrackingCommands {
       .set({ tierId: reached.id })
       .where(eq(promoPlayerRank.userId, args.userId));
 
-    // Every tier crossed earns its bonus, not only the one landed on. The amount is taken now,
-    // so one an admin fills in later is never paid backwards.
     const earned = ladder.flatMap((tier) =>
       tier.position > (current?.position ?? -1) &&
       tier.position <= reached.position &&
@@ -236,8 +216,6 @@ export class RankService implements WagerTrackingCommands {
       await tx.insert(promoRankLevelUp).values(earned).onConflictDoNothing();
     }
 
-    // The rank a player holds is audited; the wager that moved them is not. One row per bet would
-    // bury every other player-state change in the log.
     await this.audit.recordInTransaction(tx, {
       actorType: 'system',
       action: 'promo.rank.changed',
@@ -249,11 +227,6 @@ export class RankService implements WagerTrackingCommands {
     return [];
   }
 
-  /**
-   * Takes a rolled-back bet's margin out of the open period counters, never below zero. Wagered
-   * and lifetime wagered stay: a rank is never taken back. A rollback landing after its period
-   * closed reduces the period now open instead.
-   */
   async reverseWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     if (moneyCompare(args.realAmount, '0') <= 0) {
       return;
@@ -319,7 +292,6 @@ export class RankService implements WagerTrackingCommands {
     }
   }
 
-  /** The ladder as an operator configured it. No player data, so anyone may read it. */
   async getLadder(): Promise<RankLadder> {
     const tiers = await this.drizzle.db
       .select({ ...TIER_COLUMNS, currency: promoRankTier.currency })
@@ -337,15 +309,6 @@ export class RankService implements WagerTrackingCommands {
     );
   }
 
-  /**
-   * Public rank badges for a set of other players, one query, no N+1 - a chat avatar list or
-   * friends panel looks these up batched for whoever is on screen. A user with no rank row yet,
-   * or none held (tierId null), comes back with `tierKey`/`tierName` both null rather than
-   * omitted, so a caller can tell "looked up, no rank" from "not in the response".
-   *
-   * There is no hidden-profile/ghost-mode setting anywhere in the platform today (checked pam
-   * and social modules), so nothing here has one to respect.
-   */
   async lookup(userIds: readonly PromoPlayerRank['userId'][]): Promise<RankLookupEntry[]> {
     if (userIds.length === 0) {
       return [];
@@ -366,7 +329,6 @@ export class RankService implements WagerTrackingCommands {
     });
   }
 
-  /** How many players hold each tier right now, lowest tier first; a tier nobody holds is zero. */
   playersPerTier(): Promise<RankPlayersEntry[]> {
     return this.drizzle.db
       .select({ tierId: promoRankTier.id, players: count(promoPlayerRank.id) })

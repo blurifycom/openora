@@ -1,6 +1,3 @@
-// Runs the real catalog generator against a throwaway repo root and checks the agent
-// surface it reads from defineMcpTool / defineActionType literals.
-// Run: node --test tools/__tests__/gen-catalog-agent-surface.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -178,7 +175,6 @@ test('catalogues tool and action-type literals with their IAM and flags', () => 
       iam: { resource: 'tag', action: 'create' },
       reversible: true,
       benefitsPlayer: false,
-      // A comma inside a value is the value's, as the kernel serves it.
       benefitsPlayerWhen: { field: 'tagKey', values: ['vip', 'gold,plus'] },
       distinctBy: 'tagKey',
     },

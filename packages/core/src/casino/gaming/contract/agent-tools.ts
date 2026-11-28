@@ -28,7 +28,6 @@ export const TopGamesSortBySchema = z
   .exclude(['name', 'gameType']);
 export type TopGamesSortBy = z.infer<typeof TopGamesSortBySchema>;
 
-/** gaming.top_games's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolveTopGamesRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, TOP_GAMES_DEFAULT_DAYS, now);
 }
@@ -171,7 +170,6 @@ export const topProvidersTool = defineMcpTool({
   errors: ['report_unavailable'],
 });
 
-/** At most this many of a game's categories games.find lists with it. */
 export const GAMES_FIND_MAX_CATEGORIES = 10;
 
 export const GamesFindInputSchema = z.object({
@@ -229,7 +227,6 @@ export const gamesFindTool = defineMcpTool({
   errors: [],
 });
 
-/** At most this many categories games.categories lists. */
 export const GAME_CATEGORIES_MAX = 200;
 
 export const GameCategoriesInputSchema = z.object({ active: z.boolean().optional() });

@@ -21,10 +21,6 @@ const SORT_COLUMNS: Record<TransactionsFindSortBy, SQL> = {
   amount: sql`${tx.amount}`,
 };
 
-/**
- * Finds wallet transactions across all players, each by player id. Reads the ledger columns only:
- * no address, hash, provider reference or review note.
- */
 export class TransactionsFindService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -82,7 +78,6 @@ export class TransactionsFindService {
         .from(tx)
         .innerJoin(wallet, eq(wallet.id, tx.walletId))
         .where(where)
-        // The transaction id breaks ties, so equal figures always list in the same order.
         .orderBy(sql`${SORT_COLUMNS[sortBy]} ${direction}`, sql`${tx.id} ${direction}`)
         .limit(limit + 1),
       db.select({ total: count() }).from(tx).where(where),

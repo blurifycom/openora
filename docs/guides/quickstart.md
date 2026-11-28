@@ -29,11 +29,8 @@ demo data), then generate and start an app.
 
 ## 1. Set up the framework repo
 
-```bash
-git clone https://github.com/blurifycom/openora.git
-cd openora
-pnpm run setup
-```
+1. Clone `https://github.com/blurifycom/openora.git` and enter the checkout.
+2. Run `pnpm run setup`.
 
 Use `pnpm run setup`, not `pnpm setup`: the bare form runs pnpm's own built-in `setup`
 command. The script checks prerequisites, installs dependencies, regenerates derived files,
@@ -43,11 +40,7 @@ migrations. It stops on the first error.
 **You should see** `=== Setup complete ===` and `docker compose ps` listing Postgres and
 Redis as healthy.
 
-Then load demo data:
-
-```bash
-pnpm db:seed
-```
+Then load demo data with `pnpm db:seed`.
 
 **You should see** a summary of seeded roles, players and games. The seed creates an admin
 user `admin@oss.dev` with password `password1234`. Flags: `--players=<n>`,
@@ -55,28 +48,23 @@ user `admin@oss.dev` with password `password1234`. Flags: `--players=<n>`,
 
 ### The same steps by hand
 
-```bash
-pnpm install
-cp packages/core/.env.example .env            # db tools read DATABASE_URL from here
-docker compose up -d                          # Postgres, Redis, RabbitMQ and the test databases
-pnpm regen                                    # tsconfig paths, Drizzle migrations, catalog
-pnpm --filter "@openora/testing..." build     # the db tools import the built packages
-pnpm db:migrate
-pnpm db:seed
-```
+1. `pnpm install`.
+2. Copy `packages/core/.env.example` to `.env` at the repo root; the db tools read `DATABASE_URL` from it.
+3. `docker compose up -d` starts Postgres, Redis, RabbitMQ and the test databases.
+4. `pnpm regen` refreshes tsconfig paths, Drizzle migrations and the catalog.
+5. Build `@openora/testing` and everything it depends on with `pnpm --filter "@openora/testing..." build`; the db tools import the built packages.
+6. `pnpm db:migrate`.
+7. `pnpm db:seed`.
 
 ## 2. Run an API
 
 Scaffold a consumer app. It installs `@openora/core` from npm, registers every core module
 against the plugin host, and never forks the framework:
 
-```bash
-pnpm create:app my-gaming-core
-cd my-gaming-core                             # created inside this clone
-pnpm install
-pnpm bootstrap                        # .env, Postgres + Redis (Docker), schema, admin + demo data
-pnpm dev
-```
+1. `pnpm create:app my-gaming-core` creates the app inside this clone; enter its directory.
+2. `pnpm install`.
+3. `pnpm bootstrap` writes `.env`, starts Postgres and Redis in Docker, applies the schema, and seeds an admin and demo data.
+4. `pnpm dev`.
 
 > Known issue: `@openora/core` 0.4.0 on npm ships without the `openora-migrate` bin, so the
 > app's `pnpm db:migrate` fails until the next release.
@@ -85,12 +73,7 @@ The defaults in `.env.example` point at the containers from step 1 (`DATABASE_UR
 `REDIS_URL`) and include a local-only `AUTH_SECRET`, so a local run needs no edits. Replace
 `AUTH_SECRET` with a random value of 32+ characters anywhere else.
 
-**You should see** the API listening on port 3001. Check it:
-
-```bash
-curl http://localhost:3001/health
-# {"status":"ok","timestamp":"..."}
-```
+**You should see** the API listening on port 3001. Check it with `curl` on `http://localhost:3001/health`, which answers with an `ok` status and a timestamp.
 
 Open `http://localhost:3001/docs` for the API reference of every route, generated from the
 live contract, and `http://localhost:3001/openapi.json` for the raw spec.
@@ -113,12 +96,10 @@ live contract, and `http://localhost:3001/openapi.json` for the raw spec.
 Scaffold a module - schema, service, router, contract slice, and `plugin.ts` are generated
 and registered for you:
 
-```bash
-pnpm gen module casino tournaments   # creates packages/core/src/casino/tournaments + registers it
-pnpm regen && pnpm verify
-```
+1. `pnpm gen module` with a domain and a name (for example `casino` and `tournaments`) creates `packages/core/src/<domain>/<name>` and registers it.
+2. Run `pnpm regen`, then `pnpm verify`.
 
-Fill the `// AGENT: implement here` regions; leave the wiring alone. See
+Fill the regions marked with an `AGENT: implement here` comment; leave the wiring alone. See
 [Core concepts](../platform/core-concepts.md) for what each generated file does.
 
 `gen module`, `route`, `config`, `event`, `service` and `app` are core-only generators - they

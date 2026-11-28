@@ -1,4 +1,3 @@
-// Replace via overlay: ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter()) - see docs/adapters/kyc.md.
 import type {
   KycAdapter,
   KycDocument,

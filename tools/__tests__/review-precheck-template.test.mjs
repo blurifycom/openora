@@ -1,6 +1,3 @@
-// The consumer review precheck hands reviewer agents facts instead of files. Build a throwaway
-// consumer repo with a base branch and a feature branch, run the template script against it,
-// and assert on the lines the review skill parses.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

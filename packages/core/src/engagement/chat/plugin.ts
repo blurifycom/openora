@@ -87,12 +87,9 @@ const CHAT_ROOM_INVITE_EXPIRY_CRON = '0 * * * *';
 
 const RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
-// One job per event: a redelivery of the same event dedupes, while a close, reopen, close within
-// a day is three jobs. A handler with no envelope (never the real bus) gets a fresh id.
 const accountJobKey = (prefix: string, userId: string, envelope?: EventEnvelope) =>
   `${prefix}:${userId}:${envelope?.eventId ?? randomUUID()}`;
 
-// The cron tick carries no state - the job's whole input is "what has lapsed by now".
 const EmptyJobPayloadSchema = z.object({});
 const RoomPurgeJobSchema = z.object({ roomId: UuidSchema });
 const AccountClosedJobSchema = z.object({ userId: UuidSchema, closedAt: z.iso.datetime() });
@@ -100,16 +97,8 @@ const AccountReopenedJobSchema = z.object({ userId: UuidSchema });
 
 const logger = createLogger('chat');
 
-// An identity call slower than this fails, and the read it serves refuses.
 const IDENTITY_CALL_TIMEOUT_MS = 500;
 
-/**
- * Chat on a database of its own reads accounts and resolves sessions through the identity
- * service, and admin grants through the service that owns iam: set `IDENTITY_SERVICE_URL`, and
- * serve iam and identity from the same service. A process that serves identity itself (no
- * SERVICE_MANIFEST, or one naming identity without `:no-routes`) has both locally, so the
- * variable there is a misconfiguration and the boot fails.
- */
 function identityClient(): InternalClient | null {
   const url = process.env['IDENTITY_SERVICE_URL'];
   if (!url) {
@@ -143,8 +132,6 @@ function identityClient(): InternalClient | null {
   });
 }
 
-// A session the identity service ended: every chat replica drops what it cached for the user.
-// Fanned out on the realtime transport because a domain event reaches one replica only.
 const SESSION_PURGE_CHANNEL = 'chat:session-purge';
 const SessionPurgeSchema = AuthContextSchema.pick({ userId: true });
 type SessionPurge = z.infer<typeof SessionPurgeSchema>;
@@ -156,13 +143,8 @@ const SESSION_ENDING_EVENTS = [
 
 export default {
   id: 'chat',
-  // iam binds the database-backed ADMIN_PERMISSION_RESOLVER; loading after it lets the remote one
-  // below win in a service that holds no role assignments.
   dependsOn: ['identity', 'audit', 'iam'],
   register(ctx) {
-    // chat-remote binds the same ports to this service's own client, and the later binding wins
-    // without a word. Refuse here, where the plugin is certainly loaded, rather than guess from
-    // SERVICE_MANIFEST which plugins a process has.
     if (process.env['CHAT_SERVICE_URL']) {
       throw new Error(
         'CHAT_SERVICE_URL is set, but this process loads the chat module itself, so the chat ' +
@@ -174,19 +156,12 @@ export default {
     if (identity) {
       const remoteAccounts = new RemoteAccountReader(identity);
       ctx.provide(ACCOUNT_READER, () => remoteAccounts);
-      // Identity decides the admin checks (mandatory second factor, device binding): the rows
-      // they read are not in this database, and a missing row would silently skip the binding.
       ctx.provide(ADMIN_SECURITY_POLICY, () => new RemoteAdminSecurityPolicy(identity));
-      // Grants come from the service that owns iam: this database holds no role assignments. The
-      // manifest still names iam (as `iam:no-routes`) for the identity controls it binds, and
-      // its own resolver binds first: chat dependsOn iam, so this one wins.
       ctx.provide(ADMIN_PERMISSION_RESOLVER, () => new RemoteAdminPermissionResolver(identity));
       const remoteSessions = new RemoteSessionResolver(identity);
       let announcePurge: ((userId: string) => void | Promise<void>) | undefined;
       ctx.provide(REMOTE_SESSION_RESOLVER, (c) => {
         const transport = c.get(REALTIME_TRANSPORT);
-        // The channel is shared with whatever else publishes on the transport, so the payload is
-        // checked, not trusted.
         c.onDispose(
           transport.subscribe<unknown>(SESSION_PURGE_CHANNEL, (payload) => {
             const purge = SessionPurgeSchema.safeParse(payload);
@@ -202,7 +177,6 @@ export default {
         return remoteSessions;
       });
       for (const topic of SESSION_ENDING_EVENTS) {
-        // Thrown, not skipped, while the resolver is not built: the event is redelivered.
         ctx.events.on(topic, async (payload) => {
           const parsed = domainEventSchemas[topic].safeParse(payload);
           if (!parsed.success) {
@@ -272,9 +246,6 @@ export default {
         }),
     );
     ctx.provide(CHAT_CONTEXT_ROOM_COMMANDS, (c) => c.get(CHAT_CONTEXT_ROOMS));
-    // Block reads for a service that does not load chat. They serve this database itself, never
-    // the bound reader, which such a service rebinds to a client of these very routes. Unset
-    // CHAT_BLOCK_READER_CALLERS refuses every caller.
     const blockReaderCallerNames = parseInternalCallers(process.env['CHAT_BLOCK_READER_CALLERS']);
     ctx.routers.addInternal('chat', (c) =>
       createInternalBlocksRouter(createChatService(c), blockReaderCallerNames),
@@ -297,8 +268,6 @@ export default {
       schema: EmptyJobPayloadSchema,
       handler: async () => {
         if (!expiryRef) {
-          // Workers started without building routers: the sweep is wired to the router
-          // factory, so it has nothing to run. Say so rather than no-op in silence.
           logger.warn('chat-moderation-expiry sweep skipped - service not constructed');
           return;
         }
@@ -328,7 +297,6 @@ export default {
     let purgeRef: ChatRoomPurgeService | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
 
-    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0045).
     const requireJobQueue = (): JobQueueAdapter => {
       if (!jobQueueRef) {
         throw new Error('chat job queue not bound yet');
@@ -355,8 +323,6 @@ export default {
 
     let systemCardRef: ChatSystemCardService | null = null;
 
-    // Cards from a service that does not run chat (OutboxChatSystemWriter). Neither a refused
-    // id nor a deleted room changes on redelivery, so both are logged and acknowledged.
     ctx.events.on('chat.system_message.upserted', async (payload) => {
       if (!systemCardRef) {
         throw new Error('chat system card: service not constructed yet');
@@ -384,8 +350,6 @@ export default {
     let contextRoomsRef: ChatContextRooms | null = null;
     let drizzleRef: DrizzleService | null = null;
 
-    // Room writes from a service that does not run chat (OutboxChatContextRoomCommands). One that
-    // cannot apply throws, so it is redelivered, then dead-lettered.
     ctx.events.on('chat.context_room.command_issued', async (payload, envelope) => {
       if (!contextRoomsRef || !systemCardRef || !drizzleRef) {
         throw new Error('chat context room command: service not constructed yet');
@@ -514,10 +478,6 @@ export default {
       const expiryCron =
         (c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).chat.moderationExpiry?.cron : undefined) ??
         CHAT_MODERATION_EXPIRY_DEFAULT_CRON;
-      // Idempotent registration (keyed by scheduleId). JOB_QUEUE binds to BullMQ whenever
-      // REDIS_URL is set, which every real deployment has, so the schedule is durable
-      // there; the in-process default still ticks for `pnpm dev`.
-      // A required-only process leaves the schedules to the service that selects chat (ADR-0050).
       const schedules = options?.mounted !== false;
       if (schedules) {
         void c
@@ -557,9 +517,6 @@ export default {
         c.get(EVENT_BUS),
         c.get(ACCOUNT_READER),
         membershipService,
-        // The database-backed port reads tables this database does not hold. On a remote reader
-        // the fresh `excluded` flag, which mirrors `checkPlay`, is the whole play check, and a
-        // failed read refuses before an invite is written.
         identity || !c.has(PLAY_ELIGIBILITY) ? undefined : c.get(PLAY_ELIGIBILITY),
       );
       if (schedules) {

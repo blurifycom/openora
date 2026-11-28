@@ -10,13 +10,7 @@ const INFRA_HINT = 'real-infra tests need postgres+redis - run `docker compose u
 
 const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380';
 
-// Databases 0-7 belong to this tier; `@openora/testing` claims 8-15 (see its redis.ts).
-// The split is what lets both integration suites run concurrently without flushing
-// each other's keys - do not widen it without moving the other tier too.
 const REDIS_LOGICAL_DATABASE_COUNT = 8;
-// Stryker runs one vitest per mutation worker (STRYKER_MUTATOR_WORKER, 0-based), each with its
-// own VITEST_POOL_ID 1..n, so the worker index offsets the pool id by the pool size (the
-// integration config sizes the pool from the same env). Outside Stryker the offset is 0.
 const POOL_SIZE = Number(process.env['OPENORA_TEST_POOL_SIZE'] ?? REDIS_LOGICAL_DATABASE_COUNT);
 const STRYKER_WORKER = Number(process.env['STRYKER_MUTATOR_WORKER'] ?? 0);
 const REDIS_DATABASE =
@@ -29,33 +23,19 @@ function withRedisDatabase(baseUrl: string, database: number): string {
   return url.toString();
 }
 
-/**
- * The Redis URL for THIS worker's logical DB, in the `redis://host:port/db` form that
- * ioredis-based drivers (BullMQ) parse. Keeps BullMQ on the same per-worker DB as
- * `createTestRedis`, so a `flush()` tears both down together.
- */
 export function redisUrlForWorker(): string {
   return withRedisDatabase(REDIS_URL, REDIS_DATABASE);
 }
 
-/**
- * Poll until a Redis Streams consumer group exists on `stream`. The broker creates its
- * group lazily inside the read loop (at `$`), so a publish issued before the group
- * exists would be missed - tests await this after subscribing, before publishing.
- */
 export async function waitForConsumerGroup(
   client: ReturnType<typeof createClient>,
   { stream, group, timeoutMs = 3000 }: { stream: string; group: string; timeoutMs?: number },
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    try {
-      const groups = await client.xInfoGroups(stream);
-      if (groups.some((g) => g.name === group)) {
-        return;
-      }
-    } catch {
-      // stream not created yet (MKSTREAM happens with the group) - keep polling
+    const groups = await client.xInfoGroups(stream).catch(() => []);
+    if (groups.some((g) => g.name === group)) {
+      return;
     }
     if (Date.now() > deadline) {
       throw new Error(`consumer group '${group}' on '${stream}' not ready within ${timeoutMs}ms`);
@@ -66,7 +46,6 @@ export async function waitForConsumerGroup(
 
 type LockWaiterDb = Pick<TestDb, 'drizzle'>;
 
-/** Resolves once a session is blocked on a lock; times out quietly so the test fails on its own assertion. */
 async function waitForLockWaiter(db: LockWaiterDb, lock: SQL, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -116,15 +95,6 @@ function withDatabase(adminUrl: string, database: string): string {
   return url.toString();
 }
 
-/**
- * The prefix every database `createTestDb` creates carries, carrying this run's own id so
- * that a second run against the same Postgres server (a second worktree, a stray `vitest`
- * alongside `pnpm verify`) is never swept by this one's teardown.
- *
- * `global-setup.ts` sets the id before vitest forks its workers, which inherit it. A
- * worker that somehow did not would otherwise create databases under a name the teardown
- * never looks for, so an absent id is an error rather than a default.
- */
 export function testDatabasePrefix(): string {
   const runId = process.env['OPENORA_TEST_RUN_ID'];
   if (!runId) {
@@ -133,35 +103,16 @@ export function testDatabasePrefix(): string {
   return `test_${runId}_`;
 }
 
-/** The admin connection string a sweep needs, resolved the same way `createTestDb` does. */
 export const adminDatabaseUrl = (): string => ADMIN_DATABASE_URL;
 
-/** A per-module migration entrypoint (`packages/core/src/<module>/migrate.ts`). */
 export type Migration = (databaseUrl: string) => Promise<unknown>;
 
 export type TestDb = {
   url: string;
   drizzle: DrizzleService;
-  /** Close the pool. The database itself is dropped by the global teardown. */
   drop: () => Promise<void>;
 };
 
-/**
- * Create a throwaway `testDatabasePrefix()`-prefixed database, apply the given per-module
- * migrations against it, and return a `DrizzleService` bound to it. `drop()` disposes the
- * pool; the database itself is removed in bulk by `global-setup.ts`.
- *
- * Deferring the removal is not tidiness, it is throughput. `DROP DATABASE` forces a
- * cluster-wide immediate checkpoint (measured: `CREATE DATABASE` requests none, `DROP`
- * requests exactly one), and every other backend on the cluster waits it out. With one
- * drop per test file and workers running in parallel, those checkpoints queue up: a
- * single one was measured at 25s on a local cluster with `fsync` on, long enough to
- * blow the 30s hook timeout in unrelated files in both integration tiers at once.
- * Sweeping once per run instead cut the tier from 116s to 87s under parallel load.
- *
- * `DrizzleService` reads `DATABASE_URL` in its constructor, so this points the env at
- * the ephemeral url just before constructing it - safe because a test file owns one db.
- */
 export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
   const database = `${testDatabasePrefix()}${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString: ADMIN_DATABASE_URL, connectionTimeoutMillis: 5000 });
@@ -199,12 +150,6 @@ export type TestRedis = {
   quit: () => Promise<void>;
 };
 
-/**
- * Connect a node-redis client selected to a per-worker logical DB (VITEST_POOL_ID % REDIS_LOGICAL_DATABASE_COUNT),
- * so parallel vitest workers never collide on keys. `flush()` is a `flushDb` (safe - it
- * only clears this worker's logical DB), for tearing down between tests. `reconnectStrategy`
- * is off: node-redis otherwise retries a down server forever and hangs the run.
- */
 export async function createTestRedis(): Promise<TestRedis> {
   const client = createClient({
     url: REDIS_URL,

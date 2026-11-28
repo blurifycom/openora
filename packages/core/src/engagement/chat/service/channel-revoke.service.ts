@@ -12,7 +12,6 @@ export const ROOM_REVOKE_CONCURRENCY = 10;
 
 const logger = createLogger('chat');
 
-/** Runs after the access change has committed, so a transport failure is logged, never thrown. */
 export async function revokeChannelBestEffort(
   transport: RealtimeTransport | undefined,
   userId: Uuid,
@@ -25,7 +24,6 @@ export async function revokeChannelBestEffort(
   }
 }
 
-/** The global room streams on `chat:global` under either id. */
 export async function revokeRoomChannelBestEffort(
   db: DrizzleDb,
   transport: RealtimeTransport | undefined,

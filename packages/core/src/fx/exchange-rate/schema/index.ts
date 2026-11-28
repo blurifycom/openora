@@ -1,10 +1,6 @@
 import { pgTable, uuid, text, decimal, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { MONEY_PRECISION, MONEY_SCALE } from '@openora/core/contracts';
 
-/**
- * Generic (base, quote) pair store - not pivot-specific, even though only
- * currency-vs-pivot pairs are currently written.
- */
 export const exchangeRateQuote = pgTable(
   'exchange_rate_quote',
   {

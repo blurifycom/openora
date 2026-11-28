@@ -42,7 +42,6 @@ import type { TurnoverService } from './turnover.service.js';
 
 const logger = createLogger('wallet-swap');
 
-// Same policy as the other money mutations - a swap is one, and it also costs a vendor call.
 const SWAP_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 
 export const SwapUnavailableError = makeConflictError(
@@ -55,19 +54,11 @@ export const SwapPairUnsupportedError = createDomainError<[from: string, to: str
   (from, to) => `swap pair ${from}->${to} is not supported`,
 );
 
-// The vendor reported a fill but not what it filled. Nothing may be credited off a
-// missing number, so the swap stays `processing` for the webhook (or an operator) to
-// finish rather than guessing at the quoted amount.
 const SwapFillAmountMissingError = createDomainError<[externalId: string]>(
   'SwapFillAmountMissingError',
   (externalId) => `swap ${externalId} completed without a fill amount`,
 );
 
-/**
- * The out-leg carries what the in-leg will need once the vendor settles - the ledger has
- * no column for a swap's other side, and a webhook arriving hours later has nothing but
- * this row to work from.
- */
 const SwapLegMetadataSchema = z.object({
   toCurrency: z.string(),
   quoteId: z.string().optional(),
@@ -76,22 +67,9 @@ const SwapLegMetadataSchema = z.object({
 export type SwapResult = {
   transactionId: WalletTransaction['id'];
   status: WalletTransaction['status'];
-  /** What was credited, once the vendor filled. Null while the swap is still `processing`. */
   toAmount: string | null;
 };
 
-/**
- * Currency swaps between a player's own balances, booked as two ledger legs: a `swap_out`
- * debit written (and the funds held) before the vendor is called, and a `swap_in` credit
- * written only against a number the vendor actually filled. The vendor call never runs
- * inside a transaction - the hold commits first, exactly like a withdrawal, so a slow or
- * hanging desk cannot pin a row lock.
- *
- * A vendor that fills asynchronously leaves the out-leg `processing` until its webhook
- * lands (`reconcileSwapStatus`). Nothing sweeps those: the wallet reconciliation cycle
- * only looks at withdrawals, so a vendor that never calls back leaves the player's funds
- * held. Add a poll over `getSwapStatus` when a real desk with async fills is bound.
- */
 export class SwapService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -122,11 +100,6 @@ export class SwapService {
     this.turnover = deps.turnover;
   }
 
-  /**
-   * Player-scoped even though a price is not player-specific: a quote is a vendor call the
-   * desk bills for, so it is behind the session and the same per-player throttle the swap
-   * itself takes rather than an open pricing endpoint.
-   */
   async quote({
     userId,
     ...input
@@ -163,9 +136,6 @@ export class SwapService {
     await this.rateLimit(userId);
     this.assertPair(fromCurrency, toCurrency);
 
-    // Phase one: hold the player's funds and commit. A `processing` out-leg is the record
-    // that money left the balance, so a crash before the vendor answers is visible rather
-    // than a silent gap.
     const { row, replayed } = await this.drizzle.db.transaction(async (txn) => {
       const current = findOneOrThrow(
         await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
@@ -194,8 +164,6 @@ export class SwapService {
         .onConflictDoNothing()
         .returning();
 
-      // Lost the race on the (walletId, idempotencyKey) unique index: the winner's row is
-      // the swap, and this request is a replay of it.
       if (!inserted) {
         const winner = findOneOrThrow(
           await this.findByIdempotencyKeyRows(txn, current.id, idempotencyKey),
@@ -213,7 +181,6 @@ export class SwapService {
         );
       }
       await stampBalanceAfter(txn, inserted.id, debited.amount);
-      // Real money a live bonus ties up cannot leave its currency, whatever the withdrawal mode.
       await this.bonusFundLocks?.onOutflow(txn, {
         userId,
         currency: balanceKey(fromCurrency),
@@ -229,8 +196,6 @@ export class SwapService {
       return this.toResult(row);
     }
 
-    // Phase two, outside the transaction. The out-leg's id is the idempotency key the
-    // vendor must dedupe on, so a retried execute returns the original trade.
     let execution;
     try {
       execution = await this.adapter.execute({
@@ -242,7 +207,6 @@ export class SwapService {
         idempotencyKey: row.id,
       });
     } catch (err) {
-      // No trade the vendor will honour - return the held funds before rethrowing.
       await this.refund(row);
       throw err;
     }
@@ -263,7 +227,6 @@ export class SwapService {
     return this.settle(row, execution.externalId, execution.toAmount);
   }
 
-  /** Vendor-driven settlement of a swap its `execute` left `processing`. */
   async reconcileSwapStatus(event: SwapWebhookEvent): Promise<void> {
     const [row] = await this.drizzle.db
       .select()
@@ -288,19 +251,12 @@ export class SwapService {
     }
   }
 
-  // Credits the in-leg against the filled amount and closes the out-leg, in one
-  // transaction. The `status = 'processing'` guard is the payout guard: an execute
-  // response and a webhook racing on the same fill credit the player once.
   private async settle(
     out: WalletTransaction,
     externalId: SwapExecution['externalId'],
     toAmount: string | undefined,
   ): Promise<SwapResult> {
     if (toAmount === undefined || !isPositiveMoney(toAmount)) {
-      // Deliberately not refunded (see #161): the desk reported a fill, so the funds may
-      // well be on its side. The hold stays and the out-leg stays `processing` - but the
-      // desk gets a row saying what the vendor actually sent, which a `stuck_swap` finding
-      // alone does not say.
       await this.audit.record({
         actorType: 'system',
         action: 'wallet.swap.fill_rejected',
@@ -312,7 +268,6 @@ export class SwapService {
     }
     const toCurrency = this.toCurrencyOf(out);
 
-    // A no-op when another delivery already settled this swap.
     await this.drizzle.db.transaction(async (txn) => {
       const flipped = await txn
         .update(walletTransaction)
@@ -323,9 +278,6 @@ export class SwapService {
         return;
       }
 
-      // On `txn`, not the pool: the settlement must not be gated on a read that only
-      // fills in an audit field and an event payload. A failure here rolls the credit
-      // back with it instead of leaving the in-leg uncredited and the out-leg processing.
       const userId = await this.userIdForWallet(txn, out.walletId);
       const [credited] = await creditWalletBalance(txn, out.walletId, toCurrency, toAmount);
       const [inLeg] = await txn
@@ -339,8 +291,6 @@ export class SwapService {
           status: 'completed',
           direction: 'credit',
           rail: railFor(toCurrency, this.platformConfig?.wallet?.cryptoCurrencies),
-          // Not providerRefId: that column is globally unique, and the vendor's id already
-          // belongs to the out-leg. The in-leg points back at its own pair instead.
           metadata: JSON.stringify({ swapTransactionId: out.id, externalId }),
         })
         .returning({ id: walletTransaction.id });
@@ -354,9 +304,6 @@ export class SwapService {
         currency: balanceKey(toCurrency),
         amount: toAmount,
       });
-      // Written directly, in this transaction, even though `wallet.swap.completed` is also
-      // an event topic: a money-path record has to commit with its ledger rows. The topic
-      // must stay out of the audit plugin's SUBSCRIBED_TOPICS or the swap gets two rows.
       await this.audit.recordInTransaction(txn, {
         actorType: 'system',
         action: 'wallet.swap.completed',
@@ -384,8 +331,6 @@ export class SwapService {
     return { transactionId: out.id, status: 'completed', toAmount };
   }
 
-  // Returns the held funds and closes the out-leg as `failed`. Guarded on `processing`
-  // so a refund can never run twice for one hold.
   private async refund(
     out: WalletTransaction,
     externalId?: SwapExecution['externalId'],
@@ -399,9 +344,6 @@ export class SwapService {
       if (flipped.length === 0) {
         return;
       }
-      // On `txn` for the same reason as `settle` - and here it matters more: this is the
-      // failure path, so a throw before the hold is returned would leave the player down
-      // the money and replace the vendor's error with a wallet-lookup one.
       const userId = await this.userIdForWallet(txn, out.walletId);
       await creditWalletBalance(txn, out.walletId, out.currency, out.amount);
       await this.audit.recordInTransaction(txn, {
@@ -428,9 +370,6 @@ export class SwapService {
     }
   }
 
-  // Written by this service one insert earlier, so a malformed value is a bug here, not
-  // untrusted input - but it still comes back from the DB as a string, so it is parsed
-  // rather than cast.
   private toCurrencyOf(out: WalletTransaction): string {
     const parsed = SwapLegMetadataSchema.safeParse(
       out.metadata ? (JSON.parse(out.metadata) as unknown) : null,

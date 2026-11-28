@@ -46,14 +46,9 @@ export const MCP_COMMON_ERROR_CODES = [
 export type McpCommonErrorCode = (typeof MCP_COMMON_ERROR_CODES)[number];
 
 export const MCP_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
-/** Lowercase dotted segments (eg `player.summary`); an id is also capped at 64 characters. */
 export const MCP_TOOL_ID_PATTERN = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
 export const MCP_ACTION_TYPE_ID_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 
-/**
- * Thrown by a handler, precondition or executor to return a declared error code.
- * The message IS the code - never data.
- */
 export class McpToolError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -73,10 +68,6 @@ export const RunActorSchema = z.discriminatedUnion('kind', [
 ]);
 export type RunActor = z.infer<typeof RunActorSchema>;
 
-/**
- * The admin whose grants every call is checked against: the admin, the admin an agent
- * acts for, or the token's owner.
- */
 export function runActorAdminId(actor: RunActor): string {
   switch (actor.kind) {
     case 'admin':
@@ -94,9 +85,7 @@ export const RunContextSchema = z.object({
   playerPseudonym: z.string().min(1).max(128).optional(),
   catalogVersion: z.string().min(1).max(128),
   correlationId: z.string().min(1).max(128),
-  /** The calling client's address and agent, recorded on the call's audit record. */
   clientMeta: ClientMetaSchema.optional(),
-  /** Drops the output keys a tool marks as personal before the result is hashed and returned. */
   dropPersonal: z.boolean().optional(),
 });
 export type RunContext = z.infer<typeof RunContextSchema>;
@@ -124,15 +113,10 @@ export type McpToolContract<
   iam: McpIamRequirement;
   inputSchema: I;
   outputSchema: O;
-  /**
-   * allow: top-level output keys that may leave the kernel. personal: the subset carrying
-   * personal data a consumer must pseudonymise or drop before a model sees it.
-   */
   redact: {
     allow: readonly (keyof z.output<O> & string)[];
     personal?: readonly (keyof z.output<O> & string)[];
   };
-  /** Codes the handler may throw via McpToolError. Anything else becomes internal_error. */
   errors: readonly string[];
 };
 
@@ -154,39 +138,13 @@ export type ActionTypeContract<P extends z.ZodObject = z.ZodObject> = {
   schemaVersion: number;
   iam: McpIamRequirement;
   reversible: boolean;
-  /**
-   * Whether an approved proposal gives the player something of value, such as a bonus, a
-   * higher tier or a reward. A proposal store may refuse such an action for a player at risk
-   * of harm; the flag tells it which action types grant a benefit without naming them.
-   * Absent reads as false.
-   */
   benefitsPlayer?: boolean;
-  /**
-   * The payloads that give the player something of value, for an action type whose benefit
-   * depends on its payload: `add_tag` grants one with `tagKey` `vip` and protects the player and
-   * the operator with its other tags, so flagging the whole type would refuse protective tagging
-   * of a player at risk. A proposal store treats a proposal whose `field` holds one of `values` as
-   * it treats a `benefitsPlayer` type. Leave it out where `benefitsPlayer` is true, which covers
-   * every payload.
-   */
   benefitsPlayerWhen?: ActionPayloadMatch;
-  /**
-   * The payload field that tells two proposals of this type for one player apart: proposals that
-   * differ in it change different things - two tags, two withdrawals - so a proposal store that
-   * keeps one open proposal of a kind per player keeps one per value of this field. A string or
-   * number field every payload carries. Absent, every proposal of the type for a player is the
-   * same kind.
-   */
   distinctBy?: string;
   payloadSchema: P;
-  /** Codes the precondition may refuse with and the executor may fail with. */
   errors: readonly string[];
 };
 
-/**
- * Payloads whose top-level `field` holds one of `values`. Boot refuses a field the payload schema
- * does not declare and a value it does not accept for that field.
- */
 export type ActionPayloadMatch = {
   field: string;
   values: readonly string[];
@@ -210,13 +168,6 @@ export const ActionExecutionOutcomeSchema = z.object({
 });
 export type ActionExecutionOutcome = z.infer<typeof ActionExecutionOutcomeSchema>;
 
-/**
- * Runs an approved proposal. A replay while the effect still holds must perform nothing and
- * resolve 'already_applied', which makes a retry after a crash safe. Core stores no proposals, so
- * executors key on the resulting state, which may record the proposal id: after someone else
- * changes that state, a replay may apply again or answer a declared refusal, so a proposal store
- * must not re-execute a proposal it recorded as executed.
- */
 export type ActionExecutor<P extends z.ZodObject = z.ZodObject> = (
   payload: z.output<P>,
   proposalId: string,
@@ -236,30 +187,19 @@ export function defineActionType<P extends z.ZodObject>(
 
 export type McpToolDescriptor = McpToolContract & {
   owner: string;
-  /**
-   * The id with every dot replaced by an underscore. The major model APIs reject dots in
-   * function names, so a consumer sends this name to models and MCP clients and maps back.
-   */
   modelName: string;
   inputJsonSchema: Record<string, unknown>;
   outputJsonSchema: Record<string, unknown>;
 };
 
 export type ActionTypeDescriptor = Omit<ActionTypeContract, 'benefitsPlayerWhen' | 'distinctBy'> & {
-  /** False for an action type that leaves it out. */
   benefitsPlayer: boolean;
-  /** Null for an action type that leaves it out. */
   benefitsPlayerWhen: ActionPayloadMatch | null;
-  /** Null for an action type that leaves it out. */
   distinctBy: string | null;
   owner: string;
   payloadJsonSchema: Record<string, unknown>;
 };
 
-/**
- * The payload field that names the player an event is about. Resolve it to a player with
- * `PLAYER_SEGMENT_READER.resolve`, by user id or by player id.
- */
 export type TriggerSubjectField = 'playerId' | 'userId';
 
 export type TriggerDescriptor = {
@@ -268,32 +208,17 @@ export type TriggerDescriptor = {
   version: number;
   domain: string;
   payloadJsonSchema: Record<string, unknown>;
-  /**
-   * `userId` holds a user id, which may be a staff account's; `playerId` a player id that can
-   * be null on a given event. Null when the event is about no single player, or about one who
-   * is out of the segment reader's population by then.
-   */
   subjectField: TriggerSubjectField | null;
 };
 
-/**
- * Topics whose derived subject is wrong. Every other topic takes `userId` when its payload has
- * one, else `playerId`, else none: where a payload carries both they name the same person, and
- * its `playerId` is null whenever the emitter could not read the player, while `userId` never
- * is. Where a payload's `playerId` names whoever acted (the moderator in a kick, ban or role
- * change), `userId` is still the member it happened to.
- */
 export const TRIGGER_SUBJECT_OVERRIDES: Partial<
   Record<DomainEventName, TriggerSubjectField | null>
 > = {
-  // playerId is the inviter; the invited player is `inviteeId`.
   'chat.room.invite.sent': null,
   'chat.room.invite.withheld': null,
-  // About admin accounts.
   'iam.role.assigned': null,
   'iam.role.revoked': null,
   'identity.2fa.enrollment_blocked': null,
-  // The player has left the segment reader's population when the event arrives.
   'player.account.closed': null,
   'identity.user.deactivated': null,
 };
@@ -314,10 +239,6 @@ function subjectFieldOf(topic: DomainEventName): TriggerSubjectField | null {
 
 let eventTriggers: readonly TriggerDescriptor[] | undefined;
 
-/**
- * Every domain event as a trigger, derived from `domainEventSchemas` once and memoised. What
- * may start a run is the kernel's `listTriggers()`: the operator's allow-list of these.
- */
 export function triggerCatalog(): readonly TriggerDescriptor[] {
   eventTriggers ??= DOMAIN_EVENT_CATALOG.map((topic) => {
     const [domain = topic] = topic.split('.');
@@ -343,39 +264,17 @@ export type McpToolResult = { ok: true; output: Record<string, unknown> } | McpF
 export type ActionPreconditionResult = { ok: true } | McpFailure;
 export type ActionExecutionResult = ({ ok: true } & ActionExecutionOutcome) | McpFailure;
 
-/**
- * The only way to run an agent-callable tool or action type. Every tool call and action
- * execution is checked against the caller's IAM grant and the input schema, returns only
- * allow-listed output and declared error codes (never an exception message), and leaves
- * exactly one audit record.
- */
 export type McpKernel = {
-  /**
-   * Changes when a tool or action type is added, removed or bumps its schema version, and when
-   * an allowed trigger is added or removed or changes its version or subject field. An action
-   * type's flags (`reversible`, `benefitsPlayer`, `benefitsPlayerWhen`, `distinctBy`) do not
-   * change it: a consumer reads them from the descriptor when it acts.
-   */
   readonly catalogVersion: string;
   listTools(): readonly McpToolDescriptor[];
   listActionTypes(): readonly ActionTypeDescriptor[];
-  /** The domain events the operator allow-listed in `PlatformConfig.agents.triggers.topics`. */
   listTriggers(): readonly TriggerDescriptor[];
   invokeTool(toolId: string, input: unknown, run: RunContext): Promise<McpToolResult>;
-  /**
-   * Checks the caller's IAM grant for the action type, as an execution does, and answers
-   * `forbidden` without running the precondition when it is missing. Writes no audit record.
-   */
   checkPrecondition(
     actionTypeId: string,
     payload: unknown,
     run: RunContext,
   ): Promise<ActionPreconditionResult>;
-  /**
-   * Does not re-run the precondition: an executor guards its own state under its own
-   * locks, and a replay while its effect still holds resolves 'already_applied'. The audit
-   * write is retried before the call fails, because the effect is already committed.
-   */
   executeAction(
     actionTypeId: string,
     payload: unknown,

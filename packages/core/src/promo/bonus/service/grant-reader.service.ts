@@ -50,7 +50,6 @@ const GRANT_COLUMNS = {
   bonusBalance: promoGrant.bonusBalance,
   wageringRequired: promoGrant.wageringRequired,
   wageringProgress: promoGrant.wageringProgress,
-  // Settlement credits only an active grant, and no more than its requirement has left.
   pendingWagered: sql<string>`case when ${promoGrant.status} = 'active' then least(
     (
       select coalesce(sum(${promoGrantRound.progressPending}), 0)
@@ -71,7 +70,6 @@ const GRANT_COLUMNS = {
   createdAt: promoGrant.createdAt,
 };
 
-/** Joined, not snapshotted: a grant shows its offer's current name, and none without an offer. */
 const COLUMNS = {
   ...GRANT_COLUMNS,
   offerKey: promoOffer.key,
@@ -104,13 +102,6 @@ const ADMIN_COLUMNS = {
   ) end`,
 };
 
-/**
- * A grant is a credit the player received, so every grant that was ever funded reads as a
- * completed credit of its granted amount - what happened to the bonus afterwards (wagered,
- * expired, forfeited) is the grant's own story, told on the bonus screen. A pending grant waits
- * for a free slot before it is funded; one that closed without ever being activated never was, and
- * reads as cancelled beside a cancelled one.
- */
 export const bonusGrantLedger: BonusGrantLedgerReader = {
   ledgerRowsQuery: (userId) => sql`
     select
@@ -132,7 +123,6 @@ export const bonusGrantLedger: BonusGrantLedgerReader = {
     where ${promoGrant.userId} = ${userId}`,
 };
 
-/** What a player is allowed to see of their own bonuses. The terms snapshot stays internal. */
 export class GrantReaderService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -177,11 +167,6 @@ export class GrantReaderService {
     return { items: rows.map(toPlayerGrant), total: Number(total?.n ?? 0), page, limit };
   }
 
-  /**
-   * One row per currency the player holds live bonus funds in. Summed from the grants rather
-   * than read off a balance column, because the grants are where the funds are: there is no
-   * second place for the two to disagree.
-   */
   async balances(userId: Uuid, currency?: string): Promise<BonusBalance[]> {
     const rows = await this.drizzle.db
       .select({
@@ -229,7 +214,6 @@ export class GrantReaderService {
     }));
   }
 
-  /** The movements behind one of the caller's own grants; someone else's id is simply missing. */
   async entries(
     userId: Uuid,
     id: PromoGrant['id'],
@@ -282,10 +266,6 @@ export class GrantReaderService {
     return grant;
   }
 
-  /**
-   * Scoped to the caller, and missing rather than forbidden when it belongs to someone else:
-   * a 403 would confirm the id exists.
-   */
   async get(userId: Uuid, id: PromoGrant['id']): Promise<PlayerGrant> {
     const [row] = await this.drizzle.db
       .select(COLUMNS)
