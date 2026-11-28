@@ -297,8 +297,8 @@ test('ROSTER spawns only the lenses the diff needs', () => {
     [
       'ui',
       { 'apps/web/src/shell/components/card.tsx': 'export const Card = () => null;\n' },
-      ['ROSTER: quality - 1 runtime files'],
-      ['ROSTER: risk', 'ROSTER-ASK', 'ROSTER: none'],
+      ['ROSTER-ASK: quality - RISK low, 1 runtime files'],
+      ['ROSTER: quality', 'ROSTER: risk', 'ROSTER-ASK: risk', 'ROSTER: none'],
     ],
     [
       'srv',
