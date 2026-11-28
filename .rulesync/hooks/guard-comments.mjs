@@ -68,9 +68,6 @@ const postsComment = (call) => {
   );
 };
 
-// ponytail: splits on shell separators without parsing quotes; a body with `;` before the path slips
-// through, a quoted `sh -c '...'` or a backticked call in a commit message is denied, and curl, `xargs -I {}` and a script
-// piped into a shell are not seen
 const command = extractCommand(readPayload())
   .replace(/\\\r?\n/g, ' ')
   .replace(SHELL_SCRIPT, '; $2 ;');

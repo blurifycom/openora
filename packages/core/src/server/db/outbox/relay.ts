@@ -87,9 +87,6 @@ export async function oldestUnrelayedEvent(
  *
  * The same loop prunes published outbox rows older than `EVENT_RETENTION_MS` (and
  * `processed_events` a day later), at most once an hour per replica.
- *
- * ponytail: polls every 200ms per replica (an indexed, usually-empty claim). Swap
- * the poll for LISTEN/NOTIFY if the idle query load or the publish latency matters.
  */
 export class OutboxRelay {
   private timer: ReturnType<typeof setInterval> | undefined;

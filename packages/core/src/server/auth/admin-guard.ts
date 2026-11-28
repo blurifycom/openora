@@ -192,8 +192,6 @@ export class AdminGuard {
     }
     const active = await this.activeRoles(userIds);
     const admins = active.filter(({ role }) => isRoleName(role));
-    // ponytail: one grants read per admin on a cold cache, since the resolver port resolves a
-    // single user; a batched `getGrantsMany` on AdminPermissionResolver lifts that ceiling.
     const entries = await mapConcurrent(
       admins,
       GRANT_RESOLVE_CONCURRENCY,

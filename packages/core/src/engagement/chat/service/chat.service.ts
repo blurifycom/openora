@@ -573,9 +573,6 @@ export class ChatService {
     };
   }
 
-  // ponytail: one account read per online member. Over the identity service that is a batch of
-  // ACCOUNTS_BATCH_MAX ids per call, and past the remote cache cap (10k) every count reads cold;
-  // a room that big needs an identity-side staff count instead.
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
     const onlineUsers = await this.accounts.getAccounts(onlineUserIds);

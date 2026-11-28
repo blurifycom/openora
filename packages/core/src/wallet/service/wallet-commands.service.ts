@@ -1373,7 +1373,6 @@ export class WalletCommandsService implements WalletCommands {
   // Every reversal on a round, named or not, fits under its stakes, a re-collected stake included:
   // a round with no stake in this currency matches no reversal, and what its reversals returned
   // never exceeds what its stakes took. Read after the row is written, so it counts itself.
-  // ponytail: per-round cap, not per-bet; a caller that names the bet also gets the exact check.
   private async assertRoundCovers(
     txn: DrizzleDb,
     walletId: Wallet['id'],

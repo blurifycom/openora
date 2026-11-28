@@ -54,7 +54,6 @@ export class NotificationsService {
   }
 
   // The dispatch worker's entry: a job queued by the previous release has no `params`.
-  // ponytail: remove together with the title/body columns; the worker then calls create().
   async createFromQueuedJob(raw: CreateNotificationInput): Promise<Notification | null> {
     return this.insert(QueuedNotificationInputSchema.parse(raw));
   }

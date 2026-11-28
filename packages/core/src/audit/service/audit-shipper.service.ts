@@ -246,9 +246,6 @@ export type AuditShipperOptions = {
  * Ships `audit_outbox` to the chain in the background: polls every `intervalMs`, keeps going
  * while batches come back full, and backs off exponentially (capped at 5s) while shipping fails.
  * Every replica runs one; the shipper lock lets one ship at a time and the rest skip.
- *
- * ponytail: polls every 200ms per replica (an indexed, usually empty read). Swap for LISTEN/NOTIFY
- * if the idle load or the audit lag matters.
  */
 export class AuditShipper {
   private running = false;

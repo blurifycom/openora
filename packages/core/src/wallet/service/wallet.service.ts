@@ -980,9 +980,6 @@ export function namespacedIdempotencyKey(namespace: string, rawKey: string): str
 
 const EVM_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
-// ponytail: a flat threshold - a starter heuristic, not a compliance risk engine. Auto-approval
-// reads it in the fx pivot; the review-queue tag still compares the raw amount, so it is only
-// a display hint there. Revisit with a real risk service if/when one exists.
 const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
 // A withdrawal that paid nothing out is not a cash-out, so a vendor failure or a cancellation

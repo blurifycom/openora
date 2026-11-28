@@ -44,7 +44,6 @@ type Logger = {
  * `RacePayoutService` applies to its own grants.
  */
 export class RankChallengePayoutService {
-  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
   private readonly failures = new Map<Uuid, number>();
 
   constructor(

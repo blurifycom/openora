@@ -142,8 +142,6 @@ export function outline(hit: SymbolHit): string[] {
   );
 }
 
-// ponytail: per-line stripping, so a template literal or regex literal holding brackets can end
-// a body early; a real TypeScript parse if that shows up in practice.
 // Disjoint branches (escape vs non-backslash) keep this linear on a run of backslashes.
 const STRING_OR_COMMENT = /(['"`])(?:\\[\s\S]|(?!\1)[^\\])*\1|\/\/.*$/g;
 

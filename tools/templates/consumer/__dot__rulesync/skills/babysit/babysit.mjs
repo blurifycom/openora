@@ -18,7 +18,6 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 const EVERY_MS = 120_000;
-// ponytail: a repo with no CI on the last commit reads green after this (never under --once); a head-SHA match on checks if it matters
 const NO_CI_MS = 10 * 60_000;
 const MAX_ERRORS = 5;
 const FAILED = [
@@ -198,7 +197,6 @@ function gitlab() {
 
 // The lock names the Claude session this runs under, not this process: the watcher exits on every
 // line of work, and the session still owns the MR while it fixes it. The session ending frees it.
-// ponytail: a pid reused by an unrelated process after a crash reads as alive; the next reboot clears it.
 // Without a `claude` ancestor (another agent) the lock lives only as long as this process.
 const sessionPid = (() => {
   try {

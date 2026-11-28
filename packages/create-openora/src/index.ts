@@ -28,8 +28,6 @@ function die(message: string): never {
   process.exit(1);
 }
 
-// ponytail: mirrors the payload of packages/core/src/server/runtime/telemetry.ts
-// so the scaffolder stays free of the core runtime; change both together.
 async function sendScaffoldPing(): Promise<void> {
   await fetch(process.env['OPENORA_TELEMETRY_URL'] ?? TELEMETRY_URL, {
     method: 'POST',

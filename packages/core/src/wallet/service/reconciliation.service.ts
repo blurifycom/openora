@@ -1985,9 +1985,6 @@ export class ReconciliationService {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
     // Mirrors the externalId this loop files below, which is the findings dedup key. A row never
     // handed to a vendor files only stuck_withdrawal_approved, so only that kind reports it.
-    // ponytail: a vendor-bound row counts as reported with either of its kinds, so once it holds
-    // an unknown_at_provider finding a later outage report for it waits for batch room; its open
-    // finding already flags it. Track the kind per row if that ever hides an outage.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} IN
@@ -2492,9 +2489,6 @@ export class ReconciliationService {
           )
       ).map((row) => row.userId),
     );
-    // ponytail: a fixed per-cycle cap of batchSize successful owner re-publishes, at most
-    // 2x batchSize attempts so a player who keeps failing cannot starve the rest; a config
-    // knob if a backlog needs one.
     let repairsLeft = batchSize;
     let attemptsLeft = 2 * batchSize;
     let deferred = 0;
