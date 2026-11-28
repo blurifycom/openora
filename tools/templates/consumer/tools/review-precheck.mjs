@@ -579,7 +579,11 @@ const roster = () => {
   ];
   const rows = [];
   if (runtime.length > 0) {
-    rows.push(`ROSTER: quality - ${runtime.length} runtime files, first ${runtime[0]}`);
+    rows.push(
+      /^low\b/.test(risk)
+        ? `ROSTER-ASK: quality - RISK low, ${runtime.length} runtime files, first ${runtime[0]}`
+        : `ROSTER: quality - ${runtime.length} runtime files, first ${runtime[0]}`,
+    );
   }
   if (/^(high|critical)\b/.test(risk)) {
     rows.push(`ROSTER: risk - RISK ${risk}`);
