@@ -121,6 +121,17 @@ if (process.argv.includes('--stamp')) {
 
 const payload = readPayload();
 const raw = extractCommand(payload);
+const LEADING_CD =
+  /^[ \t]*cd[ \t]+(?:'(\/[^'\n]*)'|"(\/[^"$`\\!\n]*)"|((?:~|\/)[^\s;&|$`'"(){}[\]*?\\<>!]*))[ \t]*&&/;
+const into = LEADING_CD.exec(raw);
+const bare = into?.[3];
+const target =
+  into?.[1] ??
+  into?.[2] ??
+  (bare && /^(?:\/|~\/)/.test(bare) && process.env.HOME
+    ? bare.replace(/^~(?=\/)/, process.env.HOME)
+    : undefined);
+const rest = target ? raw.slice(into[0].length) : raw;
 // A command handed to a shell (`sh -c '...'`, `eval "..."`) runs its quoted text: read it unquoted.
 const command = /\b(?:\w*sh\s+-\w*c|eval)\b/.test(raw)
   ? raw.replace(/['"]/g, ' ')
@@ -149,7 +160,7 @@ const pending = sources.filter((source) => !source || !SHARED.test(source));
 if (pending.length === 0) {
   process.exit(0);
 }
-const state = checkout(payload.cwd ?? process.cwd());
+const state = checkout(target ?? payload.cwd ?? process.cwd());
 if (!state || !existsSync(join(state.root, '.rulesync', 'hooks', 'guard-mr.mjs'))) {
   // Not a checkout of this repository: it has no stamp, so its own rules apply to a plain create.
   // The guarded repository is the one this hook file lives in.
@@ -171,7 +182,7 @@ if (!state || !existsSync(join(state.root, '.rulesync', 'hooks', 'guard-mr.mjs')
   } catch {
     // no git here, no origin to compare, or no remote: nothing proves where it lands
   }
-  const flat = literals(raw);
+  const flat = literals(rest);
   if (!foreign || !PLAIN_CREATE.test(flat) || NAMES_REPO.test(flat)) {
     deny(
       'Blocked: from a checkout of another repository only one plain `gh pr create`/`glab mr create` runs, with no shell syntax or `-R` (pass the body with `--body-file`), and none of its remotes may point here.',

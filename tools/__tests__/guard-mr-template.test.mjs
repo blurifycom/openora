@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -198,6 +198,24 @@ test("a checkout of another repository is left to that repository's rules", () =
     assert.equal(from('gh pr create --re""po=o/r -H x'), DENIED);
     assert.equal(from('gh pr create -H x "-R" o/r'), DENIED);
     assert.equal(from("gh pr create -H x '--repo' o/r"), DENIED);
+    const fromHere = (command, home = process.env.HOME) =>
+      spawnSync('node', [guard], {
+        cwd: repo,
+        env: { ...process.env, HOME: home },
+        input: JSON.stringify({ tool_input: { command }, cwd: repo }),
+      }).status;
+    assert.equal(fromHere(`cd ${other} && gh pr create --draft --base dev --head feat`), ALLOWED);
+    assert.equal(fromHere(`cd "${other}" && glab mr create --fill --yes`), ALLOWED);
+    assert.equal(
+      fromHere(`cd ~/${basename(other)} && glab mr create --fill`, dirname(other)),
+      ALLOWED,
+    );
+    assert.equal(fromHere(`cd ${other} && gh pr create -R o/r -H unverified`), DENIED);
+    assert.equal(fromHere(`cd ${other} && gh pr create -H x; gh pr create -H unverified`), DENIED);
+    assert.equal(fromHere(`cd ${other} && cd ${repo} && gh pr create -H unverified`), DENIED);
+    assert.equal(fromHere(`cd ${other}/missing && gh pr create -H x`), DENIED);
+    assert.equal(fromHere(`cd "~/${basename(other)}" && gh pr create -H unverified`), DENIED);
+    assert.equal(fromHere(`cd ${repo} && gh pr create -H unverified`), DENIED);
     // A rewrite that sends the other checkout's own remote here.
     execFileSync(
       'git',
