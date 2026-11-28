@@ -30,22 +30,11 @@ An operator overlay rebinds one or both tokens **after** the `mail` plugin. A re
 overlay adds languages and a designed HTML body; a sender overlay points at a real
 provider (SMTP, SES, Postmark).
 
-```ts
-// extensions/mail/plugin.ts
-import { EMAIL_SENDER, EMAIL_TEMPLATE_RENDERER } from '@openora/core/contracts';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { SmtpSender } from './smtp-sender.js';
-import { ReactEmailRenderer } from './react-email-renderer.js';
-
-export default {
-  id: 'operator-mail',
-  dependsOn: ['mail'],
-  register(ctx) {
-    ctx.provide(EMAIL_SENDER, () => new SmtpSender(process.env.SMTP_URL));
-    ctx.provide(EMAIL_TEMPLATE_RENDERER, () => new ReactEmailRenderer());
-  },
-} as const satisfies Plugin<CoreTokenCatalog>;
-```
+The overlay is a plugin with id `operator-mail` that depends on `mail` and, in `register`, provides
+`EMAIL_SENDER` with a provider-backed sender (for example an SMTP sender fed by an `SMTP_URL` env
+var) and `EMAIL_TEMPLATE_RENDERER` with a renderer of its own. Both tokens are declared in
+`packages/core/src/contracts/adapters/mail.ts`; the defaults the overlay replaces live under
+`packages/core/src/mail/adapters/`.
 
 Register it in `extensions.config.ts` after the core `mail` entry (`Container` is
 last-wins).

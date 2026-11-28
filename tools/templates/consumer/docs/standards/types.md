@@ -22,10 +22,3 @@ Read this before adding or changing a schema, type, or enum-like value set.
   Never a TS `enum`, never a second hand-typed copy - import the one from `@openora/*`.
 - Make illegal states unrepresentable - discriminated unions
   (`{ status: 'ok'; data } | { status: 'error'; error }`) over optional-flag soup.
-
-```ts
-// bad - hand-written duplicate of an inferrable type
-type User = { id: string; email: string; roles: string[] };
-// good - infer from the schema that already validates the shape
-type User = z.infer<typeof UserSchema>;
-```

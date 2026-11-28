@@ -16,21 +16,12 @@ The endpoint is off by default. Enabling it takes two steps.
 1. Install the MCP SDK next to `@openora/core`. Core declares it as an optional peer dependency
    and loads it only while the endpoint is on, so a deployment without MCP never installs it.
 
-   ```bash
-   pnpm add @modelcontextprotocol/sdk
-   ```
+   Add the `@modelcontextprotocol/sdk` package with `pnpm add`.
 
 2. Turn the endpoint on in the `agents.mcp` block of the platform config, with the backoffice
    host it answers on. The [agents config schema](../../packages/core/src/contracts/schemas/agents.ts)
-   lists every setting with its default and bounds.
-
-   ```yaml
-   agents:
-     mcp:
-       enabled: true
-       allowedHosts:
-         - backoffice-api.example.com
-   ```
+   lists every setting with its default and bounds. Set `enabled` to true and list the backoffice
+   API host (for example `backoffice-api.example.com`) under `allowedHosts`.
 
 - **Bind it to the backoffice host.** The config refuses to enable the endpoint without at least
   one allowed host. On any other host the path is a plain 404, so it never appears on the player
@@ -86,11 +77,9 @@ reads it to state the real limit and check the lifetime before it sends the requ
 
 ## Connect Claude Code
 
-```bash
-claude mcp add --transport http --scope local openora \
-  https://backoffice-api.example.com/mcp \
-  --header "Authorization: Bearer <token>"
-```
+Register the server with `claude mcp add`. Pass `--transport http`, `--scope local`, the server name
+`openora`, and the `/mcp` URL on the backoffice API host. Pass `--header` with an `Authorization`
+header that carries the generated token as a bearer credential.
 
 Run `/mcp` in Claude Code (or restart it) to connect. The tools appear with underscores in their
 names, for example the player summary tool as `player_summary`. When a token is revoked or

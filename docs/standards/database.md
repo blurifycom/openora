@@ -8,25 +8,9 @@ Never an inline value array (lint error `oss-module-shape/no-inline-pg-enum`). D
 
 ## Identifiers - snake_case everywhere
 
-Every Drizzle instance and drizzle-kit config sets `casing: 'snake_case'`, so the SQL name derives from the camelCase key. Pass an explicit name only where casing cannot derive it: table names, `pgEnum` types, and index/constraint names.
+Every Drizzle instance and drizzle-kit config sets snake_case casing, so the SQL name derives from the camelCase key. Pass an explicit name only where casing cannot derive it: table names, `pgEnum` types, and index/constraint names.
 
-The first declaration is valid; the second violates the naming rule.
-
-```ts
-export const walletTransaction = pgTable(
-  'wallet_transaction',
-  {
-    id: uuid().primaryKey().defaultRandom(),
-    walletId: uuid().notNull(),
-    type: walletTransactionType().notNull(),
-    amount: decimal({ precision: 18, scale: 2 }).notNull(),
-    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index('wallet_transaction_wallet_id_idx').on(t.walletId)],
-);
-
-pgTable('WalletTransaction', { wallet_id: uuid('walletId') });
-```
+A table is a snake_case name with camelCase keys, an `id` UUID key, a decimal amount and a timestamptz `createdAt`, with the index named `<table>_<cols>_idx`; a PascalCase table name or an explicit camelCase column name violates the rule. Canonical schema to copy: `packages/core/src/wallet/schema/index.ts`.
 
 Lint error `oss-module-shape/drizzle-snake-case` rejects a non-snake table, enum, or index name and an explicit camelCase column name. Row type is `typeof walletTransaction.$inferSelect`; never hand-write it.
 
@@ -38,14 +22,9 @@ Lint error `oss-module-shape/no-float-money` bans a float-typed column in a sche
 
 ## Timestamps - always timestamptz
 
-The first declaration is valid; the second uses a naive timestamp and is invalid.
+Declare every timestamp column with `withTimezone` set to true; a timestamp declared without it is naive and invalid.
 
-```ts
-createdAt: timestamp({ withTimezone: true });
-createdAt: timestamp();
-```
-
-Applies to every datetime column (`createdAt`, `updatedAt`, `expiresAt`, any `*At`). Lint error `oss-module-shape/no-naive-timestamp` flags a `timestamp()` missing `{ withTimezone: true }`.
+Applies to every datetime column (`createdAt`, `updatedAt`, `expiresAt`, any `*At`). Lint error `oss-module-shape/no-naive-timestamp` flags a timestamp column declared without it.
 
 ## Keys, references, indexes
 
@@ -56,23 +35,11 @@ Applies to every datetime column (`createdAt`, `updatedAt`, `expiresAt`, any `*A
 
 ## Efficient operations
 
-The first query is an N+1 anti-pattern; the second is the required batched query.
-
-```ts
-for (const id of ids) await db.select().from(wallet).where(eq(wallet.id, id));
-await db.select().from(wallet).where(inArray(wallet.id, ids));
-```
+Fetch a set of rows with one batched query (`inArray` on the id column), never one query per id in a loop - that is an N+1.
 
 - Select only the columns you use; do not read wide rows for one field.
 - Bound the fan-out - never `Promise.all(rows.map(fn))` when `rows` is a query result and `fn` touches the DB. Use `mapConcurrent(items, limit, fn)` (`@openora/core/server`). Lint: `oss-module-shape/no-unbounded-db-fanout`.
-- Critical mutations are transactional and idempotent - a DB guard inside the transaction, not just an `idempotencyKey`.
-
-```ts
-await db.transaction(async (t) => {
-  if (await ledgerExists(t, idempotencyKey)) return;
-  await insertLedger(t, { idempotencyKey, amount });
-});
-```
+- Critical mutations are transactional and idempotent - a DB guard inside the transaction, not just an `idempotencyKey`: inside the transaction, check whether the ledger row for the key exists and return if it does, otherwise insert it. See `insertIdempotentTransaction` in `packages/core/src/wallet/service/wallet.service.ts`.
 
 ## Migrations
 

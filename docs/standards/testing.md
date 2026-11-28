@@ -27,21 +27,7 @@ Pick the outermost tier that reaches the behaviour. A test earns its keep by run
 
 ## How to write them
 
-- **Test behaviour, not implementation** - assert the resulting rows, cache state, and return value, not that a builder method was called: `expect(await service.get(id)).toEqual(user)`, not `expect(db.select).toHaveBeenCalled()`.
-
-  ```ts
-  // bad - a mocked builder chain; proves a call order, not a result
-  const db = { select: vi.fn().mockReturnValue({ from: vi.fn().mockResolvedValue([row]) }) };
-  expect(db.select).toHaveBeenCalled();
-  // good - real Postgres per file, external ports doubled through the mock helper
-  let db: TestDb;
-  beforeAll(async () => {
-    db = await createTestDb([migrateProfile, migrate]);
-  });
-  afterAll(() => db.drop());
-  const svc = new TagService(db.drizzle, makeEventBus());
-  await expect(svc.assign(assignment)).rejects.toThrow(TagNotFoundError);
-  ```
+- **Test behaviour, not implementation** - assert the resulting rows, cache state, and return value, not that a builder method was called: `expect(await service.get(id)).toEqual(user)`, not that `db.select` was called. A mocked builder chain proves a call order, not a result: give each file a real Postgres through the test database helper in `packages/testing/src/db.ts`, double only external ports through the shared `mock` helper, and assert the typed error a service throws.
 
 - **Cover new logic as part of the change** - unit for pure fns; always include authz negatives, in the route's E2E.
 - **Every test catches a regression no other test catches.** Before adding one, name the bug it fails on; if an existing test already fails on that bug, do not add it. Cover a behaviour once, at the outermost tier that reaches it: an E2E that proves a refusal makes a unit or integration test of the same refusal redundant. Add the inner-tier test only for a branch, input or side effect (event, audit, ledger row) the outer one cannot reach. Pure-function tests stay branch-complete; this rule is about repeating one outcome across tiers.

@@ -21,11 +21,7 @@ Read this before adding a state-changing action or changing audit storage, event
 ## Runbook
 
 **Forked chain.** Two rows sharing a `prev_hash` mean the chain forked, which the unique `prev_hash`
-index should make impossible. Detect it with:
-
-```sql
-SELECT prev_hash, count(*) FROM audit_log GROUP BY prev_hash HAVING count(*) > 1 LIMIT 5;
-```
+index should make impossible. Detect it by grouping `audit_log` rows on `prev_hash` and looking for a group larger than one.
 
 Export the affected rows and their neighbours by `seq` as evidence before touching anything. Repair
 only under a change ticket: disabling the append-only trigger is itself an audited change, so record
@@ -36,11 +32,7 @@ session, and notify the regulator where the licence requires it.
 oldest pending row and the rejected count. Nothing polls it for you: wire it into alerting and page
 when the rejected count is above zero or the oldest pending age passes a few seconds. A pending age
 that keeps growing means no shipper holds the lock or every round fails: check the `audit-shipper`
-error logs and for the session holding the shipper lock:
-
-```sql
-SELECT * FROM pg_locks WHERE locktype = 'advisory' AND objid = hashtext('audit_shipper')::oid;
-```
+error logs and for the session holding the shipper lock, which is a Postgres advisory lock in `pg_locks` keyed on the hash of the shipper lock name in `packages/core/src/audit/service/audit-shipper.service.ts`.
 
 A rejected row never reached the chain; its `error` column says why. A schema error means a mapping
 produced a bad entry: fix it, and record the missing change from `entry` through `AUDIT_WRITER` under

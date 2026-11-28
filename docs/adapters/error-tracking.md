@@ -29,14 +29,10 @@ or logs with `logger.error({ err })`. To opt an expected/noisy error out of forw
 third-party timeout you log-and-retry - pass `report: false`: `logger.error({ err, report: false },
 'psp timeout, retrying')` is still logged, just not sent to the tracker (so it doesn't burn quota).
 
-Wiring, in `createApp`, after plugins load:
-
-```ts
-if (container.has(ERROR_TRACKING)) {
-  const tracker = container.get(ERROR_TRACKING);
-  setErrorReporter((error, context) => tracker.captureException(error, context));
-}
-```
+Wiring: `createApp` (`packages/core/src/server/runtime/create-app.ts`) does this after plugins load. If
+`ERROR_TRACKING` is bound, it resolves the tracker and installs it through `setErrorReporter`
+(`packages/core/src/server/kernel/error-reporter.ts`) so each reported error reaches
+`captureException` with its context.
 
 No overlay binds `ERROR_TRACKING` -> no reporter -> error logs stay logs-only. The engine imports
 no vendor SDK and has no `SENTRY_DSN`/vendor env of its own.
@@ -50,36 +46,14 @@ Real vendor adapters live in the consumer, bound via a self-disabling overlay pl
 pattern as the payment/KYC/realtime vendor overlays. Ship an `ErrorTrackingAdapter` impl and
 provide it; loading the overlay last makes its binding win.
 
-```ts
-// extensions/sentry/plugin.ts (consumer)
-import { ERROR_TRACKING } from '@openora/core/contracts';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import * as Sentry from '@sentry/node';
+The overlay is a plugin with its own id (for example `sentry`) whose `register` reads the vendor DSN
+from the environment and returns without providing anything when it is unset - self-disabling, so
+the platform stays logs-only. When a DSN is set it provides `ERROR_TRACKING` with an adapter whose
+`captureException` maps `ErrorContext` onto the vendor call: `userId` becomes the vendor user id,
+`tags` are kept with `traceId` added as a `trace_id` tag, and `extra` is passed through. The port
+and `ErrorContext` live in `packages/core/src/contracts/adapters/error-tracking.ts`.
 
-export default {
-  id: 'sentry',
-  register(ctx) {
-    const dsn = process.env['SENTRY_DSN'];
-    if (!dsn) {
-      return; // self-disabling: no DSN -> platform stays logs-only
-    }
-    ctx.provide(ERROR_TRACKING, () => {
-      Sentry.init({ dsn });
-      return {
-        captureException(error, context) {
-          Sentry.captureException(error, {
-            ...(context?.userId ? { user: { id: context.userId } } : {}),
-            tags: { ...context?.tags, ...(context?.traceId ? { trace_id: context.traceId } : {}) },
-            ...(context?.extra ? { extra: context.extra } : {}),
-          });
-        },
-      };
-    });
-  },
-} as const satisfies Plugin<CoreTokenCatalog>;
-```
-
-`Sentry.init` runs in the factory, which `createApp` resolves once for the container that serves,
+A vendor SDK init (Sentry's, say) belongs in the factory, which `createApp` resolves once for the container that serves,
 not in `register()`: a failed `SERVICE_MANIFEST` boot registers plugins into a container it then
 drops (ADR-0049). Initialising in a file preloaded with `node --import` works as well.
 

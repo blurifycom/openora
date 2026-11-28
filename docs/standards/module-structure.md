@@ -22,25 +22,7 @@ A module's agent surface keeps the same split: tool and action-type contracts (`
 - Tokens are typed symbols: `createToken<T>('NAME')`, declared with the port in `packages/core/src/contracts/adapters/`.
 - `Container` (`@openora/core/server`) wires factories: `register(token, factory)` (last-wins = overlay rebind), `get(token)` (lazy singleton), `onDispose(fn)`.
 - Services take deps by type via constructor; never touch the container. `plugin.ts` builds them: `ctx.routers.add('wallet', (c) => createWalletRouter(new WalletService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PAYMENT_ADAPTER))))`.
-- A dep captured in a closure is a smell - make it a port + token (canonical fix: `MAIL_DISPATCH` in mail).
-
-```ts
-// bad - the service reaches into the container and hides what it depends on
-export class WalletService {
-  constructor(private readonly container: Container) {}
-  async deposit() {
-    const psp = this.container.get(PAYMENT_ADAPTER);
-  }
-}
-// good - deps are constructor params of their port type; plugin.ts does the resolving
-export class WalletService {
-  constructor(
-    private readonly db: DrizzleService,
-    private readonly events: EventBus,
-    private readonly payments: PaymentAdapter,
-  ) {}
-}
-```
+- A dep captured in a closure is a smell - make it a port + token (canonical fix: `MAIL_DISPATCH` in mail). A service never holds the container and fetches a port from it: each dependency is a constructor parameter of its port type, and `plugin.ts` does the resolving, as `WalletService` in `packages/core/src/wallet/service/wallet.service.ts` does.
 
 Canonical wiring to copy: `packages/core/src/wallet/plugin.ts` (provides `PAYMENT_ADAPTER`, `WALLET_COMMANDS`, `ADMIN_WALLET_REPORTING`, then builds the router).
 
@@ -50,15 +32,7 @@ Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT
 
 ## Cross-module communication (lint-enforced)
 
-Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain` = error; `pnpm check:boundaries` is the whole-graph gate). ADR-0015.
-
-```ts
-// bad - reaches into another module's service; check:boundaries fails
-import { TagService } from '../../pam/tag/service/tag.service.js';
-// good - the owner binds a command port, the caller resolves the token
-const wallet = ctx.container.get(WALLET_COMMANDS);
-await wallet.debit(tx, { userId, amount, currency });
-```
+Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain` = error; `pnpm check:boundaries` is the whole-graph gate). ADR-0015. A caller never imports another module's service; the owner binds a command port and the caller resolves its token from the container, as callers of `WALLET_COMMANDS` do.
 
 Canonical seams to copy: `wallet -> tag` via `PLAYER_TAGS` (a required port, resolved lazily in the router factory), `tag -> wallet` via the `tag.withdrawal.screened` domain event (ADR-0059), `compliance -> pam` via the `kyc.status.changed` domain event.
 
@@ -93,21 +67,4 @@ Lint-enforced by `oss-module-shape/no-relative-zone-escape` (folded domains AND 
 | push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@openora/core/server`    |
 | canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PageQuerySchema`                                       | `@openora/core/contracts` |
 
-```ts
-// bad - re-rolls first-row-or-throw and the DTO mapping by hand
-const rows = await db.select().from(wallet).where(eq(wallet.id, id));
-if (rows.length === 0) {
-  throw new WalletNotFoundError(id);
-}
-return {
-  ...rows[0]!,
-  balance: String(rows[0]!.balance),
-  createdAt: rows[0]!.createdAt.toISOString(),
-};
-// good
-const row = findOneOrThrow(
-  await db.select().from(wallet).where(eq(wallet.id, id)),
-  new WalletNotFoundError(id),
-);
-return serializeRow(row, { dateFields: ['createdAt'], decimalFields: ['balance'] });
-```
+Use `findOneOrThrow` and `serializeRow` rather than re-rolling the first-row-or-throw check and the row-to-DTO mapping by hand; `packages/core/src/wallet/service/wallet.service.ts` shows them in use.

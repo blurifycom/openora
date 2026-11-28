@@ -112,14 +112,12 @@ Default: a human-readable report whose draft comments a person posts by hand.
 3. One status line per acceptance criterion: met, not met, or not verifiable. A UI criterion backed by a design screenshot is met only after comparing the rendered UI against it. A diff that crosses the ticket's out-of-scope line, or decides an open question in code without recording it on the ticket, is a draft comment citing that line.
 4. Exactly one GO or NO-GO sentence, last.
 
-`--ci`: print exactly this block and nothing else; a CI job parses it line by line.
+`--ci`: print exactly the lines below and nothing else; a CI job parses it line by line. Each line starts with one of four prefixes, and its fields follow in this order, separated by a spaced hyphen:
 
-```text
-FINDING: [BLOCK|WARN|INFO] <file>:<line> - <finding> - <evidence> - <rule or ADR> - <fix>
-TRACE: <entry point> - hops <n>/7 walked - callers <checked>/<found> - <ok|BLOCK reason>
-CRITERION: <acceptance criterion> - <met|not met|not verifiable>
-VERDICT: <GO|NO-GO> - <counts by severity> - <most critical finding>
-```
+- `FINDING:` severity (one of BLOCK, WARN, INFO, in square brackets), then `<file>:<line>`, the finding, the evidence, the rule or ADR, the fix.
+- `TRACE:` the entry point, then hops walked out of 7, then callers checked out of callers found, then `ok` or `BLOCK` with the reason.
+- `CRITERION:` the acceptance criterion, then exactly one of met, not met, not verifiable.
+- `VERDICT:` GO or NO-GO, then the counts by severity, then the most critical finding.
 
 - Order findings BLOCK, WARN, INFO; exactly one `VERDICT:` line, last.
 - In both forms, money, authz, data-loss, contract-break, unmet-acceptance, or trace BLOCK findings force NO-GO.
