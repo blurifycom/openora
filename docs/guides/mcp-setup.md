@@ -78,7 +78,7 @@ It reads `docs/catalog.json`, resolving it by walking up from `cwd`, then fallin
 `node_modules/@openora/mcp/docs/catalog.json`. The catalog is gitignored and generated on
 install and by the husky hooks; `pnpm gen:catalog` regenerates it by hand.
 
-Until it's published to npm, run it locally from the built `dist/`. Build it with `pnpm --filter @openora/mcp build` (rebuild after any source change), then add an `oss` entry under `mcpServers` in your editor's MCP config: type `stdio`, command `node`, and the absolute path to `packages/mcp/dist/main.js` in this checkout as its argument.
+Until it's published to npm, run it locally from the built `dist/`. Build it with `pnpm --filter @openora/mcp build` (rebuild after any source change), then add an `oss` entry under `mcpServers` in your editor's MCP config: type `stdio`, command `node`, and as its argument the absolute path to the `mcp` bin that `packages/mcp/package.json` declares, inside the built `dist/` of this checkout.
 
 Note: a `create:app` consumer doesn't need this - its generated `.mcp.json` already runs
 `@openora/mcp` from `node_modules`.
