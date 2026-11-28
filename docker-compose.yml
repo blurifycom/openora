@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18.7-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -20,7 +20,7 @@ services:
   # no WAL fsync, and the data dir lives in memory. Every start is a fresh cluster with
   # `oss_igaming_test` already created; the suites migrate their own databases.
   postgres-test:
-    image: postgres:18-alpine
+    image: postgres:18.7-alpine
     command:
       ['postgres', '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off']
     environment:
@@ -59,7 +59,7 @@ services:
   # binds it by setting REDIS_URL (redis://localhost:6379) - createApp auto-binds the
   # Redis adapters, no code change. See ADR-0028.
   redis:
-    image: valkey/valkey:9-alpine
+    image: valkey/valkey:9.1-alpine
     command:
       [
         'redis-server',
@@ -83,7 +83,7 @@ services:
   # Integration-test Redis, separate from the dev one above: the suites flush logical
   # databases 0-15 between tests, which would wipe dev keys. Nothing is persisted.
   redis-test:
-    image: valkey/valkey:9-alpine
+    image: valkey/valkey:9.1-alpine
     command:
       ['redis-server', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'no']
     ports:

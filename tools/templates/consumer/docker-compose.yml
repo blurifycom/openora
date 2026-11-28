@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18.7-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -16,7 +16,7 @@ services:
       retries: 10
 
   redis:
-    image: valkey/valkey:9-alpine
+    image: valkey/valkey:9.1-alpine
     command:
       [
         'redis-server',

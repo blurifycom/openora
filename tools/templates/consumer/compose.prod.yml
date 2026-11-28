@@ -21,7 +21,7 @@ x-runtime: &runtime
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18.7-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -36,7 +36,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: valkey/valkey:9-alpine
+    image: valkey/valkey:9.1-alpine
     command: ['redis-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
     volumes:
       - redis_data:/data
