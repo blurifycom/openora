@@ -106,19 +106,67 @@ const latestBaseline = sql`(
 
 export const DEFAULT_LEDGER_BASELINE_GRACE_SECONDS = 60 * 60;
 
-// The latest point a baseline may sit at for the pair `p`: the grace back, before its oldest
-// row still in a non-terminal status, and before the oldest transaction still writing to this
-// database, so every row at or before it is committed, final and never moves money again.
-const baselineCut = (graceSeconds: number) => sql`least(
+export type OldestOpenTransaction = {
+  pid: number;
+  applicationName: string;
+  ageSeconds: number;
+};
+
+export type OpenTransactionBound = {
+  cutBefore: string;
+  oldest: OldestOpenTransaction | null;
+};
+
+export async function readOpenTransactionBound(
+  db: DrizzleDb | DrizzleTx,
+): Promise<OpenTransactionBound> {
+  const { rows } = await db.execute<{
+    cut_before: string;
+    pid: number | null;
+    application_name: string | null;
+    age_seconds: number | null;
+  }>(sql`
+    select least(now(), o.xact_start)::text as cut_before, o.pid, o.application_name,
+      extract(epoch from now() - o.xact_start)::float8 as age_seconds
+    from (select 1) one
+    left join lateral (
+      select a.pid, a.application_name, a.xact_start from pg_stat_activity a
+      where a.datname = current_database() and a.pid <> pg_backend_pid()
+        and a.backend_type = 'client backend' and a.xact_start is not null
+      order by a.xact_start limit 1) o on true`);
+  const [row] = rows;
+  if (!row) {
+    throw new Error('readOpenTransactionBound: the bound query returned no row');
+  }
+  return {
+    cutBefore: row.cut_before,
+    oldest:
+      row.pid === null
+        ? null
+        : {
+            pid: row.pid,
+            applicationName: row.application_name ?? '',
+            ageSeconds: Number(row.age_seconds),
+          },
+  };
+}
+
+export type LedgerCut = {
+  graceSeconds: number;
+  cutBefore: OpenTransactionBound['cutBefore'];
+};
+
+const baselineCut = ({ graceSeconds, cutBefore }: LedgerCut) => sql`least(
   now() - make_interval(secs => ${graceSeconds}), (
   select min(o.created_at) - interval '1 microsecond' from wallet_transaction o
   where o.wallet_id = p.wallet_id and upper(o.currency) = p.currency
-    and o.status not in ${TERMINAL_STATUSES}), (
-  select min(a.xact_start) - interval '1 microsecond' from pg_stat_activity a
-  where a.datname = current_database() and a.pid <> pg_backend_pid()
-    and a.backend_xid is not null))`;
+    and o.status not in ${TERMINAL_STATUSES}),
+  ${cutBefore}::timestamptz - interval '1 microsecond')`;
 
-const cut = baselineCut(DEFAULT_LEDGER_BASELINE_GRACE_SECONDS);
+async function defaultCut(db: DrizzleDb | DrizzleTx): Promise<SQL> {
+  const { cutBefore } = await readOpenTransactionBound(db);
+  return baselineCut({ graceSeconds: DEFAULT_LEDGER_BASELINE_GRACE_SECONDS, cutBefore });
+}
 
 function balancePage(afterId: string | null, limit: number): SQL {
   return sql`select b.id, b.wallet_id, b.currency, b.amount from wallet_balance b
@@ -224,10 +272,9 @@ const breachKeyPrefix = sql`'wallet:' || c.wallet_id || ':' || c.currency || ':'
   || coalesce(c.baseline_id::text, 'none') || ':'`;
 
 /** Each pair of `pairs` beside its baseline in force and what its ledger adds up to from it. */
-function checkedPairs(pairs: SQL, pairCut: SQL = cut): SQL {
+function checkedPairs(pairs: SQL): SQL {
   return sql`select p.id, p.wallet_id, p.currency, p.amount as balance, bl.id as baseline_id,
-      bl.as_of as base_as_of, coalesce(bl.amount, 0) + l.total as expected, l.unpriced,
-      ${pairCut} as cut
+      bl.as_of as base_as_of, coalesce(bl.amount, 0) + l.total as expected, l.unpriced
     from (${pairs}) p
     left join lateral ${latestBaseline} bl on true
     cross join lateral ${ledgerAfter(sql`bl.as_of`)} l`;
@@ -258,7 +305,7 @@ export async function checkLedgerPage(
   afterId: string | null,
   limit: number,
   runId: WalletJobRun['runId'],
-  graceSeconds = DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
+  cut: LedgerCut,
 ): Promise<LedgerPairCheck[]> {
   const { rows } = await db.execute<{
     id: string;
@@ -271,7 +318,8 @@ export async function checkLedgerPage(
     advanced_to: string | null;
   }>(sql`
     with p as (${balancePage(afterId, limit)}),
-    c as (${checkedPairs(sql`select * from p`, baselineCut(graceSeconds))}),
+    c as (
+      select p.*, ${baselineCut(cut)} as cut from (${checkedPairs(sql`select * from p`)}) p),
     adv as (
       insert into wallet_balance_baseline (wallet_id, currency, amount, as_of, run_id)
       select c.wallet_id, c.currency, c.expected - a.total, c.cut, ${runId}
@@ -364,6 +412,7 @@ export async function lockAndEstimateBackfill(
   currency: string,
 ): Promise<{ baselineId: LedgerPairCheck['baselineId']; drift: string | null } | null> {
   await lockBalanceRow(txn, walletId, currency);
+  const cut = await defaultCut(txn);
   const { rows } = await txn.execute<{ baseline_id: string | null; drift: string | null }>(sql`
     select bl.id as baseline_id, (p.amount - l.total - e.estimate)::text as drift
     from (
@@ -406,7 +455,7 @@ export async function backfillBaselinePage(
   afterId: string | null,
   limit: number,
   runId: WalletJobRun['runId'],
-  graceSeconds = DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
+  cut: LedgerCut,
 ): Promise<{
   lastId: string | null;
   scanned: number;
@@ -425,7 +474,7 @@ export async function backfillBaselinePage(
   }>(sql`
     with p as (${balancePage(afterId, limit)}),
     needs as (
-      select p.*, ${baselineCut(graceSeconds)} as as_of
+      select p.*, ${baselineCut(cut)} as as_of
       from p
       where not exists (
           select 1 from wallet_balance_baseline bl
@@ -503,6 +552,7 @@ export async function rebaselinePair(
   currency: string,
   findingId: WalletReconciliationFinding['id'],
 ): Promise<BaselineMove | null> {
+  const cut = await defaultCut(db);
   const { rows } = await db.execute<{
     prior_id: string | null;
     prior_amount: string | null;

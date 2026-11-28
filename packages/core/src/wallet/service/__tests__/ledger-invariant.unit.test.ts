@@ -179,7 +179,10 @@ describe('checkLedgerPage settled-by-hand rows', () => {
       oid: 0,
       fields: [],
     });
-    await checkLedgerPage(drizzle.db, null, 10, '00000000-0000-4000-8000-000000000001');
+    await checkLedgerPage(drizzle.db, null, 10, '00000000-0000-4000-8000-000000000001', {
+      graceSeconds: 0,
+      cutBefore: '2026-01-01 00:00:00+00',
+    });
     const query = execute.mock.calls[0]?.[0];
     execute.mockRestore();
     if (!query || !(query instanceof SQL)) {

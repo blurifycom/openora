@@ -191,59 +191,68 @@ const REFILED_WHEN_STUCK_AGAIN: ReadonlySet<WalletReconciliationFindingKind> = n
   'stuck_withdrawal_processing',
 ]);
 
-/**
- * Files a stuck-withdrawal report, or reopens the one on file when the cycle closed it as moved on
- * and the withdrawal came back to that state. A report an admin closed stays closed. The finding
- * and its audit entry commit together.
- */
 async function fileOrReopenFinding(
   db: DrizzleDb | DrizzleTx,
   input: ReconciliationFindingInput,
   audit?: AuditWritePort,
 ): Promise<boolean> {
   return db.transaction(async (txn) => {
-    const [row] = await txn
-      .insert(walletReconciliationFinding)
-      .values(findingValues(input))
-      .onConflictDoUpdate({
-        target: [
-          walletReconciliationFinding.kind,
-          walletReconciliationFinding.providerName,
-          walletReconciliationFinding.externalId,
-        ],
-        targetWhere: sql`${walletReconciliationFinding.externalId} IS NOT NULL`,
-        set: {
-          status: 'open',
-          resolvedAt: null,
-          resolutionNote: null,
-          runId: input.runId,
-          amount: input.amount ?? null,
-          detail: input.detail ?? null,
-        },
-        setWhere: and(
-          eq(walletReconciliationFinding.status, 'resolved'),
-          isNull(walletReconciliationFinding.resolvedBy),
-        ),
-      })
-      .returning({
-        id: walletReconciliationFinding.id,
-        reopened: sql<boolean>`${walletReconciliationFinding}.xmax <> 0`,
-      });
-    if (row && audit) {
-      const recorded = findingRecordedAudit(row.id, input);
-      await audit.recordInTransaction(
-        txn,
-        row.reopened
-          ? {
-              ...recorded,
-              action: 'wallet.reconciliation_finding.reopened',
-              before: { status: 'resolved' },
-              after: { ...recorded.after, status: 'open' },
-            }
-          : recorded,
-      );
+    const [closedByCycle] = input.externalId
+      ? await txn
+          .select({
+            id: walletReconciliationFinding.id,
+            status: walletReconciliationFinding.status,
+            resolvedAt: walletReconciliationFinding.resolvedAt,
+            resolutionNote: walletReconciliationFinding.resolutionNote,
+            runId: walletReconciliationFinding.runId,
+            detail: walletReconciliationFinding.detail,
+            amount: walletReconciliationFinding.amount,
+          })
+          .from(walletReconciliationFinding)
+          .where(
+            and(
+              eq(walletReconciliationFinding.kind, input.kind),
+              eq(walletReconciliationFinding.providerName, input.providerName),
+              eq(walletReconciliationFinding.externalId, input.externalId),
+              eq(walletReconciliationFinding.status, 'resolved'),
+              isNull(walletReconciliationFinding.resolvedBy),
+            ),
+          )
+          .for('update')
+      : [];
+    if (!closedByCycle) {
+      const [filed] = await txn
+        .insert(walletReconciliationFinding)
+        .values(findingValues(input))
+        .onConflictDoNothing()
+        .returning({ id: walletReconciliationFinding.id });
+      if (filed && audit) {
+        await audit.recordInTransaction(txn, findingRecordedAudit(filed.id, input));
+      }
+      return filed !== undefined;
     }
-    return row !== undefined;
+    await txn
+      .update(walletReconciliationFinding)
+      .set({
+        status: 'open',
+        resolvedAt: null,
+        resolutionNote: null,
+        runId: input.runId,
+        amount: input.amount ?? null,
+        detail: input.detail ?? null,
+      })
+      .where(eq(walletReconciliationFinding.id, closedByCycle.id));
+    if (audit) {
+      const { id, resolvedAt, ...closed } = closedByCycle;
+      const recorded = findingRecordedAudit(id, input);
+      await audit.recordInTransaction(txn, {
+        ...recorded,
+        action: 'wallet.reconciliation_finding.reopened',
+        before: { ...closed, resolvedAt: resolvedAt?.toISOString() ?? null },
+        after: { ...recorded.after, status: 'open' },
+      });
+    }
+    return true;
   });
 }
 

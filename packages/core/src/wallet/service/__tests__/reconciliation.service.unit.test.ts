@@ -5,12 +5,16 @@ import {
   type PaymentWebhookEvent,
   type WalletReconciliationFindingKind,
 } from '@openora/core/contracts';
+import type { DrizzleService } from '@openora/core/server';
 import { ReconciliationResolutionSchema } from '../../contract/index.js';
 import {
   ReconciliationOutcomeNotAllowedError,
+  ReconciliationService,
   assertOutcomeAllowed,
   diffDeposit,
 } from '../reconciliation.service.js';
+import type { WalletService } from '../wallet.service.js';
+import { makeAuditWriter, makeEventBus, makePaymentProviderRegistry, mock } from './mock.js';
 
 type DepositEvent = Extract<PaymentWebhookEvent, { kind: 'deposit' }>;
 type Ledger = Parameters<typeof diffDeposit>[1];
@@ -172,5 +176,25 @@ describe('assertOutcomeAllowed', () => {
         );
       }),
     );
+  });
+});
+
+describe('ReconciliationService ledger baseline grace', () => {
+  const withGrace = (ledgerBaselineGraceSeconds: number) =>
+    new ReconciliationService({
+      drizzle: mock<DrizzleService>(),
+      events: makeEventBus(),
+      wallet: mock<WalletService>(),
+      paymentProviders: makePaymentProviderRegistry(),
+      audit: makeAuditWriter(),
+      ledgerBaselineGraceSeconds,
+    });
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('refuses a grace of %s seconds', (grace) => {
+    expect(() => withGrace(grace)).toThrow(RangeError);
+  });
+
+  it.each([0, 3600])('takes a grace of %s seconds', (grace) => {
+    expect(() => withGrace(grace)).not.toThrow();
   });
 });

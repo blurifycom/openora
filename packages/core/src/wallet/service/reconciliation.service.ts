@@ -91,6 +91,8 @@ import {
   backfillMismatchKey,
   checkLedgerPage,
   DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
+  readOpenTransactionBound,
+  type LedgerCut,
   ledgerBreachKey,
   ledgerPairKey,
   ledgerUncheckedDetail,
@@ -611,7 +613,33 @@ export class ReconciliationService {
     this.rgLimits = rgLimits;
     this.projectionChecks = projectionChecks;
     this.broker = broker;
+    if (!Number.isFinite(ledgerBaselineGraceSeconds) || ledgerBaselineGraceSeconds < 0) {
+      throw new RangeError(
+        `ledgerBaselineGraceSeconds must be a finite number of seconds, zero or more: got ${ledgerBaselineGraceSeconds}`,
+      );
+    }
     this.ledgerBaselineGraceSeconds = ledgerBaselineGraceSeconds;
+  }
+
+  private async ledgerCut(
+    runId: WalletJobRun['runId'],
+    afterId: string | null,
+  ): Promise<LedgerCut> {
+    const { cutBefore, oldest } = await readOpenTransactionBound(this.drizzle.db);
+    const firstPage = afterId === null;
+    if (firstPage && oldest && oldest.ageSeconds > this.ledgerBaselineGraceSeconds) {
+      logger.warn(
+        {
+          runId,
+          pid: oldest.pid,
+          applicationName: oldest.applicationName,
+          ageSeconds: Math.round(oldest.ageSeconds),
+          graceSeconds: this.ledgerBaselineGraceSeconds,
+        },
+        'ledger invariant: an open transaction older than the grace holds the baseline cut back',
+      );
+    }
+    return { graceSeconds: this.ledgerBaselineGraceSeconds, cutBefore };
   }
 
   /** Whether a finding is one whose dismissal takes a super admin. */
@@ -1522,7 +1550,7 @@ export class ReconciliationService {
         afterId,
         batchSize,
         runId,
-        this.ledgerBaselineGraceSeconds,
+        await this.ledgerCut(runId, afterId),
       );
       counts.baselinesInserted += page.inserted;
       counts.baselinesSkipped += page.skipped;
@@ -1564,7 +1592,7 @@ export class ReconciliationService {
         afterId,
         batchSize,
         runId,
-        this.ledgerBaselineGraceSeconds,
+        await this.ledgerCut(runId, afterId),
       );
       await this.closeBaselinedUnchecked(
         runId,
@@ -2760,23 +2788,30 @@ export class ReconciliationService {
       .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
       .limit(batchSize);
     for (const tx of stuck) {
-      const filed = await recordReconciliationFinding(
-        this.drizzle.db,
-        {
-          runId,
-          providerName: DEFAULT_PAYMENT_PROVIDER,
-          kind: 'stuck_withdrawal_requested',
-          currency: tx.currency,
-          network: tx.network,
-          amount: tx.amount,
-          transactionId: tx.id,
-          externalId: tx.id,
-          detail: `withdrawal requested ${tx.createdAt.toISOString()} and still undecided`,
-        },
-        this.audit,
-      );
-      if (filed) {
-        counts.stuckWithdrawals += 1;
+      try {
+        const filed = await recordReconciliationFinding(
+          this.drizzle.db,
+          {
+            runId,
+            providerName: DEFAULT_PAYMENT_PROVIDER,
+            kind: 'stuck_withdrawal_requested',
+            currency: tx.currency,
+            network: tx.network,
+            amount: tx.amount,
+            transactionId: tx.id,
+            externalId: tx.id,
+            detail: `withdrawal requested ${tx.createdAt.toISOString()} and still undecided`,
+          },
+          this.audit,
+        );
+        if (filed) {
+          counts.stuckWithdrawals += 1;
+        }
+      } catch (err) {
+        logger.error(
+          { err, transactionId: tx.id },
+          'reconciliation: stuck requested withdrawal not filed',
+        );
       }
     }
   }

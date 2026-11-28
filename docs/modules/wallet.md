@@ -245,7 +245,10 @@ is `SPORTSBOOK_LEDGER` unchanged.
   `stuck_withdrawal_approved` for one approved past `reconciliation.stuckAfterMinutes` with no
   provider recorded, and `stuck_withdrawal_processing` for one handed to a vendor past that
   cutoff whose status check failed. Each is filed once per withdrawal, can only be dismissed,
-  and closes by itself, with its audit row, once the withdrawal leaves that state. An approved
+  and closes by itself, with its audit row, once the withdrawal leaves that state. A withdrawal
+  that comes back to that state reopens the finding the cycle closed, audited as
+  `wallet.reconciliation_finding.reopened` with the closed row as its `before`; one a person
+  closed stays closed. An approved
   withdrawal with no provider also goes back to the queue as `pending` with reason
   `never_dispatched`, so a person approves it again; a dispatch still running for it never
   reaches the vendor.
@@ -276,6 +279,19 @@ is `SPORTSBOOK_LEDGER` unchanged.
   through the outbox, in the transaction that files its first finding. A pipeline incident alerts
   twice on purpose: through the outbox, and straight on the broker, best effort, in case the outbox
   is what stalled.
+- **The ledger invariant baselines only rows nothing can still change.** Each run checks every
+  wallet balance against its latest baseline plus the ledger rows after it, and moves a clean
+  pair's baseline to a cut: the grace back, an hour unless `ReconciliationService` is built with
+  another `ledgerBaselineGraceSeconds` (a finite number of seconds, zero or more, refused at
+  construction otherwise), before the pair's oldest row still in a non-terminal status, and before
+  the start of the oldest transaction open on the database, read in a statement of its own just
+  before the check. A transaction open longer than the grace holds the cut back, and the run logs
+  a warning with that session's pid, application name and age. `pg_stat_activity` shows the
+  reconciliation only the sessions of its own database role unless that role has
+  `pg_read_all_stats`, so grant it, or run every wallet writer under the same role: a writer it
+  cannot see can commit a row behind the cut, and the next run files a breach for money that is
+  there. Set `idle_in_transaction_session_timeout` on the database, so a session left idle in a
+  transaction cannot hold the cut back for good.
 - **A module's withdrawal hold blocks every withdrawal the same way, under its own reason.** A
   module places and releases its hold through `WALLET_COMMANDS` in its own transaction, keyed by
   (player, source), and releases only its own. The wallet audits each change in that transaction.
