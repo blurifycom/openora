@@ -37,7 +37,7 @@ services:
 
   redis:
     image: valkey/valkey:9.1-alpine
-    command: ['redis-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
+    command: ['valkey-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
     volumes:
       - redis_data:/data
     healthcheck:

@@ -62,7 +62,7 @@ services:
     image: valkey/valkey:9.1-alpine
     command:
       [
-        'redis-server',
+        'valkey-server',
         '--maxmemory-policy',
         'noeviction',
         '--appendonly',
@@ -73,7 +73,7 @@ services:
     ports:
       - '6379:6379'
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -85,7 +85,7 @@ services:
   redis-test:
     image: valkey/valkey:9.1-alpine
     command:
-      ['redis-server', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'no']
+      ['valkey-server', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'no']
     ports:
       - '6380:6379'
     healthcheck:
@@ -96,4 +96,4 @@ services:
 
 volumes:
   postgres18_data:
-  redis_data:
+  valkey_data:

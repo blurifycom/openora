@@ -72,6 +72,11 @@ It seeds nothing: no backoffice roles and no admin yet, so nobody can log in. Cr
 reference seed, see
 [Seeding reference data (production)](https://github.com/blurifycom/openora/blob/main/docs/guides/downstream-consumer.md#seeding-reference-data-production).
 
+A server first started on Postgres 16 and Redis 7 does not boot on Postgres 18 and Valkey 9: Postgres
+stops on the old cluster in `postgres_data`, Valkey cannot read the Redis 7.4 files in `redis_data`. Before
+the upgrade, let the queues drain, `pg_dumpall` the old database, then start on empty volumes and restore
+the dump.
+
 ## Extending
 
 | Need | Command |
