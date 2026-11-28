@@ -32,7 +32,13 @@ session, and notify the regulator where the licence requires it.
 oldest pending row and the rejected count. Nothing polls it for you: wire it into alerting and page
 when the rejected count is above zero or the oldest pending age passes a few seconds. A pending age
 that keeps growing means no shipper holds the lock or every round fails: check the `audit-shipper`
-error logs and for the session holding the shipper lock, which is the `pg_locks` row with `locktype` `advisory` whose `objid` is `hashtext` of the lock name `audit_shipper` (see `AuditShipper` in `packages/core/src/audit/service/audit-shipper.service.ts`); its `pid` is the holding session in `pg_stat_activity`.
+error logs and for a shipper transaction holding the lock. `AuditShipper` in
+`packages/core/src/audit/service/audit-shipper.service.ts` takes a transaction-level advisory lock
+on the 64-bit key `hashtext` gives for `audit_shipper`, so it shows in `pg_locks` only while a
+shipper round runs. `pg_locks` splits that key into `classid` (high half) and `objid` (low half)
+with `objsubid` 1, and a negative hash fills the high half, so compare the two halves joined back
+into one 64-bit value, not `objid` alone. The row's `pid` is the shipper's open transaction in
+`pg_stat_activity`.
 
 A rejected row never reached the chain; its `error` column says why. A schema error means a mapping
 produced a bad entry: fix it, and record the missing change from `entry` through `AUDIT_WRITER` under
