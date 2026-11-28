@@ -430,6 +430,9 @@ const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 // outruns a day. Approved and processing ones use `reconciliation.stuckAfterMinutes` (ADR-0059).
 const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
 
+const stillReported = sql`(${walletReconciliationFinding.status} = 'open'
+  OR ${walletReconciliationFinding.resolvedBy} IS NOT NULL)`;
+
 // A swap leg carries no payment provider name, but a finding needs one to be filed under.
 const PROJECTION_FINDING_LABEL = 'ledger-projection';
 const EVENT_PIPELINE_FINDING_LABEL = 'event-pipeline';
@@ -1950,6 +1953,7 @@ export class ReconciliationService {
             = coalesce(${walletTransaction.providerName}, ${DEFAULT_PAYMENT_PROVIDER})
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
+        AND ${stillReported}
     )`;
     const stuck = await this.drizzle.db
       .select()
@@ -2626,8 +2630,6 @@ export class ReconciliationService {
     return filed;
   }
 
-  // ponytail: findings dedupe on (kind, provider, external id) whatever their status, so a
-  // withdrawal that returns to a state it was already reported in is not reported again.
   private async resolveMovedOnWithdrawalFindings(): Promise<number> {
     const processing = sql`${walletTransaction.status} = 'processing'`;
     const stillIn = [
@@ -2726,6 +2728,7 @@ export class ReconciliationService {
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_withdrawal_requested'
         AND ${walletReconciliationFinding.externalId} = ${walletTransaction.id}::text
+        AND ${stillReported}
     )`;
     const stuck = await this.drizzle.db
       .select()

@@ -53,14 +53,16 @@ export type ReconciliationFindingInput = {
  * across WalletService and ReconciliationService (both import this, neither imports the
  * other, so there is no cycle). A finding is a report, never a credit instruction (see
  * the schema's own comment): this never touches a balance or a transaction row, only
- * records that something needs a human look. True when it filed a new finding, false when the
- * report was already on file.
+ * records that something needs a human look.
  */
 export async function recordReconciliationFinding(
   db: DrizzleDb | DrizzleTx,
   input: ReconciliationFindingInput,
   audit?: AuditWritePort,
 ): Promise<boolean> {
+  if (REFILED_WHEN_STUCK_AGAIN.has(input.kind)) {
+    return fileOrReopenFinding(db, input, audit);
+  }
   const row = await insertFinding(db, input);
   if (row && audit) {
     await audit.record(findingRecordedAudit(row.id, input));
@@ -180,6 +182,68 @@ async function fillUnreadableFinding(
       before,
       after: { ...reported, detail: null, addressChanged: address !== filled.address },
     });
+  });
+}
+
+const REFILED_WHEN_STUCK_AGAIN: ReadonlySet<WalletReconciliationFindingKind> = new Set([
+  'stuck_withdrawal_requested',
+  'stuck_withdrawal_approved',
+  'stuck_withdrawal_processing',
+]);
+
+/**
+ * Files a stuck-withdrawal report, or reopens the one on file when the cycle closed it as moved on
+ * and the withdrawal came back to that state. A report an admin closed stays closed. The finding
+ * and its audit entry commit together.
+ */
+async function fileOrReopenFinding(
+  db: DrizzleDb | DrizzleTx,
+  input: ReconciliationFindingInput,
+  audit?: AuditWritePort,
+): Promise<boolean> {
+  return db.transaction(async (txn) => {
+    const [row] = await txn
+      .insert(walletReconciliationFinding)
+      .values(findingValues(input))
+      .onConflictDoUpdate({
+        target: [
+          walletReconciliationFinding.kind,
+          walletReconciliationFinding.providerName,
+          walletReconciliationFinding.externalId,
+        ],
+        targetWhere: sql`${walletReconciliationFinding.externalId} IS NOT NULL`,
+        set: {
+          status: 'open',
+          resolvedAt: null,
+          resolutionNote: null,
+          runId: input.runId,
+          amount: input.amount ?? null,
+          detail: input.detail ?? null,
+        },
+        setWhere: and(
+          eq(walletReconciliationFinding.status, 'resolved'),
+          isNull(walletReconciliationFinding.resolvedBy),
+        ),
+      })
+      .returning({
+        id: walletReconciliationFinding.id,
+        reopened: sql<boolean>`${walletReconciliationFinding}.xmax <> 0`,
+      });
+    if (row && audit) {
+      const recorded = findingRecordedAudit(row.id, input);
+      await audit.recordInTransaction(
+        txn,
+        row.reopened
+          ? {
+              ...recorded,
+              action: 'wallet.reconciliation_finding.reopened',
+              before: { status: 'resolved' },
+              after: { ...recorded.after, status: 'open' },
+            }
+          : recorded,
+      );
+    }
+    return row !== undefined;
   });
 }
 
