@@ -126,7 +126,7 @@ flowchart TB
 
   %% ============ DATA + INFRA ============
   subgraph DATA["Stores + infra overlays"]
-    PG[("PostgreSQL 16")]:::data
+    PG[("PostgreSQL 18")]:::data
     REDIS[("Redis to BullMQ<br/>(REDIS_URL)")]:::data
     RMQ[("RabbitMQ to Kafka<br/>(AMQP_URL)")]:::data
     BUS["EventBus envelope<br/>domain events"]:::seam

@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18.7-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -8,7 +8,7 @@ services:
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres18_data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
@@ -16,10 +16,10 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:9.1-alpine
     command:
       [
-        'redis-server',
+        'valkey-server',
         '--maxmemory-policy',
         'noeviction',
         '--appendonly',
@@ -30,7 +30,7 @@ services:
     ports:
       - '${REDIS_PORT:-6379}:6379'
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -38,5 +38,5 @@ services:
       retries: 10
 
 volumes:
-  postgres_data:
-  redis_data:
+  postgres18_data:
+  valkey_data:

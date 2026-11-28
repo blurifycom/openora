@@ -45,7 +45,7 @@ jobs:
           - promo-bonus
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18.7-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -58,7 +58,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        image: valkey/valkey:9.1-alpine
         ports:
           - 6379:6379
         options: >-

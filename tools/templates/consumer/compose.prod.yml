@@ -21,13 +21,13 @@ x-runtime: &runtime
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18.7-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: oss_igaming
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
@@ -36,8 +36,8 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
-    command: ['redis-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
+    image: valkey/valkey:9.1-alpine
+    command: ['valkey-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
     volumes:
       - redis_data:/data
     healthcheck:
