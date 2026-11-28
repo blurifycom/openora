@@ -121,11 +121,11 @@ const payload = readPayload();
 const raw = extractCommand(payload);
 const into = LEADING_CD.exec(raw);
 const bare = into?.[3];
-const named =
+const cdPath =
   into?.[1] ??
   into?.[2] ??
   (bare?.startsWith('~') ? process.env.HOME && process.env.HOME + bare.slice(1) : bare);
-const target = named && !/(?:^|\/)\.\.?(?:\/|$)/.test(named) ? named : undefined;
+const target = cdPath && !/(?:^|\/)\.\.?(?:\/|$)/.test(cdPath) ? cdPath : undefined;
 const rest = target ? raw.slice(into[0].length) : raw;
 // A command handed to a shell (`sh -c '...'`, `eval "..."`) runs its quoted text: read it unquoted.
 const command = /\b(?:\w*sh\s+-\w*c|eval)\b/.test(raw)
