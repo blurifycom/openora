@@ -49,8 +49,7 @@ export const kycStatusTool = defineMcpTool({
     "A player's KYC standing: kycStatus is their basic-tier status; basic and advanced are " +
     'the current verification of each tier (advanced is enhanced KYC) with its status, ' +
     'provider, document types, what triggered it, and when it was created and decided, or ' +
-    "null when the player has none on that tier. The vendor's free-text decision reason for " +
-    'each tier is returned separately.',
+    'null when the player has none on that tier.',
   class: 'read',
   schemaVersion: 1,
   iam: { resource: 'compliance', action: 'view' },
