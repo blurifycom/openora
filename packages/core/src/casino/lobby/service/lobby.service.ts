@@ -328,7 +328,7 @@ export class LobbyService {
     });
     await this.validateSections(preparedSections);
 
-    const { before, after } = await this.drizzle.db.transaction((tx) =>
+    const after = await this.drizzle.db.transaction((tx) =>
       withAdvisoryXactLock(tx, layoutLockKey(layoutKey), async () => {
         await tx
           .insert(lobbyLayout)
@@ -365,20 +365,19 @@ export class LobbyService {
           version: nextVersion,
           sections: await this.loadAdminSections(tx, layoutKey),
         };
-        return { before, after };
+        await this.events.emitInTransaction(tx, 'lobby.layout.updated', {
+          actorId,
+          layoutKey,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+          before,
+          after,
+        });
+        return after;
       }),
     );
 
     await invalidate(this.cache, layoutCacheKey(layoutKey));
-
-    this.events.emit('lobby.layout.updated', {
-      actorId,
-      layoutKey,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-      before,
-      after,
-    });
 
     return after;
   }

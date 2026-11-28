@@ -103,6 +103,13 @@ export class GameTagService {
           .insert(gameTag)
           .values({ name, visibility, metadata })
           .returning();
+        await this.events.emitInTransaction(tx, 'gaming.tag.created', {
+          tagId: created.id,
+          ...toGameTagEventSnapshot(created),
+          actorId,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
         return created;
       });
     } catch (error) {
@@ -111,14 +118,6 @@ export class GameTagService {
       }
       throw error;
     }
-
-    this.events.emit('gaming.tag.created', {
-      tagId: record.id,
-      ...toGameTagEventSnapshot(record),
-      actorId,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
 
     return toGameTagDetail(record);
   }
@@ -136,7 +135,7 @@ export class GameTagService {
       return this.getTag(id);
     }
 
-    const { existing, updated } = await this.drizzle.db
+    const { updated } = await this.drizzle.db
       .transaction(async (tx) => {
         const existing = findOneOrThrow(
           await tx.select().from(gameTag).where(eq(gameTag.id, id)).for('update'),
@@ -159,7 +158,15 @@ export class GameTagService {
           new GameTagNotFoundError(id),
         );
 
-        return { existing, updated };
+        await this.events.emitInTransaction(tx, 'gaming.tag.updated', {
+          tagId: updated.id,
+          actorId,
+          before: toGameTagEventSnapshot(existing),
+          after: toGameTagEventSnapshot(updated),
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+        return { updated };
       })
       .catch((error: unknown) => {
         if (isUniqueConstraintViolation(error)) {
@@ -169,20 +176,11 @@ export class GameTagService {
         throw error;
       });
 
-    this.events.emit('gaming.tag.updated', {
-      tagId: updated.id,
-      actorId,
-      before: toGameTagEventSnapshot(existing),
-      after: toGameTagEventSnapshot(updated),
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
-
     return toGameTagDetail(updated);
   }
 
   async deleteTag({ id, actorId, ip, userAgent }: { id: GameTag['id'] } & CatalogActor) {
-    const { deleted, affectedGameIds } = await this.drizzle.db.transaction(async (tx) => {
+    await this.drizzle.db.transaction(async (tx) => {
       const existing = findOneOrThrow(
         await tx.select().from(gameTag).where(eq(gameTag.id, id)).for('update'),
         new GameTagNotFoundError(id),
@@ -202,16 +200,14 @@ export class GameTagService {
         new GameTagNotFoundError(id),
       );
 
-      return { deleted, affectedGameIds: affectedLinks.map((link) => link.gameId) };
-    });
-
-    this.events.emit('gaming.tag.deleted', {
-      tagId: deleted.id,
-      actorId,
-      before: toGameTagEventSnapshot(deleted),
-      after: { deleted: true, affectedGameIds },
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
+      await this.events.emitInTransaction(tx, 'gaming.tag.deleted', {
+        tagId: deleted.id,
+        actorId,
+        before: toGameTagEventSnapshot(deleted),
+        after: { deleted: true, affectedGameIds: affectedLinks.map((link) => link.gameId) },
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
     });
 
     return true;

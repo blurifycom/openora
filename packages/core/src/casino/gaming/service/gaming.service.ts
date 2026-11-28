@@ -998,13 +998,13 @@ export class GamingService {
   }
 
   async setGameAvailability(args: GamingSetGameAvailabilityArgs) {
-    const outcome = await this.drizzle.db.transaction((tx) =>
-      this.setGameAvailabilityInTransaction(tx, args),
-    );
-    if (outcome.changed) {
-      this.events.emit('gaming.game.availability_changed', outcome.event);
-    }
-    return { changed: outcome.changed };
+    return this.drizzle.db.transaction(async (tx) => {
+      const outcome = await this.setGameAvailabilityInTransaction(tx, args);
+      if (outcome.changed) {
+        await this.events.emitInTransaction(tx, 'gaming.game.availability_changed', outcome.event);
+      }
+      return { changed: outcome.changed };
+    });
   }
 
   async setGameAvailabilityInTransaction(
@@ -1051,20 +1051,20 @@ export class GamingService {
     await this.drizzle.db.transaction(async (tx) => {
       await markCategoriesRankDirtyForGames(tx, changedGameIds);
       await emitLedgerGames(tx, this.events, changedGameIds);
+      const longest = Math.max(
+        changedGameIds.length,
+        previousTagIds.length,
+        previousProviderIds.length,
+      );
+      for (let start = 0; start < longest; start += GAMES_CHANGED_EVENT_BATCH) {
+        const end = start + GAMES_CHANGED_EVENT_BATCH;
+        await this.events.emitInTransaction(tx, 'gaming.games.changed', {
+          gameIds: changedGameIds.slice(start, end),
+          tagIds: previousTagIds.slice(start, end),
+          providerIds: previousProviderIds.slice(start, end),
+        });
+      }
     });
-    const longest = Math.max(
-      changedGameIds.length,
-      previousTagIds.length,
-      previousProviderIds.length,
-    );
-    for (let start = 0; start < longest; start += GAMES_CHANGED_EVENT_BATCH) {
-      const end = start + GAMES_CHANGED_EVENT_BATCH;
-      this.events.emit('gaming.games.changed', {
-        gameIds: changedGameIds.slice(start, end),
-        tagIds: previousTagIds.slice(start, end),
-        providerIds: previousProviderIds.slice(start, end),
-      });
-    }
   }
 
   /** Reports imported games to the round ledger; `notifyGamesChanged` does the same for its ids. */
@@ -1110,7 +1110,7 @@ export class GamingService {
     if (!hasScalarChanges && uniqueCategoryIds === undefined && uniqueTagIds === undefined) {
       return this.getAdminGame(id);
     }
-    const transition = await this.drizzle.db
+    await this.drizzle.db
       .transaction(async (tx) => {
         // The row lock serializes concurrent PATCHes, so the audited `before` is the
         // state this write replaced and `after` is what it persisted (docs/standards/audit.md).
@@ -1274,7 +1274,24 @@ export class GamingService {
         if (afterRow.ledgerVersion !== beforeRow.ledgerVersion) {
           await emitLedgerGames(tx, this.events, [id]);
         }
-        return { before, after, approvedFrom };
+        await this.events.emitInTransaction(tx, 'gaming.game.updated', {
+          gameId: id,
+          actorId,
+          before,
+          after,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
+        if (approvedFrom) {
+          await this.events.emitInTransaction(tx, 'gaming.games.reviewed', {
+            actorId,
+            decision: 'approve',
+            previousStatus: approvedFrom,
+            gameIds: [id],
+            ip: ip ?? null,
+            userAgent: userAgent ?? null,
+          });
+        }
       })
       .catch((error: unknown) => {
         // The transaction also writes category and tag links: only a slug collision maps
@@ -1284,24 +1301,6 @@ export class GamingService {
         }
         throw error;
       });
-    this.events.emit('gaming.game.updated', {
-      gameId: id,
-      actorId,
-      before: transition.before,
-      after: transition.after,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
-    if (transition.approvedFrom) {
-      this.events.emit('gaming.games.reviewed', {
-        actorId,
-        decision: 'approve',
-        previousStatus: transition.approvedFrom,
-        gameIds: [id],
-        ip: ip ?? null,
-        userAgent: userAgent ?? null,
-      });
-    }
     return this.getAdminGame(id);
   }
 }

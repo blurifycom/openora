@@ -257,7 +257,11 @@ export class GameCategoryMembershipTriggerService {
         .from(game)
         .where(inArray(game.id, uniqueIds.slice(start, start + GAMES_CREATED_EVENT_BATCH)));
       if (rows.length > 0) {
-        this.events.emit('gaming.games.created', { gameIds: rows.map((row) => row.id) });
+        await this.drizzle.db.transaction((tx) =>
+          this.events.emitInTransaction(tx, 'gaming.games.created', {
+            gameIds: rows.map((row) => row.id),
+          }),
+        );
       }
     }
   }

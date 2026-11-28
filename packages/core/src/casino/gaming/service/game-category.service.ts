@@ -248,6 +248,13 @@ export class GameCategoryService {
             membershipRule: rule,
           })
           .returning();
+        await this.events.emitInTransaction(tx, 'gaming.category.created', {
+          categoryId: created.id,
+          ...categorySnapshot(created),
+          actorId,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
         return created;
       });
     } catch (error) {
@@ -256,13 +263,6 @@ export class GameCategoryService {
       }
       throw error;
     }
-    this.events.emit('gaming.category.created', {
-      categoryId: record.id,
-      ...categorySnapshot(record),
-      actorId,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
     if (record.membershipMode === 'rule') {
       return this.evaluateAfterWrite(record.id, { actorId, ip, userAgent }, authorizeRule);
     }
@@ -318,6 +318,7 @@ export class GameCategoryService {
         membershipMode,
         membershipRule,
         normalized,
+        actor: { actorId, ip, userAgent },
       });
       if (outcome === 'stale') {
         continue;
@@ -368,6 +369,7 @@ export class GameCategoryService {
     membershipMode,
     membershipRule,
     normalized,
+    actor,
   }: {
     id: string;
     scalarPatch: Partial<typeof gameCategory.$inferInsert>;
@@ -376,6 +378,7 @@ export class GameCategoryService {
     membershipMode: UpdateCategoryInput['membershipMode'];
     membershipRule: UpdateCategoryInput['membershipRule'];
     normalized: { input: GameCategoryRule; rule: GameCategoryRule } | null;
+    actor: CatalogActor;
   }) {
     return this.drizzle.db
       .transaction(async (tx) => {
@@ -424,7 +427,6 @@ export class GameCategoryService {
             changed: false as const,
             sortChanged: false,
             needsEvaluation: false,
-            before: existing,
             after: existing,
           };
         }
@@ -454,11 +456,18 @@ export class GameCategoryService {
           await tx.update(gameCategory).set(patch).where(eq(gameCategory.id, id)).returning(),
           new GameCategoryNotFoundError(id),
         );
+        await this.events.emitInTransaction(tx, 'gaming.category.updated', {
+          categoryId: id,
+          actorId: actor.actorId,
+          before: categorySnapshot(existing),
+          after: categorySnapshot(updated),
+          ip: actor.ip ?? null,
+          userAgent: actor.userAgent ?? null,
+        });
         return {
           changed: true as const,
           sortChanged: sortPatch.changed,
           needsEvaluation: membershipChanged && nextMode === 'rule',
-          before: existing,
           after: updated,
         };
       })
@@ -479,14 +488,6 @@ export class GameCategoryService {
     if (!outcome.changed) {
       return toCategoryDetail(outcome.after);
     }
-    this.events.emit('gaming.category.updated', {
-      categoryId: id,
-      actorId,
-      before: categorySnapshot(outcome.before),
-      after: categorySnapshot(outcome.after),
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
     if (outcome.sortChanged) {
       enqueueGameCategoryRank(this.jobQueue, id);
     }
@@ -541,7 +542,7 @@ export class GameCategoryService {
     ip,
     userAgent,
   }: ReorderCategoryGamesInput & CatalogActor) {
-    const outcome = await this.drizzle.db.transaction(async (tx) => {
+    await this.drizzle.db.transaction(async (tx) => {
       // The row lock serializes a concurrent reorder/PATCH/pins write on this category -
       // last-write-wins, not optimistic concurrency (docs/modules/gaming.md).
       const category = await this.lockCategoryRow(tx, id);
@@ -614,29 +615,22 @@ export class GameCategoryService {
         })
         .where(eq(gameCategory.id, id));
       const after = [...gameIds, ...unlistedIds];
-      return {
+      await this.events.emitInTransaction(tx, 'gaming.category.games_reordered', {
+        categoryId: id,
+        actorId,
         before,
         after,
         sortKeyBefore,
+        sortKeyAfter: 'manual',
         sortDirectionBefore,
+        sortDirectionAfter: null,
         sortParamsBefore,
-      };
+        sortParamsAfter: {},
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
     });
 
-    this.events.emit('gaming.category.games_reordered', {
-      categoryId: id,
-      actorId,
-      before: outcome.before,
-      after: outcome.after,
-      sortKeyBefore: outcome.sortKeyBefore,
-      sortKeyAfter: 'manual',
-      sortDirectionBefore: outcome.sortDirectionBefore,
-      sortDirectionAfter: null,
-      sortParamsBefore: outcome.sortParamsBefore,
-      sortParamsAfter: {},
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
     enqueueGameCategoryRank(this.jobQueue, id);
     return {
       sortKey: 'manual' as const,
@@ -703,17 +697,17 @@ export class GameCategoryService {
       await tx.update(gameCategory).set(rankDirtyPatch()).where(eq(gameCategory.id, id));
 
       const after = [...pins].sort((a, b) => a.position - b.position);
-      return { before, after };
+      await this.events.emitInTransaction(tx, 'gaming.category.pins_updated', {
+        categoryId: id,
+        actorId,
+        before,
+        after,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+      return { after };
     });
 
-    this.events.emit('gaming.category.pins_updated', {
-      categoryId: id,
-      actorId,
-      before: outcome.before,
-      after: outcome.after,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-    });
     enqueueGameCategoryRank(this.jobQueue, id);
     return { pins: outcome.after };
   }
