@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -8,7 +8,7 @@ services:
     ports:
       - '5432:5432'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres18_data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
@@ -20,7 +20,7 @@ services:
   # no WAL fsync, and the data dir lives in memory. Every start is a fresh cluster with
   # `oss_igaming_test` already created; the suites migrate their own databases.
   postgres-test:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     command:
       ['postgres', '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off']
     environment:
@@ -30,7 +30,7 @@ services:
     ports:
       - '5434:5432'
     tmpfs:
-      - /var/lib/postgresql/data
+      - /var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
@@ -59,7 +59,7 @@ services:
   # binds it by setting REDIS_URL (redis://localhost:6379) - createApp auto-binds the
   # Redis adapters, no code change. See ADR-0028.
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:9-alpine
     command:
       [
         'redis-server',
@@ -83,7 +83,7 @@ services:
   # Integration-test Redis, separate from the dev one above: the suites flush logical
   # databases 0-15 between tests, which would wipe dev keys. Nothing is persisted.
   redis-test:
-    image: redis:7-alpine
+    image: valkey/valkey:9-alpine
     command:
       ['redis-server', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'no']
     ports:
@@ -95,5 +95,5 @@ services:
       retries: 10
 
 volumes:
-  postgres_data:
+  postgres18_data:
   redis_data:
