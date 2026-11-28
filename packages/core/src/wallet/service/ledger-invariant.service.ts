@@ -106,7 +106,7 @@ const latestBaseline = sql`(
 
 export const DEFAULT_LEDGER_BASELINE_GRACE_SECONDS = 60 * 60;
 
-export type OldestOpenTransaction = {
+type OldestOpenTransaction = {
   pid: number;
   applicationName: string;
   ageSeconds: number;
