@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { extractFilePath, readPayload, deny } from './_shared.mjs';
 import { relative, isAbsolute } from 'node:path';
 

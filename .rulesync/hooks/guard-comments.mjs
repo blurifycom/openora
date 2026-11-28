@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const START = String.raw`^[\s(!{]*(?:[\w-]+\s*\(\)\s*[({]*\s*)?(?:(?:do|then|else|if|elif|while|until)\s+)?(?:(?:\w+=\S*|(?:command|env|exec|eval|nice|time|nohup|sudo|npx|pnpm\s+exec|xargs)(?:\s+-\S+)*|g?timeout(?:\s+-\S+)*\s+\S+)\s+["']?)*(?:\S*/)?`;

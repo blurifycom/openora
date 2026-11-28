@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { readPayload } from './_shared.mjs';
 
 const payload = readPayload();

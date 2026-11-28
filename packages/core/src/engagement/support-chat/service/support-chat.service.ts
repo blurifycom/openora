@@ -232,9 +232,9 @@ export class SupportChatService {
   }
 
   private ticketIdOf(playerId: Player['id'], answer: unknown): string | null {
-    const parsed = SupportTicketCreatedSchema.safeParse(answer);
-    if (parsed.success) {
-      return parsed.data.ticketId;
+    const ticketId = ticketIdFromAnswer(answer);
+    if (ticketId !== null) {
+      return ticketId;
     }
     logger.warn({ playerId, reason: 'malformed ticket answer' }, 'support ticket id not recorded');
     return null;
@@ -385,5 +385,14 @@ export class SupportChatService {
       throw refuse('token answered for another customer');
     }
     return parsed.data;
+  }
+}
+
+export function ticketIdFromAnswer(answer: unknown): string | null {
+  try {
+    const parsed = SupportTicketCreatedSchema.safeParse(answer);
+    return parsed.success ? parsed.data.ticketId : null;
+  } catch {
+    return null;
   }
 }

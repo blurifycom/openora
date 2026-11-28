@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
 const SHARED = /^(?:origin\/)?(?:main|master|dev|develop|stage|staging|prod|production)$/;
