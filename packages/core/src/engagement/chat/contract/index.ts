@@ -516,11 +516,13 @@ export const chatContract = {
     .input(ChatStreamInputSchema)
     .output(eventIterator(ChatRoomStreamEventSchema)),
 
+  /** @deprecated Use `streamRoom`. */
   streamMessages: oc
     .route({ method: 'GET', path: '/chat/stream', deprecated: true })
     .input(ChatStreamInputSchema)
     .output(eventIterator(ChatMessageSchema)),
 
+  /** @deprecated Use `streamRoom`. */
   streamSignals: oc
     .route({ method: 'GET', path: '/chat/signals', deprecated: true })
     .input(ChatStreamInputSchema)

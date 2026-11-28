@@ -394,6 +394,7 @@ export async function chainMovedOut(tx: DrizzleTx): Promise<boolean> {
   return rows[0]?.split ?? false;
 }
 
+/** @deprecated Use `enqueueAuditInTransaction`. */
 export async function recordAuditInTransaction(
   txn: DrizzleTx,
   input: RecordInput,

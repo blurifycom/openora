@@ -49,6 +49,7 @@ export const SystemChatMessageSchema = z.object({
 });
 export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
 
+/** @alias */
 export const CommandChatMessageSchema = SystemChatMessageSchema;
 export type CommandChatMessage = SystemChatMessage;
 

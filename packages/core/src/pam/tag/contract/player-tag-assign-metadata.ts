@@ -20,5 +20,6 @@ export const HighRiskAssignMetadataSchema = z.object({
 });
 export type HighRiskAssignMetadata = z.infer<typeof HighRiskAssignMetadataSchema>;
 
+/** @alias */
 export const PlayerTagAssignMetadataSchema = HighRiskAssignMetadataSchema;
 export type PlayerTagAssignMetadata = z.infer<typeof PlayerTagAssignMetadataSchema>;

@@ -4,6 +4,8 @@ const MACHINE_DIRECTIVES = [
   /^\s*@vitest-environment\s+[\w-]+\s*$/,
   /^\s*\/\s*<reference\s/,
   /^\s*[@#]__(PURE|NO_SIDE_EFFECTS)__\s*$/,
+  /^\*\s*@alias\s*$/,
+  /^\*\s*@deprecated Use `[\w.]+`\.\s*$/,
 ];
 
 const isMachineDirective = (comment) =>

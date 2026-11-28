@@ -21,6 +21,7 @@ Machine-read directives a tool needs to run, nothing a human is meant to read:
 - a lint suppression for one named rule (`oxlint-disable-next-line`), and only where the rule cannot be satisfied by fixing the code
 - `@ts-expect-error` in a test that asserts a type error
 - a shebang, `@vitest-environment`, `/// <reference types>`, `@__PURE__`
+- a JSDoc that is only `@alias`, or only `@deprecated Use` and the replacement's name: knip, the editor and the `no-deprecated` lint read them
 - a Dockerfile `# syntax=` line and a schema directive such as `# yaml-language-server`
 
 A directive carries no prose after it.
