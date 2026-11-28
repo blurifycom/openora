@@ -11,7 +11,6 @@ export type RealtimeStreamEvent<T> =
   | { type: 'signal'; signal: { name: string; payload?: unknown } };
 
 export type SseRealtimeClientAdapterOptions = {
-  /** A 4xx `ORPCError` (other than 408/429) stops the channel until the next `subscribe` or `refresh`; anything else reconnects. */
   open: (
     channel: string,
     signal: AbortSignal,
@@ -59,11 +58,6 @@ function notify(subscribers: Iterable<Subscriber>, deliver: (subscriber: Subscri
   }
 }
 
-/**
- * Reports `connecting` -> `open` on each reconnect so callers refetch what they missed.
- * `ACCESS_REVOKED_SIGNAL` closes the channel without reconnecting until the next
- * `subscribe` or `refresh`.
- */
 export function createSseRealtimeClientAdapter({
   open,
 }: SseRealtimeClientAdapterOptions): RealtimeClientAdapter {
@@ -99,12 +93,10 @@ export function createSseRealtimeClientAdapter({
     }
     const { name, payload } = event.signal;
     const revoked = name === ACCESS_REVOKED_SIGNAL;
-    // Stopped first, so a subscriber that unsubscribes in onSignal still gets torn down.
     if (revoked) {
       stop(stream);
     }
     notify(stream.subscribers, (subscriber) => subscriber.onSignal?.(name, payload));
-    // A subscriber may already have reconnected from onSignal.
     if (revoked && stream.controller === null) {
       setStatus(stream, 'closed');
     }

@@ -48,10 +48,8 @@ const TotalDepositsJobSchema = z.object({ userId: UuidSchema });
 export default {
   id: 'player-management',
   dependsOn: ['audit', 'identity'],
-  // Chat's block read, bound by chat or by chat-remote when chat runs in another service.
   requiresPorts: [WALLET_READER, CHAT_BLOCK_READER, ADMIN_GAME_REPORTING],
   register(ctx) {
-    // One memoized instance backs the tracker port, the router and the deposit job.
     let svc: PlayerService | null = null;
     let jobQueue: JobQueueAdapter | null = null;
     const playerService = (c: TypedContainer<CoreTokenCatalog>) => {
@@ -67,9 +65,6 @@ export default {
         adminGuard: c.get(ADMIN_GUARD),
       }));
 
-    // The refresh recomputes from the ledger, so it runs as a retryable job: a failed read or
-    // an unpriced currency retries instead of leaving totalDeposits stale until the next deposit.
-    // Awaited and thrown: a failed enqueue leaves the event pending for redelivery (ADR-0045).
     ctx.events.on('wallet.deposit.completed', async (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
       if (!parsed.success) {
@@ -133,7 +128,6 @@ export default {
         }
       };
     });
-    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(playersFindTool, (c) => {
       const players = new PlayersFindService(c.get(DRIZZLE));
       return (input) => players.find(input);

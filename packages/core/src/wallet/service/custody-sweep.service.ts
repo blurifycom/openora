@@ -33,10 +33,6 @@ const logger = createLogger('wallet-custody-sweep');
 const CUSTODY_SWEEP_JOB_NAME = 'wallet-custody-sweep';
 export const CUSTODY_SWEEP_QUEUE = queue('wallet.custody-sweep');
 
-// `runId` is only present when an admin's on-demand POST /wallet/custody/sweep/run
-// enqueued this tick - the router mints it up front so it can hand the caller back a
-// runId synchronously, before the job actually runs. A cron tick omits it and the
-// service mints its own.
 export const CustodySweepJobPayloadSchema = z.object({ runId: UuidSchema.optional() });
 
 const IN_FLIGHT_STATUSES = ['pending', 'processing', 'unknown'] as const;
@@ -50,25 +46,12 @@ export type SweepCycleSummary = {
   skippedFee: number;
   skippedCeiling: number;
   inFlight: number;
-  // Always 0 today: `PaymentAdapter.sweepToPool` can only resolve or throw, so a caught
-  // error has no way to prove "the vendor definitively rejected this and created no
-  // transaction" - see the catch block in processBalance. The field stays in the
-  // summary shape for the day an adapter can prove a definitive rejection.
   failed: number;
   unknown: number;
 };
 
 type SweepGateDecision = 'sweep' | 'dust' | 'fee' | 'ceiling';
 
-/**
- * Pure gate over a single custody balance, in the exact order
- * docs/adapters/payment.md diagram D3 specifies: dust floor, then the fee-multiple
- * floor, then the fee ceiling (overridden only when the pool is running dry).
- *
- * `poolBalance` is null whenever the caller hasn't fetched it (no ceiling breach yet,
- * the adapter has no `getPoolBalance`, or the asset has no `poolLiquidityFloor`) - null
- * always means "the ceiling stays absolute", never an accidental override.
- */
 export function gateSweepBalance(args: {
   amount: string;
   estimatedFee: string;
@@ -104,14 +87,6 @@ export type CustodySweepServiceDeps = {
   platformConfig?: PlatformConfig;
 };
 
-/**
- * Owns the custody sweep cron: moves vendor-side per-player custody balances into the
- * pooled account they're paid out of. Deliberately separate from WalletService (which
- * is already ~2000 lines) and deliberately never touches wallet_balance/wallet_transaction
- * - the player was credited at deposit time, this only moves the vendor's own money
- * between its own containers. See docs/adapters/payment.md, "Custody: pooling, sweeping
- * and reconciliation".
- */
 export class CustodySweepService {
   private readonly drizzle: DrizzleService;
   private readonly paymentProviders: PaymentProviderRegistry;
@@ -125,12 +100,6 @@ export class CustodySweepService {
     this.platformConfig = platformConfig;
   }
 
-  /**
-   * Runs one sweep cycle. No-ops (returns null, touches nothing) when
-   * `platformConfig.wallet.sweep` is absent - an operator who hasn't configured sweep
-   * policy still gets a scheduled job, it just never claims a run. Also returns null
-   * when another cycle already owns the claim.
-   */
   async runCycle(
     requestedRunId?: Uuid,
   ): Promise<{ runId: Uuid; summary: SweepCycleSummary } | null> {
@@ -156,19 +125,12 @@ export class CustodySweepService {
       unknown: 0,
     };
 
-    // Everything past the claim runs guarded: an adapter that throws (a vendor 5xx is
-    // the ordinary case) would otherwise leave this run's row with finishedAt NULL, and
-    // the partial unique index would then block every subsequent cycle until the
-    // staleness takeover window elapsed. A failed cycle must free its own slot.
     try {
       await this.resolveInFlightSweeps(sweepConfig.concurrency, sweepConfig.batchSize);
 
       const poolBalanceCache = new Map<string, string>();
       for (const providerName of this.paymentProviders.names()) {
         const adapter = this.paymentProviders.get(providerName)?.adapter;
-        // sweepToPool is checked here, not after a claim row exists: an adapter that
-        // advertises listSweepableBalances without it would otherwise claim a container,
-        // throw, and park an `unknown` row that holds the in-flight guard forever.
         if (!adapter?.listSweepableBalances) {
           continue;
         }
@@ -179,8 +141,6 @@ export class CustodySweepService {
           );
           continue;
         }
-        // listSweepableBalances is unbounded; sweeping is throughput work, so the cron
-        // cadence drains the backlog rather than one cycle chasing it all.
         const balances = (await adapter.listSweepableBalances()).slice(0, sweepConfig.batchSize);
         summary.considered += balances.length;
         await mapConcurrent(balances, sweepConfig.concurrency, (balance) =>
@@ -204,10 +164,6 @@ export class CustodySweepService {
     return { runId, summary };
   }
 
-  // The insert IS the claim: the partial unique index on wallet_job_run(job_name) WHERE
-  // finished_at IS NULL means a conflicting insert can only mean another cycle already
-  // owns it. A run whose startedAt outlives `staleAfterMinutes` is presumed crashed and
-  // taken over: marked abandoned, then re-claimed inside the same transaction.
   private async claimRun(
     requestedRunId: Uuid | undefined,
     staleAfterMinutes: number,
@@ -231,8 +187,6 @@ export class CustodySweepService {
         )
         .for('update');
       if (!existing) {
-        // The owning run finished between our failed insert and this read - let the
-        // next tick claim cleanly instead of racing a second insert here.
         return null;
       }
       const staleMs = staleAfterMinutes * 60_000;
@@ -254,9 +208,6 @@ export class CustodySweepService {
     });
   }
 
-  // Reusing getWithdrawalStatus for a sweep is deliberate: its {status, txHash} shape
-  // is generic to any vendor transaction (a withdrawal or a sweep), and a sweep's
-  // externalId is exactly the reference such a lookup needs.
   private async resolveInFlightSweeps(concurrency: number, batchSize: number): Promise<void> {
     const rows = await this.drizzle.db
       .select()
@@ -267,8 +218,6 @@ export class CustodySweepService {
           isNotNull(walletCustodySweep.externalId),
         ),
       )
-      // Random, not oldest-first: a sweep the vendor never resolves would otherwise sit
-      // at the head of every batch and starve later in-flight rows of a status check.
       .orderBy(sql`random()`)
       .limit(batchSize);
     await mapConcurrent(rows, concurrency, async (row) => {
@@ -352,8 +301,6 @@ export class CustodySweepService {
   }): Promise<void> {
     const asset = await this.assetFor(balance.currency, balance.network);
     if (!asset) {
-      // Funds sitting in a container the operator has no policy for must be visible,
-      // not a log line.
       await recordReconciliationFinding(
         this.drizzle.db,
         {
@@ -363,12 +310,6 @@ export class CustodySweepService {
           currency: balance.currency,
           network: balance.network,
           amount: balance.amount,
-          // No vendor reference exists for this finding, and the condition recurs every
-          // single cycle until an operator configures the asset - without a stable
-          // stand-in one missing catalog row files a finding every cron tick, drowning
-          // the real findings and pinning the alert threshold permanently over the line.
-          // The asset, not the player, is the subject: one row to act on, not one per
-          // affected container.
           externalId: `unconfigured:${providerName}:${balance.currency}:${balance.network}`,
           detail: `no wallet_asset configured for ${balance.currency}/${balance.network}`,
         },
@@ -386,8 +327,6 @@ export class CustodySweepService {
       poolLiquidityFloor: asset.poolLiquidityFloor,
     };
     let decision = gateSweepBalance({ ...gateArgs, poolBalance: null });
-    // Only fetch the pool balance when the ceiling actually blocks - it's an extra
-    // vendor call, not a free one.
     if (decision === 'ceiling' && asset.poolLiquidityFloor) {
       const poolBalance = await this.getPoolBalanceCached(
         poolBalanceCache,
@@ -431,18 +370,11 @@ export class CustodySweepService {
       .onConflictDoNothing()
       .returning();
     if (!claimed) {
-      // Another cycle claimed this (userId, currency, network) between the check above
-      // and this insert - the partial unique index is the real guard, this is a race.
       summary.inFlight += 1;
       return;
     }
 
-    // Deliberately outside any transaction - sweepToPool is a real vendor call
-    // (docs/standards/money.md: treat external payment calls as non-transactional).
-    // The claim row above already holds the durable guard.
     try {
-      // Keyed by provider: one flat string would send vendor A's treasury account id to
-      // vendor B and route custody funds to an account that vendor does not own.
       const treasuryRef = this.platformConfig?.wallet?.treasuryRefs?.[providerName];
       const result = await adapter.sweepToPool?.(balance, {
         idempotencyKey: claimed.id,
@@ -455,12 +387,6 @@ export class CustodySweepService {
       }
       await this.drizzle.db
         .update(walletCustodySweep)
-        // poolRef records WHICH pool received the funds, not just that a transfer
-        // happened. Player funds must stay separate from operator funds, and that is
-        // the question a regulator asks; without it the ledger cannot answer it.
-        // Only what the adapter reports. The requested treasuryRef is not evidence the
-        // vendor used it, and this row is hash-chained into an append-only audit log -
-        // a wrong destination recorded there is worse than a null one.
         .set({
           status: 'processing',
           externalId: result.externalId,
@@ -469,11 +395,6 @@ export class CustodySweepService {
         .where(eq(walletCustodySweep.id, claimed.id));
       summary.swept += 1;
     } catch (err) {
-      // A thrown sweepToPool cannot distinguish "the vendor never saw it" from "the
-      // vendor accepted it and the response was lost" - moving to `failed` on the
-      // second case would let the next cycle sweep the same container again and
-      // double-transfer real custody funds. `unknown` keeps the in-flight guard held
-      // (see IN_FLIGHT_STATUSES) until reconciliation or an operator resolves it.
       logger.warn({ err, sweepId: claimed.id }, 'sweepToPool threw; parking sweep as unknown');
       await this.drizzle.db
         .update(walletCustodySweep)
@@ -493,9 +414,6 @@ export class CustodySweepService {
     const error =
       err === undefined ? {} : { error: err instanceof Error ? err.message : String(err) };
     await this.drizzle.db.transaction(async (txn) => {
-      // Read inside the transaction: a concurrent path moving another row of this run to
-      // `processing` between the read and the writes would otherwise leave that sweep
-      // out of the audit chain.
       const moved = await txn
         .select()
         .from(walletCustodySweep)

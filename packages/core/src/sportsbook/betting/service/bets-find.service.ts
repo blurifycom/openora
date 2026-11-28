@@ -22,7 +22,6 @@ const SORT_COLUMNS: Record<BetsFindSortBy, SQL> = {
   potentialPayout: sql`${bet.potentialPayout}`,
 };
 
-/** Finds sportsbook bets across all players, each by player id and without its selections. */
 export class BetsFindService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -74,7 +73,6 @@ export class BetsFindService {
         })
         .from(bet)
         .where(where)
-        // The bet id breaks ties, so equal figures always list in the same order.
         .orderBy(sql`${SORT_COLUMNS[sortBy]} ${direction}`, sql`${bet.id} ${direction}`)
         .limit(limit + 1),
       db.select({ total: count() }).from(bet).where(where),

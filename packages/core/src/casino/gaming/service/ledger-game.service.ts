@@ -1,7 +1,3 @@
-// The round ledger's view of the catalogue: `ledger_game`, fed by `gaming.ledger_game.projected`.
-// Round code reads this table, never `game`, so the ledger stops depending on the catalogue
-// schema. Every write keeps the highest `version`, so a redelivered or reordered event, and a
-// re-run backfill, leave a newer row as it is.
 import {
   withAdvisoryXactLock,
   type DrizzleDb,
@@ -34,7 +30,6 @@ const keepNewest = {
   setWhere: sql`${ledgerGame.version} < excluded.version`,
 };
 
-/** The wagering inputs `ledger_game` holds for `gameId`, or undefined for a game it lacks. */
 export async function readLedgerGame(
   db: DrizzleDb | DrizzleTx,
   gameId: Game['id'],
@@ -68,7 +63,6 @@ export async function applyLedgerGames(
     .onConflictDoUpdate(keepNewest);
 }
 
-/** Writes the committed state of `gameIds` to the outbox on `tx`; unknown ids are dropped. */
 export async function emitLedgerGames(
   tx: DrizzleTx,
   events: EventBus,
@@ -93,10 +87,6 @@ export async function emitLedgerGames(
   }
 }
 
-/**
- * Projects every catalogue game into `ledger_game` and returns how many rows it wrote.
- * Convergent: it seeds a fresh ledger and heals a projection that missed an event.
- */
 export async function backfillLedgerGames(db: DrizzleDb | DrizzleTx): Promise<number> {
   const result = await db
     .insert(ledgerGame)
@@ -112,7 +102,6 @@ export async function backfillLedgerGames(db: DrizzleDb | DrizzleTx): Promise<nu
           updatedAt: sql`now()`.as('updated_at'),
         })
         .from(game)
-        // Only what the projection lacks or holds older, so the periodic run reads, not rewrites.
         .where(
           notExists(
             db
@@ -128,11 +117,6 @@ export async function backfillLedgerGames(db: DrizzleDb | DrizzleTx): Promise<nu
   return result.rowCount ?? 0;
 }
 
-/**
- * `backfillLedgerGames` as the boot run and the periodic reconcile take it, so a game an old
- * process imports during a rolling deploy, or one whose notify was lost, is projected without a
- * restart. Processes running it together take turns, not race.
- */
 export function reconcileLedgerGames(db: DrizzleDb): Promise<number> {
   return db.transaction((tx) =>
     withAdvisoryXactLock(tx, BACKFILL_LOCK_KEY, () => backfillLedgerGames(tx)),

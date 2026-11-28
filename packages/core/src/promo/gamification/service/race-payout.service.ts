@@ -18,16 +18,13 @@ import { announceCashCredit } from '../shared/cash-credit-event.js';
 import { priceForPayout } from '../shared/payout-currency.js';
 import { RACE_STANDING_ORDER } from './race.service.js';
 
-/** One paid winner, announced through the outbox in its race's settlement transaction. */
 export type RaceWon = {
   userId: Uuid;
   raceId: Uuid;
   raceName: string;
   position: number;
-  /** As actually credited, after `priceForPayout` - may differ from the race's own currency. */
   amount: string;
   currency: string;
-  /** Null on a replayed credit (the balance already moved and was already announced). */
   transactionId: string | null;
 };
 
@@ -38,7 +35,6 @@ type PayoutSettled = Pick<
   'userId' | 'position' | 'amount' | 'currency' | 'transactionId'
 > & { outcome: 'granted' | 'restricted' };
 
-// A withheld payout is as much a decision as a paid one, so both are recorded.
 const payoutAudit = (raceId: Uuid, settled: PayoutSettled): AuditEntry => ({
   actorType: 'system',
   action: 'promo.race.payout.settled',
@@ -48,7 +44,6 @@ const payoutAudit = (raceId: Uuid, settled: PayoutSettled): AuditEntry => ({
   after: settled,
 });
 
-/** Consecutive failed ticks before a settlement is logged as stuck rather than just failed. */
 export const STUCK_AFTER_FAILURES = 5;
 
 type Logger = {
@@ -68,21 +63,7 @@ export type RacePayoutDeps = {
   identity: IdentityReader;
 };
 
-/**
- * Settles a race once its window has closed: freezes final standings, pays every position the
- * operator funded, and marks the race `closedAt` so it is never recomputed - the same "insert
- * once, skip if present" idempotency `RankPayoutService`/`StreakPayoutService` use for their own
- * settlement rows, guarded here by `promo_race_payout`'s `unique(raceId, userId)`.
- *
- * Races close at arbitrary configured timestamps rather than a shared daily/weekly/monthly
- * anchor, so this runs on a short recurring tick (see `plugin.ts`) instead of `RankPayoutAnchors`.
- *
- * A player under a responsible-gambling block is still ranked and still gets a payout row, so the
- * standings and history stay accurate - only the cash credit is withheld, the same rule
- * `RankPayoutService`/`StreakPayoutService` apply to their own grants.
- */
 export class RacePayoutService {
-  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
   private readonly failures = new Map<Uuid, number>();
 
   constructor(private readonly deps: RacePayoutDeps) {}
@@ -99,12 +80,10 @@ export class RacePayoutService {
         won.push(...(await this.deps.drizzle.db.transaction((tx) => this.settleOne(tx, id, now))));
         this.failures.delete(id);
       } catch (err) {
-        // One race's failure must not stop the next tick from settling the others due.
         const failures = (this.failures.get(id) ?? 0) + 1;
         this.failures.set(id, failures);
         this.deps.logger.error({ err, raceId: id, failures }, 'race settlement failed');
         if (failures >= STUCK_AFTER_FAILURES) {
-          // A failure that repeats every tick (a bad payload, a missing rate) never heals itself.
           this.deps.logger.error({ raceId: id, failures }, 'race settlement stuck');
         }
       }
@@ -181,10 +160,6 @@ export class RacePayoutService {
       if (!this.deps.wallet) {
         throw new Error('WALLET_COMMANDS is not bound');
       }
-      // Never the race's own currency unconditionally - a crypto-only player must not have a
-      // balance opened in whatever the prize pool is priced in. `priceForPayout` throws when no
-      // rate is available; this whole settlement rolls back and the job's next tick retries it,
-      // the same "not credited yet, retried later" rule a wallet credit failure follows below.
       const priced = await priceForPayout(
         tx,
         this.deps.rates,
@@ -199,15 +174,10 @@ export class RacePayoutService {
         currency: priced.currency,
         type: 'cashback',
         allowNewCurrency: true,
-        // Wallets open lazily on first deposit; a winner who never opened one is paid into a new
-        // one rather than throwing and rolling back every other winner's payout with it.
         allowNewWallet: true,
         providerRef: { providerName: 'promo-race', providerRefId: sourceRef },
       });
       if (!credited.ok) {
-        // Thrown rather than logged-and-recorded-as-granted: a payout row must never claim
-        // `outcome: 'granted'` for money that never moved. The whole race's settlement rolls
-        // back and `closeDue`'s own catch retries it on the next tick.
         throw new Error(`race prize credit failed: ${credited.reason}`);
       }
       await tx.insert(promoRacePayout).values({
@@ -245,13 +215,11 @@ export class RacePayoutService {
       .update(promoRace)
       .set({ closedAt: settledAt, updatedAt: settledAt })
       .where(eq(promoRace.id, raceId));
-    // With the credits and the close, so a prize can never be paid without its record.
     await this.deps.audit.recordManyInTransaction(tx, audits);
     for (const win of won) {
       await this.deps.events.emitInTransaction(tx, 'promo.race.won', win);
       await announceCashCredit(tx, this.deps, win);
     }
-    // Frozen standings ignore a rollback, so what each round counted here is no longer needed.
     await tx.delete(promoRaceRoundWager).where(eq(promoRaceRoundWager.raceId, raceId));
     return won;
   }

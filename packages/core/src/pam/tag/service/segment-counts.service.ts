@@ -13,10 +13,6 @@ import { playerTag, tag } from '../schema/index.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/**
- * players.segment_counts: the population, each tag's players and each account level's, and how
- * many of each were seen over the window - over the population PlayerSegmentReader pages.
- */
 export class SegmentCountsService {
   constructor(private readonly drizzle: DrizzleService) {}
 

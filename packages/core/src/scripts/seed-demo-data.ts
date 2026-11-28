@@ -1,4 +1,3 @@
-// See ADR-0020.
 import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
 import { and, eq, sql } from 'drizzle-orm';
 import { hashPassword } from 'better-auth/crypto';
@@ -179,8 +178,6 @@ const KYC_WEIGHTS = [
   ['rejected', 12],
 ] as const;
 
-// E.164 phone numbers, one per seeded player slot (index-stable so the same player
-// always gets the same number across re-seeds). Country codes align roughly with LOCALES.
 const PHONE_NUMBERS = [
   '+4915201234567',
   '+4407911123456',
@@ -396,7 +393,6 @@ const CHAT_RULES = [
   'No politics & no religion talk in chat, this one is strictly forbidden.',
 ] as const;
 
-// Global chat (roomId: null) - authored by random seeded players, oldest first.
 const GLOBAL_CHAT = [
   'Good luck everyone! 🍀',
   'Anyone on the new slots tonight?',
@@ -442,7 +438,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     isActive: true,
   });
   if (adminUser) {
-    // A staff user holds nothing until a role is assigned - the seed admin is the super admin.
     await assignRoleByKey(db, adminUser.id, 'super-admin');
     log(`Admin ready: ${admin.email} / ${admin.password}`);
   }
@@ -574,7 +569,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       continue;
     }
     userCount++;
-    /* Restricted USD and 1 EUR currency picks due to not ready currency conversion */
     const currency =
       playerUser.role === 'admin' || players.some((p) => p.currency === 'EUR') ? 'USD' : 'EUR';
     players.push({ id: playerUser.id, displayName, role: playerUser.role, currency });
@@ -588,8 +582,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
           ? new Date(now - (30 + Math.floor(rng() * 60)) * dayMs)
           : null;
 
-    // Same `rng` stream as the rest of the row, so the seed stays reproducible. Ages 21-65
-    // keep every demo player clear of the 18+ floor the profile contract enforces.
     const dateOfBirth = new Date(now - (21 + Math.floor(rng() * 45)) * 365.25 * dayMs)
       .toISOString()
       .slice(0, 10);
@@ -599,8 +591,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       firstName: first,
       lastName: last,
       dateOfBirth,
-      // The contact number mirrors the login credential for a demo player; a real one fills
-      // this in on the optional profile step long before any phone verification.
       phone: phoneNumber,
       country,
       currency,
@@ -654,8 +644,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
 
   log(`Created ${playerCount} players with wallets and ${txCount} transactions.`);
 
-  // Room + global chat messages are authored by the seeded players (falling back to
-  // admin only if somehow no player got created), so demo chat reads like real activity.
   const chatAuthors =
     players.length > 0 ? players : adminUser ? [{ id: adminUser.id, displayName: admin.name }] : [];
 
@@ -748,8 +736,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   }
 
   if (adminUser && players.length >= 2) {
-    // Deterministic pick of two distinct players: a random index, then a random
-    // non-zero offset (mod length) so the second index can never land on the first.
     const blockedIndex = Math.floor(rng() * players.length);
     const offset = 1 + Math.floor(rng() * (players.length - 1));
     const ignoredIndex = (blockedIndex + offset) % players.length;
@@ -786,7 +772,6 @@ type EnsureUserInput = {
   phoneVerifiedAt?: Date | null;
 };
 
-/** Usernames are globally unique, so derive a stable one from the seeded address. */
 function usernameFor(email: string): string {
   const base =
     email
@@ -824,7 +809,6 @@ async function ensureUser(
     return null;
   }
   if (!created) {
-    // Re-seeding must leave the printed credentials working, even for a user an older run made.
     await db
       .update(account)
       .set({ password: await hashPassword(input.password) })
@@ -835,7 +819,6 @@ async function ensureUser(
     name: input.name,
     role,
     isActive: input.isActive,
-    // Sign-in requires a verified address; seeded fixtures skip the email round trip.
     emailVerified: true,
   };
   if (input.createdAt) {

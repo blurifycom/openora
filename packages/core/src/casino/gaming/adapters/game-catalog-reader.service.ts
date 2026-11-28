@@ -34,8 +34,6 @@ export function isUuid(id: string) {
   return UuidSchema.safeParse(id).success;
 }
 
-// Guards the offset: Postgres rejects a negative OFFSET, and a plugin calls the port
-// directly, with no PageQuerySchema in front of it.
 export function isValidPage(page: number, limit: number) {
   return page >= 1 && limit >= 1;
 }

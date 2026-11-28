@@ -15,7 +15,6 @@ const LIVE_STATUSES = ['pending', 'active'] as const;
 
 const grant = promoGrant;
 
-/** Finds bonus grants across all players, each by player id and without the admin's note. */
 export class GrantsFindService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -52,7 +51,6 @@ export class GrantsFindService {
           ]
         : []),
     );
-    // The grant id breaks ties, so equal times always list in the same order.
     const order = expiringWithinDays
       ? [asc(grant.expiresAt), asc(grant.id)]
       : [desc(grant.createdAt), desc(grant.id)];

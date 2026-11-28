@@ -1,13 +1,7 @@
 import { resolve, dirname, isAbsolute } from 'node:path';
-import { accessSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import type { PluginEntry } from './load-plugins.js';
 
-/**
- * Load the extensions.config.ts registry from disk and resolve plugin paths.
- * Resolves via EXTENSIONS_CONFIG env var or walks up from process.cwd().
- * Optional `filter` lets a composition root drop entries. `SERVICE_MANIFEST` is
- * applied by `createApp`, to this list or any other it is given.
- */
 export async function loadExtensions(
   filter?: (entries: PluginEntry[]) => PluginEntry[],
 ): Promise<PluginEntry[]> {
@@ -34,11 +28,8 @@ function findConfigUpwards(start: string): string {
   for (let i = 0; i < 8; i++) {
     for (const ext of ['.js', '.ts']) {
       const candidate = resolve(dir, `extensions.config${ext}`);
-      try {
-        accessSync(candidate);
+      if (existsSync(candidate)) {
         return candidate;
-      } catch {
-        // not here - try parent
       }
     }
     const parent = dirname(dir);

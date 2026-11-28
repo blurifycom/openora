@@ -3,10 +3,6 @@ import { ProvidersRuleParamsSchema, defineGameCategoryRule } from '@openora/core
 import type { DrizzleService } from '@openora/core/server';
 import { game, gameProvider } from '../../schema/index.js';
 
-/**
- * Games of ANY listed provider, playable or not - exactly as a manual category can hold an
- * inactive game; readers already hide unplayable games from players. Ordered by name.
- */
 export function createProvidersRule(drizzle: DrizzleService) {
   return defineGameCategoryRule({
     key: 'providers',

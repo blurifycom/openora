@@ -34,28 +34,17 @@ export const NOTIFICATION_TYPES = [
   'chat.room.ownership_transferred',
   'chat.room.scheduled_for_deletion',
   'chat.room_invite.received',
-  // Core never emits this one: it is the seam for an operator-run VIP programme, whose overlay
-  // tells the player through its own NotificationsService when it admits them.
   'vip.assigned',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
 
-// Bare entity-reference IDs mirrored from the source domain event's own payload (eg
-// `{ roomId, messageId }`) - never a path, URL, or asset reference. Lets a consumer
-// build its own banner/CTA mapping keyed off `type` without openora knowing routes.
 export const NotificationDataSchema = z.record(z.string(), z.string());
 export type NotificationData = z.infer<typeof NotificationDataSchema>;
 
-// The values a notification's sentence needs; the client renders `type` as an i18n key with these.
 export const NotificationParamsSchema = z.record(z.string(), z.string());
 export type NotificationParams = z.infer<typeof NotificationParamsSchema>;
 
-/**
- * The `params` keys each notification type carries. Values are raw: amounts are unformatted
- * decimal strings and codes (a forfeit reason, a limit period or type, an adjustment direction)
- * are untranslated - the client formats and translates them for the player's locale.
- */
 export const NOTIFICATION_PARAM_KEYS = {
   'withdrawal.approved': { required: ['amount', 'currency'], optional: [] },
   'withdrawal.rejected': { required: ['amount', 'currency'], optional: ['reason'] },
@@ -102,7 +91,6 @@ export const NOTIFICATION_PARAM_KEYS = {
   'social.friend_request.accepted': { required: ['accepterUsername'], optional: [] },
   'chat.room.ownership_transferred': { required: ['roomName'], optional: [] },
   'chat.room.scheduled_for_deletion': { required: ['roomName'], optional: [] },
-  // A missing tier (rows written before the tier param existed) means basic.
   'kyc.resubmission_requested': { required: [], optional: ['reason', 'tier'] },
   'rg.limit.admin_updated': {
     required: ['period', 'limitType'],
@@ -169,16 +157,11 @@ function checkParams(requireParams: boolean) {
   };
 }
 
-// Internal-only - fed by domain-event handlers in plugin.ts and by overlays, not a wire route.
-// `params` must match its type's NOTIFICATION_PARAM_KEYS; it may be absent only for a type with no
-// required keys.
 export const CreateNotificationInputSchema = NotificationInputObjectSchema.superRefine(
   checkParams(true),
 );
 export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
 
-// A dispatch job queued by the previous release carries no `params` at all, so only the job
-// boundary accepts it absent. ponytail: remove together with the title/body columns.
 export const QueuedNotificationInputSchema = NotificationInputObjectSchema.superRefine(
   checkParams(false),
 );

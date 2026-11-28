@@ -18,10 +18,6 @@ import { chatCommandConfig } from '../schema/index.js';
 
 const refuse = (refusal: ChatTransferRefusal): ChatTransferVerdict => ({ allowed: false, refusal });
 
-/**
- * Local `CHAT_TRANSFER_CHECK`: every read goes through the caller's transaction, which it
- * requires, so the block lock below cannot be skipped by calling it outside one.
- */
 export class ChatTransferCheckService {
   constructor(
     private readonly deps: {
@@ -34,7 +30,6 @@ export class ChatTransferCheckService {
     transaction: unknown,
     rawInput: ChatTransferCheckInput,
   ): Promise<ChatTransferVerdict> {
-    // Only a transaction handle has `rollback`; the pool handle would take the lock outside one.
     if (typeof transaction !== 'object' || transaction === null || !('rollback' in transaction)) {
       throw new Error('CHAT_TRANSFER_CHECK needs the caller transaction to hold its block locks');
     }
@@ -77,8 +72,6 @@ export class ChatTransferCheckService {
     if (!command?.enabled) {
       return refuse('command_disabled');
     }
-    // A stored config that no longer parses reads as null; treating it as "no limits" would let
-    // any amount through, so the command is refused until an operator fixes the row.
     if (command.hasStoredConfig && command.config === null) {
       return refuse('command_disabled');
     }
@@ -112,10 +105,6 @@ export class ChatTransferCheckService {
     };
   }
 
-  // CHAT_ROOM_ACCESS answers with the router's error codes: a missing room, or a non-member or
-  // banned actor. Anything else is a fault and propagates, which fails the caller's transaction.
-  // Bans and membership take no lock: one lifted or added after this read and before the
-  // caller commits is not seen.
   private async roomAccessRefusal(tx: DrizzleTx, roomId: Uuid, actorId: Uuid) {
     try {
       await this.deps.roomAccess.verifyRoomAccess(roomId, actorId, tx);
@@ -131,8 +120,6 @@ export class ChatTransferCheckService {
     }
   }
 
-  // A shared lock per direction makes `blockUser` (which takes the same key exclusively) wait
-  // for the money to commit, or the read here wait for the block.
   private async blockedCounterparts(tx: DrizzleTx, input: ChatTransferCheckInput) {
     const { actorId } = input;
     const counterpartIds = [...new Set(input.counterpartIds)].filter((id) => id !== actorId);

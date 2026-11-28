@@ -1,7 +1,5 @@
 import * as z from 'zod';
 
-// `session` is a Responsible-Gambling session-time limit: a `user_limit` row with
-// type='session', period='session', amount = minutes.
 export const limitTypes = ['deposit', 'wager', 'loss', 'session'] as const;
 export const LimitTypeSchema = z.enum(limitTypes);
 export type LimitType = z.infer<typeof LimitTypeSchema>;
@@ -17,7 +15,6 @@ export type GeoRuleAction = z.infer<typeof GeoRuleActionSchema>;
 export const NonEmptyReasonSchema = z.string().trim().min(1);
 export const BoundedReasonSchema = NonEmptyReasonSchema.max(500);
 
-// Who owns a game geo rule: the backoffice, or the named background sync that wrote it.
 export const GEO_RULE_ADMIN_SOURCE = 'admin';
 export const GeoRuleSourceSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 

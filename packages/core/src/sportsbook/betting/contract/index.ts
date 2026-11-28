@@ -72,14 +72,11 @@ export const SPORTSBOOK_FINDING_STATUSES = ['open', 'resolved'] as const;
 export const SportsbookFindingStatusSchema = z.enum(SPORTSBOOK_FINDING_STATUSES);
 export type SportsbookFindingStatus = z.infer<typeof SportsbookFindingStatusSchema>;
 
-/** The provider key the wallet ledger rows of this module carry, so they never collide with a casino provider's references. */
 export const SPORTSBOOK_WALLET_PROVIDER_PREFIX = wagerProductProviderPrefix('sportsbook');
-/** `source` of the withdrawal hold sportsbook debt places. */
 export const SPORTSBOOK_HOLD_SOURCE = 'sportsbook';
 
 export const SportsbookCurrencySchema = z.object({
   currency: CurrencyTickerInputSchema,
-  /** Decimal places the provider settles this currency in; a payout with more is refused. */
   decimals: z.int().min(0).max(MONEY_SCALE),
 });
 export type SportsbookCurrency = z.infer<typeof SportsbookCurrencySchema>;
@@ -98,11 +95,8 @@ const atMost = (max: number) => (record: Record<string, unknown>) =>
   Object.keys(record).length <= max;
 
 export const SportsbookPromotionsConfigSchema = z.object({
-  /** Off by default: a reserve that carries a promotion is refused until the operator opts in. */
   enabled: z.boolean(),
-  /** The largest promotion-paid stake, valued in USD at reserve; `null` caps none. */
   maxPromotionStakeUsd: MoneyAmountSchema.nullable(),
-  /** Who funds each promotion type, for the report only; a type left out is the operator's. */
   funder: z
     .record(SportsbookPromotionTypeSchema, SportsbookPromotionFunderSchema)
     .refine(atMost(200), 'at most 200 promotion types'),
@@ -123,7 +117,6 @@ const configFields = {
     .refine((list) => new Set(list.map((c) => c.currency)).size === list.length, {
       message: 'each currency at most once',
     }),
-  /** Countries the sportsbook refuses on top of the platform's own geo blocks. */
   blockedCountries: z.array(CountryCodeSchema).max(250),
   reserveTimeoutSeconds: z.int().min(30).max(86_400),
   settlementGraceMinutes: z.int().min(10).max(43_200),
@@ -141,7 +134,6 @@ export type SportsbookConfig = z.infer<typeof SportsbookConfigSchema>;
 
 export const UpdateSportsbookConfigInputSchema = z.object({
   ...configFields,
-  /** Replaces the stored promotion settings whole; omitted leaves them as they are. */
   promotions: SportsbookPromotionsConfigSchema.optional(),
 });
 export type UpdateSportsbookConfigInput = z.infer<typeof UpdateSportsbookConfigInputSchema>;
@@ -169,16 +161,13 @@ export type SportsbookBet = z.infer<typeof SportsbookBetSchema>;
 export const AdminSportsbookBetSchema = SportsbookBetSchema.extend({
   userId: UuidSchema,
   sessionId: UuidSchema,
-  /** What the player paid of `stake`: zero for a promotion-paid stake. */
   cashStake: MoneyAmountSchema,
   voidPayout: MoneyAmountSchema,
   maxLossRefund: MoneyAmountSchema,
   promotionType: SportsbookPromotionTypeSchema.nullable(),
   promotionId: SportsbookProviderIdSchema.nullable(),
-  /** Who funds the promotion, as the funder map named it when the bet was reserved. */
   promotionFunder: SportsbookPromotionFunderSchema.nullable(),
   promotionPotential: MoneyAmountSchema.nullable(),
-  /** The part of `payoutTotal` a promotion funded. */
   promotionPaid: MoneyAmountSchema,
 });
 export type AdminSportsbookBet = z.infer<typeof AdminSportsbookBetSchema>;
@@ -203,7 +192,6 @@ export type SportsbookBetTransaction = z.infer<typeof SportsbookBetTransactionSc
 
 export const AdminSportsbookBetDetailSchema = AdminSportsbookBetSchema.extend({
   transactions: z.array(SportsbookBetTransactionSchema),
-  /** Whether the bound provider can report this bet's status, which align needs. */
   providerStatusLookup: z.boolean(),
 });
 export type AdminSportsbookBetDetail = z.infer<typeof AdminSportsbookBetDetailSchema>;
@@ -213,7 +201,6 @@ export const ListSportsbookBetsInputSchema = PageQuerySchema.extend({
 });
 export type ListSportsbookBetsInput = z.infer<typeof ListSportsbookBetsInputSchema>;
 
-// A provider bet id is unique per provider only, and the index leads with the provider.
 export const ListAdminSportsbookBetsInputSchema = ListSportsbookBetsInputSchema.extend({
   userId: UuidSchema.optional(),
   provider: SportsbookProviderNameSchema.optional(),
@@ -236,7 +223,6 @@ export const SportsbookSessionSchema = z.object({
   launchUrl: z.url({ protocol: /^https$/ }).nullable(),
   currency: CurrencyTickerSchema,
   expiresAt: TimestampSchema,
-  /** The player is restricted from sportsbook: they may browse, and every bet is refused. */
   browseOnly: z.boolean(),
 });
 export type SportsbookSession = z.infer<typeof SportsbookSessionSchema>;
@@ -245,7 +231,6 @@ export const SPORTSBOOK_UNAVAILABLE_REASONS = ['unavailable', 'geo_restricted'] 
 export const SportsbookUnavailableReasonSchema = z.enum(SPORTSBOOK_UNAVAILABLE_REASONS);
 export type SportsbookUnavailableReason = z.infer<typeof SportsbookUnavailableReasonSchema>;
 
-/** `data.reason` of an `issueSession` error. `player_blocked` is the reason when the account state cannot be named. */
 export const SPORTSBOOK_SESSION_REFUSAL_REASONS = [
   ...SPORTSBOOK_UNAVAILABLE_REASONS,
   'currency_not_offered',
@@ -256,7 +241,6 @@ export const SPORTSBOOK_SESSION_REFUSAL_REASONS = [
 export const SportsbookSessionRefusalReasonSchema = z.enum(SPORTSBOOK_SESSION_REFUSAL_REASONS);
 export type SportsbookSessionRefusalReason = z.infer<typeof SportsbookSessionRefusalReasonSchema>;
 
-/** Whether the caller's address may reach the sportsbook at all, signed in or not. */
 export const SportsbookAvailabilitySchema = z.object({
   available: z.boolean(),
   reason: SportsbookUnavailableReasonSchema.nullable(),
@@ -264,7 +248,6 @@ export const SportsbookAvailabilitySchema = z.object({
 export type SportsbookAvailability = z.infer<typeof SportsbookAvailabilitySchema>;
 
 export const RevokeSportsbookSessionInputSchema = z.object({
-  /** Omitted revokes every live session of the caller. */
   sessionId: UuidSchema.optional(),
 });
 export type RevokeSportsbookSessionInput = z.infer<typeof RevokeSportsbookSessionInputSchema>;
@@ -299,10 +282,6 @@ export const SportsbookFindingSchema = z.object({
   provider: SportsbookProviderNameSchema.nullable(),
   betId: UuidSchema.nullable(),
   userId: UuidSchema.nullable(),
-  /**
-   * The bet's currency, which any amount in `detail` is in; null when there is no bet, where a
-   * refused stake's `detail` names its own.
-   */
   currency: CurrencyTickerSchema.nullable(),
   detail: z.record(z.string(), z.unknown()),
   status: SportsbookFindingStatusSchema,
@@ -334,7 +313,6 @@ export const SportsbookDebtSchema = z.object({
   writtenOff: MoneyAmountSchema,
   outstanding: MoneyAmountSchema,
   status: SportsbookDebtStatusSchema,
-  /** Whether the player's sportsbook withdrawal hold is in place right now. */
   holdActive: z.boolean(),
   writtenOffBy: UuidSchema.nullable(),
   writtenOffReason: z.string().nullable(),
@@ -375,13 +353,8 @@ export const SportsbookPromotionReportRowSchema = z.object({
   type: SportsbookPromotionTypeSchema,
   funder: SportsbookPromotionFunderSchema,
   currency: CurrencyTickerSchema,
-  /** Settles in the range that paid a promotion part. */
   bets: z.int().nonnegative(),
   promotionPaid: MoneyAmountSchema,
-  /**
-   * The promotion part of settlements reopened in the range, whether or not the player's balance
-   * covered it; what a reopen could not collect is sportsbook debt.
-   */
   promotionReversed: MoneyAmountSchema,
 });
 export type SportsbookPromotionReportRow = z.infer<typeof SportsbookPromotionReportRowSchema>;
@@ -389,26 +362,15 @@ export type SportsbookPromotionReportRow = z.infer<typeof SportsbookPromotionRep
 export const SportsbookPlayerSummaryInputSchema = DateRangeSchema.extend(UserIdInputSchema.shape);
 export type SportsbookPlayerSummaryInput = z.infer<typeof SportsbookPlayerSummaryInputSchema>;
 
-/**
- * One currency of a player's bets, as each bet stands now. Stake-side fields count every bet not
- * cancelled, by its acceptance or, while still reserved, its debit, in the range; payout-side
- * fields bets settled in it; and `openExposure` the reserved and accepted stakes now, whatever the
- * range.
- */
 export const SportsbookPlayerSummaryRowSchema = z.object({
   currency: CurrencyTickerSchema,
   bets: z.int().nonnegative(),
   stake: MoneyAmountSchema,
   cashStake: MoneyAmountSchema,
   promotionStake: MoneyAmountSchema,
-  /** Everything settlement paid back, a void's returned stake included. */
   payout: MoneyAmountSchema,
   cashPayout: MoneyAmountSchema,
   promotionPayout: MoneyAmountSchema,
-  /**
-   * `cashStake - payout`, the player's activity, not revenue: the official GGR is the wallet's.
-   * Bet-level, so a reopened bet's uncollected reversal is not in it.
-   */
   netResult: SignedMoneyAmountSchema,
   openExposure: MoneyAmountSchema,
 });
@@ -527,8 +489,6 @@ export const SportsbookRgRevokeJobSchema = z.object({
   trigger: z.enum(SPORTSBOOK_RG_REVOKE_TRIGGERS),
 });
 export type SportsbookRgRevokeJob = z.infer<typeof SportsbookRgRevokeJobSchema>;
-/** Bets one reconciliation pass looks at per kind; the next pass picks up the rest. */
 export const SPORTSBOOK_RECONCILE_BATCH = 200;
-/** Status lookups a reserve gets before reconciliation files it as unresolved. */
 export const SPORTSBOOK_RECONCILE_MAX_ATTEMPTS = 3;
 export * from './agent-tools.js';

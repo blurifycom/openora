@@ -1,7 +1,5 @@
 import { RG_FLAG_THRESHOLD_PCT } from '@openora/core/contracts';
 
-// Pure, DB-free RG evaluation helpers.
-
 export function thresholdPct(actual: number, limit: number): number {
   if (limit <= 0) {
     return 0;

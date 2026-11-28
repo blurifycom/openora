@@ -10,28 +10,20 @@ import {
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
-// The value tuple is the single source of truth: `z.enum` derives the contract here
-// and the Drizzle `pgEnum` in audit/schema derives the DB enum from the same tuple,
-// so the two can never drift.
 export const ACTOR_TYPES = ['player', 'admin', 'system'] as const;
 export const AuditActorTypeSchema = z.enum(ACTOR_TYPES);
 export type AuditActorType = z.infer<typeof AuditActorTypeSchema>;
 
-// before/after are jsonb snapshots and may hold an object OR an array (eg a role's
-// permission list), so allow both - constraining to a record 500s the list output
-// validation whenever an array snapshot exists.
 export const AuditSnapshotSchema = z
   .union([z.record(z.string(), z.unknown()), z.array(z.unknown())])
   .nullable();
 
 export const AuditLogEntrySchema = z.object({
   id: UuidSchema,
-  // external / system actor id - not necessarily one of our UUIDs
   actorId: z.string().nullable(),
   actorType: AuditActorTypeSchema,
   action: z.string(),
   resourceType: z.string(),
-  // arbitrary resource key (config key, external ref, ...) - not necessarily a UUID
   resourceId: z.string().nullable(),
   before: AuditSnapshotSchema,
   after: AuditSnapshotSchema,
@@ -61,13 +53,9 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   actorId: z.string().optional(),
   actorType: AuditActorTypeSchema.optional(),
   action: z.string().optional(),
-  // Prefix match on action (eg 'rg.' for the RG activity log / change history).
   actionPrefix: z.string().trim().min(1).optional(),
   resourceType: z.string().optional(),
   resourceId: z.string().optional(),
-  // Single search box: whitespace-separated ids, each exact-matched against actorId OR
-  // resourceId. Several ids cover one subject filed under more than one id (a player's
-  // profile id and user id).
   q: z.string().trim().min(1).optional(),
   fromDate: z.iso.date().optional(),
   toDate: z.iso.date().optional(),
@@ -76,8 +64,6 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
 });
 export type AuditListFilters = z.infer<typeof AuditListFiltersSchema>;
 
-// Export inherits sortBy/sortOrder from the list schema; override default sort order to
-// ascending (chronological) to match prior exportCsv behaviour (asc by seq).
 export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({
   page: true,
   limit: true,

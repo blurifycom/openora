@@ -3,7 +3,6 @@ import type { ProcessedEventLog } from '../../kernel/event-bus.js';
 import { processedEvents } from './schema.js';
 import type { DrizzleDb } from '../drizzle.js';
 
-/** Postgres-backed `ProcessedEventLog`; rows are pruned by the `OutboxRelay`. */
 export class DrizzleProcessedEventLog implements ProcessedEventLog {
   constructor(private readonly db: DrizzleDb) {}
 

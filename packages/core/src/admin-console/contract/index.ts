@@ -78,8 +78,6 @@ export const TransactionFilterSchema = PageQuerySchema.extend({
   sortOrder: SortOrderSchema.default('desc').optional(),
 });
 
-// The list row carries the playerId and player email as the identifying labels;
-// the fuller player info (username, KYC) lives on the detail view fetched on "view".
 export const AdminTransactionSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
@@ -115,8 +113,6 @@ export const GamePerformanceFilterSchema = z.object({
   sortDir: SortDirectionSchema.optional(),
 });
 
-// `revenue` (GGR = volume - payouts) uses the signed variant - it legitimately goes
-// negative over a short/unlucky-for-the-house window.
 export const GamePerformanceSchema = z.object({
   gameId: UuidSchema,
   name: z.string(),
@@ -127,8 +123,6 @@ export const GamePerformanceSchema = z.object({
   roundsPlayed: z.number().int(),
 });
 
-// dateTo defaults to now and dateFrom to 30 days before dateTo. Without a currency,
-// amounts across currencies are summed unconverted, as in GamePerformanceSchema.
 export const GamePerformanceTrendFilterSchema = DateRangeSchema.extend({
   gameId: UuidSchema,
   currency: CurrencyTickerInputSchema.optional(),

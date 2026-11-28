@@ -106,7 +106,6 @@ import { assertLedgerGame, emitLedgerGames, readLedgerGame } from './ledger-game
 
 const logger = createLogger('gaming');
 
-// A vendor's exponent form ('1e-7', '-1e1') as the plain decimal it means; anything else non-canonical throws.
 const canonicalDelta = (value: string): string =>
   SignedMoneyAmountSchema.parse(
     value.startsWith('-') ? `-${expandMoneyExponent(value.slice(1))}` : expandMoneyExponent(value),
@@ -153,8 +152,6 @@ export class GameGeoRestrictedError extends Error {
   }
 }
 
-// GAME_GEO_CHECK is bound only when the compliance module is loaded; its absence is how
-// listGamesAdmin detects the geo filters have nothing to query.
 export const GameGeoFiltersUnavailableError = createDomainError<[]>(
   'GameGeoFiltersUnavailableError',
   () => 'geo filters are unavailable: the compliance module is not loaded',
@@ -164,17 +161,11 @@ export const InsufficientBalanceError = createDomainError<[available: string, re
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
-// Thrown inside the settlement transaction, so the round stays `active` and the win can be
-// settled again rather than being lost silently.
 const WinCreditFailedError = createDomainError<[roundId: string, reason: string]>(
   'WinCreditFailedError',
   (roundId, reason) => `win credit failed for round ${roundId}: ${reason}`,
 );
 
-// Thrown before the round is touched, so it stays `active`: an amount the ledger cannot hold
-// exactly (`1e-19`, a 19th decimal, a negative) is never rounded or dropped in silence. Every
-// throw is logged at error level, which reaches the bound ERROR_TRACKING adapter, so operations
-// see the stuck round and the provider's raw value.
 const WinAmountInvalidError = createDomainError<[roundId: string, winAmount: string]>(
   'WinAmountInvalidError',
   (roundId, winAmount) =>
@@ -185,8 +176,6 @@ function ruledBy(gameIds: readonly string[], providerIds: readonly string[]): SQ
   return sql`(${game.id} = ANY(${sql.param([...new Set(gameIds)])}::uuid[]) or ${game.providerId} = ANY(${sql.param([...new Set(providerIds)])}::uuid[]))`;
 }
 
-// Reads the links through the caller's transaction so the snapshot matches the
-// locked row; ordered so identical link sets always serialize identically.
 async function gameAuditSnapshot(tx: DrizzleTx, row: Game) {
   const [links, tagLinks] = await Promise.all([
     tx
@@ -222,12 +211,8 @@ export function withInactive<T extends { total: number; active: number }>(counts
   return { ...counts, inactive: counts.total - counts.active };
 }
 
-/** Settlement source for a round the platform ran itself, as opposed to an aggregator's. */
 const INTERNAL_ROUND_PROVIDER = 'internal';
 
-// The platform's own house games are the casino vertical, the same bucket aggregator-supplied
-// casino games weigh into - `product` partitions wagering by vertical (casino, sportsbook, pvp),
-// not by who ran the round.
 const INTERNAL_ROUND_PRODUCT = 'casino';
 
 export class GamingService {
@@ -461,10 +446,6 @@ export class GamingService {
     filters?: (SQL | undefined)[];
   }) {
     const db = playableOnly ? this.drizzle.replica : this.drizzle.db;
-    // The public route orders a category listing by the category's configured sort
-    // (categoryGameOrder, shared with GAME_CATALOG_READER so the two never drift), via
-    // an inner join on the membership row itself. The admin list keeps its exists-based
-    // membership check and name order unchanged - it never reads rank or position.
     const usePublicCategoryJoin = sort === 'public' && categoryId !== undefined;
     const where = and(
       ...filters,
@@ -596,8 +577,6 @@ export class GamingService {
         .where(where),
       new GameNotFoundError(key),
     );
-    // The public detail routes pass activeOnly: internal callers (updateGame's
-    // return value) keep the unfiltered row so an admin still sees what they wrote.
     if (opts.activeOnly && !isGamePlayable(row.game, row.provider)) {
       throw new GameNotFoundError(key);
     }
@@ -639,18 +618,11 @@ export class GamingService {
       throw new GameGeoRestrictedError(geoDecision);
     }
 
-    // The round id is minted before the debit rather than read back from the insert: the bonus
-    // engine attributes a win to the grant that funded the stake by this id, and a stake booked
-    // without one can never be settled back.
     const roundId = randomUUID();
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
-    // Every event below commits with the debit through the outbox - see the module-level
-    // comment on WalletCommandsService for why the port itself never emits them.
     const round = await this.drizzle.db.transaction(async (tx) => {
       const { rtp } = await assertLedgerGame(tx, gameId);
-      // The same currency the RG pre-check above weighed. Left off, the debit falls on the
-      // player's active currency, and the two would then judge different moves.
       const outcome = await this.walletCommands.debit(tx, {
         userId,
         amount: betAmount,
@@ -697,8 +669,6 @@ export class GamingService {
           type: 'bet',
           direction: 'debit',
         });
-        // Whatever a WAGER_TRACKING consumer (rank rakeback) credited to the real balance
-        // inside this same transaction.
         for (const credit of outcome.wagerTrackingCredits ?? []) {
           await this.events.emitInTransaction(tx, 'wallet.balance.changed', {
             userId,
@@ -711,9 +681,6 @@ export class GamingService {
           });
         }
       }
-      // With the debit, not after the launch: nothing may fail once the provider session
-      // exists, or a retry mints a new round and debits again. A launch that fails after
-      // this commit leaves the round active and debited, which is what this event records.
       await this.events.emitInTransaction(tx, 'gaming.round.started', {
         roundId,
         gameId,
@@ -733,7 +700,6 @@ export class GamingService {
     userId: User['id'],
     roundId: GameRound['id'],
   ): Promise<{ success: true; winAmount: string }> {
-    // Without RLS (ADR-0026, single-tenant) this userId filter is the sole access guard.
     const round = findOneOrThrow(
       await this.drizzle.db
         .select()
@@ -742,14 +708,11 @@ export class GamingService {
       new GameRoundNotFoundError(roundId),
     );
 
-    // A round that already closed reports what it paid and stops here - re-calling the
-    // provider would ask a settled round for its outcome a second time.
     if (round.status !== 'active') {
       return { success: true, winAmount: round.winAmount };
     }
 
     const outcome = await this.provider.endRound(roundId);
-    // The provider's number, never the caller's: the win is credited off this alone.
     const providerWinAmount = outcome?.winAmount ?? '0';
     const winAmount = expandMoneyExponent(providerWinAmount);
     if (!MoneyAmountSchema.safeParse(winAmount).success) {
@@ -764,8 +727,6 @@ export class GamingService {
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
 
     const paid = await this.drizzle.db.transaction(async (tx) => {
-      // `status = 'active'` is the payout guard: two concurrent end-round calls both
-      // reach here, only one updates a row, so the win is credited exactly once.
       const settled = await tx
         .update(gameRound)
         .set({ status: 'completed', endedAt: new Date(), winAmount })
@@ -781,8 +742,6 @@ export class GamingService {
         return false;
       }
       if (isPositiveMoney(winAmount)) {
-        // The bet already opened this currency's balance, so `allowNewCurrency` only
-        // covers a player whose active currency moved between start and settlement.
         const credited = await this.walletCommands.credit(tx, {
           userId,
           amount: winAmount,
@@ -812,7 +771,6 @@ export class GamingService {
           await this.emitCompleted(tx, userId, round.currency, credited.completed ?? []);
         }
       } else if (this.walletCommands.closeRound) {
-        // A lost round still settles the bonus bet it carried.
         const closed = await this.walletCommands.closeRound(tx, {
           userId,
           currency: round.currency,
@@ -843,21 +801,12 @@ export class GamingService {
     }
   }
 
-  /**
-   * `targetWhere` must repeat the partial index's predicate (schema/index.ts) - Postgres
-   * rejects ON CONFLICT against a partial index without it. Deltas add onto the stored
-   * value, not `excluded.<col>`, so concurrent callbacks each apply their own delta.
-   * A negative `betDelta` reverses stake: `betAmount` falls and `reversedAmount` rises by the
-   * same amount, which is how a settled round (whose stake may only grow) takes a late rollback.
-   */
   async accumulateExternalRound(
     tx: unknown,
     args: GamingAccumulateExternalRoundArgs,
   ): Promise<GamingAccumulateExternalRoundOutcome> {
     const txn = tx as DrizzleDb;
-    // Canonical form first: `::numeric` reads ' 10' as a stake the guard below would miss.
     const betDelta = canonicalDelta(args.betDelta ?? '0');
-    // The range the dropped `game_round` CHECK held, for every in-process caller, not only the API.
     const sentRtp = args.wager?.rtp;
     if (typeof sentRtp === 'string' && !isWagerRtp(sentRtp)) {
       throw new GamingInvalidRtpError(sentRtp);
@@ -865,8 +814,6 @@ export class GamingService {
     const winDelta = canonicalDelta(args.winDelta ?? '0');
     const reversedStake = sql`greatest(-(${betDelta}::numeric), 0)`;
     const status = args.isFinal ? ('completed' as const) : ('active' as const);
-    // A round ends once: a repeated final keeps the first end time, so the call that set it is
-    // the one that ended the round.
     const endedNow = sql`statement_timestamp()`;
     const movesMoney = moneyCompare(betDelta, '0') !== 0 || moneyCompare(winDelta, '0') !== 0;
     const deltas = {
@@ -888,8 +835,6 @@ export class GamingService {
       winAmount: gameRound.winAmount,
       wagerProduct: gameRound.wagerProduct,
       rtp: gameRound.rtp,
-      // The call that ended the round, or a later one that moved money on it: either way readers
-      // must re-read its totals (a late bet is a loss the RG check has not seen yet).
       announce: sql<boolean>`coalesce(${gameRound.endedAt} = ${endedNow} or (${gameRound.endedAt} is not null and ${movesMoney}), false)`,
     };
     type ReturnedRound = Pick<
@@ -921,9 +866,6 @@ export class GamingService {
       return toOutcome(existing);
     }
     const projected = await readLedgerGame(txn, args.gameId);
-    // Only a stake that opens a round needs a game the ledger knows. A win, refund, rollback or
-    // final always lands, also as a round's first call (a free-round result, a settle that beats
-    // its bet): refusing it would lose money the provider already moved.
     if (isPositiveMoney(betDelta) && !projected) {
       const [existing] = await txn
         .select({ id: gameRound.id })
@@ -934,8 +876,6 @@ export class GamingService {
         throw new GamingUnknownGameError(args.gameId);
       }
     }
-    // The catalogue is the operator's record of the game, so it wins; the caller's value only
-    // fills what it lacks.
     const sent = args.wager;
     if (
       (sent?.product && projected?.product && sent.product !== projected.product) ||
@@ -972,12 +912,9 @@ export class GamingService {
         targetWhere: sql`${gameRound.externalRoundId} IS NOT NULL`,
         set: {
           ...deltas,
-          // First seen wins: a round keeps the snapshot it has, and only fills one it lacks.
           wagerProduct: sql`coalesce(${gameRound.wagerProduct}, excluded.wager_product)`,
           rtp: sql`coalesce(${gameRound.rtp}, excluded.rtp)`,
         },
-        // A conflicting row of another user, game or currency is left untouched (0 rows
-        // returned) instead of merging deltas onto someone else's round.
         setWhere: ownedByCaller,
       })
       .returning(returning);
@@ -1025,8 +962,6 @@ export class GamingService {
       return { changed: false };
     }
     await txn.update(game).set({ isUnavailable }).where(eq(game.id, gameId));
-    // Flips a game's playable/unplayable split within any category it's in - a pinned
-    // slot's meaning depends on that split, so it must re-rank too. See docs/modules/gaming.md.
     await markCategoriesRankDirtyForGames(txn, [gameId]);
     return {
       changed: true,
@@ -1047,7 +982,6 @@ export class GamingService {
       this.existingIds(gameTag, gameTag.id, tagIds),
       this.existingIds(gameProvider, gameProvider.id, providerIds),
     ]);
-    // The durable marker the rank sweep reads, should the event's fast-path enqueue be lost.
     await this.drizzle.db.transaction(async (tx) => {
       await markCategoriesRankDirtyForGames(tx, changedGameIds);
       await emitLedgerGames(tx, this.events, changedGameIds);
@@ -1067,7 +1001,6 @@ export class GamingService {
     }
   }
 
-  /** Reports imported games to the round ledger; `notifyGamesChanged` does the same for its ids. */
   async projectLedgerGames(gameIds: readonly Game['id'][]): Promise<void> {
     await this.drizzle.db.transaction((tx) => emitLedgerGames(tx, this.events, gameIds));
   }
@@ -1094,9 +1027,7 @@ export class GamingService {
     userAgent,
     ...patchInput
   }: UpdateGameInput & CatalogActor) {
-    // Events and audit records carry the id as Postgres returns it.
     const id = requestedId.toLowerCase();
-    // The only writer of `custom_thumbnail_url`; any new write path must repeat this host check.
     if (patchInput.customThumbnailUrl !== undefined && patchInput.customThumbnailUrl !== null) {
       const host = new URL(patchInput.customThumbnailUrl).hostname;
       if (!isAllowedHost(host, this.allowedThumbnailHosts)) {
@@ -1112,14 +1043,11 @@ export class GamingService {
     }
     const transition = await this.drizzle.db
       .transaction(async (tx) => {
-        // The row lock serializes concurrent PATCHes, so the audited `before` is the
-        // state this write replaced and `after` is what it persisted (docs/standards/audit.md).
         const beforeRow = findOneOrThrow(
           await tx.select().from(game).where(eq(game.id, id)).limit(1).for('update'),
           new GameNotFoundError(id),
         );
         const before = await gameAuditSnapshot(tx, beforeRow);
-        // Enabling one game by id is the admin's review decision for it.
         const approvedFrom =
           patch.isActive === true && isUnreviewed(beforeRow.reviewStatus)
             ? beforeRow.reviewStatus
@@ -1127,8 +1055,6 @@ export class GamingService {
         if (patchInput.providerId !== undefined || patchInput.aggregator !== undefined) {
           const nextProviderId = patchInput.providerId ?? beforeRow.providerId;
           const nextAggregator = patchInput.aggregator ?? beforeRow.aggregator;
-          // FOR SHARE conflicts with updateProvider's FOR UPDATE, so the mapping checked
-          // below cannot be removed until this game has committed against it.
           findOneOrThrow(
             await tx
               .select({ id: gameProvider.id })
@@ -1167,8 +1093,6 @@ export class GamingService {
             ? { toAdd: [], toRemove: [] }
             : diffMembership(before.categoryIds, uniqueCategoryIds);
         if (uniqueCategoryIds !== undefined) {
-          // FOR KEY SHARE here conflicts with the FOR UPDATE a mode switch or the rule
-          // evaluator takes - see "Lock order" in docs/modules/gaming.md.
           const lookupIds = [...new Set([...uniqueCategoryIds, ...categoryDiff.toRemove])].sort();
           const rows =
             lookupIds.length > 0
@@ -1184,7 +1108,6 @@ export class GamingService {
           if (missing) {
             throw new GameCategoryNotFoundError(missing);
           }
-          // Re-sending a rule-mode category the game is already in is not a change.
           const ruleManaged = [...categoryDiff.toAdd, ...categoryDiff.toRemove].find(
             (categoryId) => modeById.get(categoryId) === 'rule',
           );
@@ -1207,14 +1130,6 @@ export class GamingService {
             throw new GameTagNotFoundError(missing);
           }
         }
-        // Marks the trigger categories dirty (locking `game_category`) before touching
-        // `game_category_game` below - `GameSortRankingService.finalize` locks
-        // `game_category` FOR UPDATE first and only then writes `game_category_game`
-        // for that category, so writing the two tables in the opposite order here would
-        // be an ABBA lock-order inversion Postgres resolves by aborting one side (see
-        // docs/modules/gaming.md). The trigger set is computed from the anticipated
-        // post-write values (the patch already validated above), not a re-read after
-        // the write, precisely so this can run before any category-membership write.
         const anticipatedAfterCategoryIds = uniqueCategoryIds ?? before.categoryIds;
         await markCategoriesRankDirty(
           tx,
@@ -1241,8 +1156,6 @@ export class GamingService {
             )
             .where(eq(game.id, id));
         }
-        // Only the links that moved are written: a kept link - a rule-mode category's
-        // above all - keeps its row, and with it its source, position and pin.
         if (categoryDiff.toRemove.length > 0) {
           await tx
             .delete(gameCategoryGame)
@@ -1277,8 +1190,6 @@ export class GamingService {
         return { before, after, approvedFrom };
       })
       .catch((error: unknown) => {
-        // The transaction also writes category and tag links: only a slug collision maps
-        // to GameSlugTakenError, a link race must not masquerade as one.
         if (uniqueConstraintName(error) === 'game_slug_key') {
           throw new GameSlugTakenError();
         }

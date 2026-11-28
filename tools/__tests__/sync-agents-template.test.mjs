@@ -1,6 +1,3 @@
-// A template file that is renamed or dropped must not linger in a consumer as an untracked
-// stray that rulesync keeps generating from. Render the template into a throwaway consumer
-// whose last render still listed such files, and check the stale ones go and the rest stay.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
@@ -78,7 +75,6 @@ test('after a branch switch already brought the new block, the last render is st
   });
 
   assert.equal(existsSync(join(consumer, '.rulesync/subagents/qa.md')), false);
-  // consumerOwned and not yet committed: the consumer's, not stale.
   assert.ok(existsSync(join(consumer, '.rulesync/sync.json')));
   assert.ok(
     JSON.parse(
@@ -88,7 +84,6 @@ test('after a branch switch already brought the new block, the last render is st
 });
 
 test('the first run after an upgrade by the previous script still prunes the retired files', () => {
-  // The previous script rewrote the block to the new set and kept no manifest.
   rmSync(join(consumer, 'node_modules/.cache/sync-agents.json'));
   put('.rulesync/skills/add-feature/SKILL.md', 'old');
   put('.rulesync/subagents/qa.md', 'old');

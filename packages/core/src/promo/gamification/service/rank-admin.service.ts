@@ -43,8 +43,6 @@ export const RankConfigInvalidError = createDomainError<[reason: string]>(
   (reason) => `the rank config would be invalid: ${reason}`,
 );
 
-// The bonus engine refuses a grant above this, so a config that asks for more would be accepted
-// here and then fail every payout.
 const MAX_WAGERING_MULTIPLIER = '1000';
 
 export const RankTierHeldError = makeConflictError(
@@ -104,17 +102,6 @@ export function assertLadderHolds(tiers: readonly { wagerThreshold: string }[]) 
   }
 }
 
-/**
- * The operator's side of the rank ladder: read it, and replace it as one validated set. Tiers may
- * be added, renamed, reordered and removed, because what a ladder is called and how many rungs it
- * has is an operator's decision rather than the platform's.
- *
- * Two things a ladder cannot do once players are on it, since neither can be applied backwards:
- * lose a tier somebody holds, or change the currency their lifetime wagering was counted in.
- *
- * An edit applies from the next bet onward. Raising a threshold never demotes anyone, since
- * `RankService.recordWager` only ever moves a player up.
- */
 export class RankAdminService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -226,7 +213,6 @@ export class RankAdminService {
           .from(promoRankConfig);
         await pinSwitchedPeriods(tx, before.rewards, paidThrough, input);
       }
-      // An undefined list or minimum wager is left out of both the insert and the update.
       const saved = findOneOrThrow(
         await tx
           .insert(promoRankConfig)
@@ -252,11 +238,6 @@ export class RankAdminService {
   }
 }
 
-/**
- * Pins the last complete period of each kind switching between bonus and claim, or dropped, to the
- * terms it was earned under, unless it is already settled, so a retry of it never pays in a new mode.
- * This also covers a period that started paying before periods were pinned at all.
- */
 async function pinSwitchedPeriods(
   tx: DrizzleTx,
   rewards: RankConfig['rewards'],
@@ -300,11 +281,6 @@ async function assertNobodyWagered(tx: DrizzleTx) {
   }
 }
 
-/**
- * Two tiers swapping keys in one save collide on the unique key: Postgres checks it per
- * statement, and the ladder is written row by row. The operator is told that rather than being
- * handed a constraint name.
- */
 async function writeTiers(tx: DrizzleTx, input: SetRankLadderInput) {
   try {
     for (const [position, tier] of input.tiers.entries()) {
@@ -316,7 +292,6 @@ async function writeTiers(tx: DrizzleTx, input: SetRankLadderInput) {
       await tx.update(promoRankTier).set(values).where(eq(promoRankTier.id, tier.id));
     }
   } catch (err) {
-    // An update keeps any percent the input left out, so only the row as written shows the total.
     if (uniqueConstraintName(err) === 'promo_rank_tier_total_percent') {
       throw new RankLadderInvalidError(
         'rakeback and the bonus percents of a tier add up to at most 100',

@@ -38,40 +38,11 @@ import { fixedRewardViews, nextMilestoneAfter } from '../shared/streak-view.js';
 
 export const StreakConfigNotSetError = makeNotFoundError('StreakConfig');
 
-// An empty list counts every bet - the same convention `RankService` uses for eligibleProducts.
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
   eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
 type Logger = { warn: (context: object, message: string) => void };
 
-/**
- * The daily streak: a player who wagers the operator's minimum in an eligible product on a UTC
- * calendar day extends their streak. What the streak pays is configured in `promoStreakConfig`: a
- * rakeback rate per milestone day, which `RakebackService` reads, and fixed rewards, which this
- * service unlocks as grant rows the player claims later. Bound alongside `RankService` on the same
- * `WAGER_TRACKING` port through `CompositeWagerTracking` - both read the same bet, on the same
- * transaction, for different ledgers.
- *
- * A day is counted once no matter how many qualifying bets land inside it: the daily wager
- * accumulator (`promoStreakDailyWager`) only tells this service when the threshold has been
- * crossed; `promoPlayerStreak.lastQualifyingDay` is the guard that stops a second bet the same
- * day from advancing the counter twice. The count has no upper limit and no automatic reset.
- *
- * A missed day is observed in two places: the close job (`closeDay`) resets a run whose player
- * did not qualify yesterday, and a qualifying bet that finds its last qualifying day older than
- * yesterday starts a new run rather than extending the broken one - the close job may not have
- * run yet when the next day's first bet lands. While the streak is disabled nothing is counted,
- * and the next close resets every run.
- *
- * A provider rollback takes the round's stake back out of the day it counted on
- * (`reverseWager`); if that drops today back under the minimum, today's advance is undone too -
- * unless the reward it unlocked has already been claimed, since nothing here can take a paid
- * reward back. A day that has already ended is final: a late rollback only corrects its total.
- *
- * Own-money only, the same rule `RaceService`/`RankChallengeService` apply: `args.realAmount`
- * already excludes whatever part of a stake a bonus grant covered, so wagering a bonus never
- * advances the streak.
- */
 export type StreakServiceDeps = {
   drizzle: DrizzleService;
   rates: ExchangeRateReader;
@@ -172,9 +143,6 @@ export class StreakService implements WagerTrackingCommands {
       return [];
     }
 
-    // One row per player, upserted per bet - `where` skips the update entirely once today has
-    // already advanced the counter, so a second qualifying bet the same day is a no-op here. A
-    // run whose last qualifying day was not yesterday is already broken, so today starts it over.
     const next = sql`(CASE WHEN ${promoPlayerStreak.lastQualifyingDay} = ${yesterday}::date THEN ${promoPlayerStreak.current} + 1 ELSE 1 END)`;
     const [advanced] = await tx
       .insert(promoPlayerStreak)
@@ -273,11 +241,6 @@ export class StreakService implements WagerTrackingCommands {
     }
   }
 
-  /**
-   * Undoes today's advance once a rollback has taken today back under the minimum. The day number
-   * today reached is `current`. `best` is left alone: it is a record, not something any reward
-   * reads.
-   */
   private async undoTodayIfBelowMinimum(tx: DrizzleTx, userId: Uuid, todayWagered: string) {
     const [config] = await tx
       .select({ dailyMinWager: promoStreakConfig.dailyMinWager })
@@ -313,14 +276,11 @@ export class StreakService implements WagerTrackingCommands {
         ),
       )
       .for('update');
-    // A row reached on an earlier run is not today's to undo: it stays as it was.
     const reachedToday = milestone !== undefined && isoDate(milestone.reachedAt) === today;
     if (reachedToday && milestone.outcome === 'granted') {
       return;
     }
     if (reachedToday && !milestone.settledAt) {
-      // Settled rather than deleted: reaching the same day again reactivates only a `reversed`
-      // row, and the row still says why it never paid.
       await tx
         .update(promoStreakMilestoneGrant)
         .set({ settledAt: now, outcome: 'reversed' })
@@ -453,16 +413,8 @@ export class StreakService implements WagerTrackingCommands {
     return { top, ownPosition: ahead + 1 };
   }
 
-  /**
-   * Daily UTC close: a player whose last qualifying day was not yesterday (and who is not
-   * already at zero) missed a day, so their run resets - `best` is untouched, it is the record,
-   * not the current attempt. With the streak disabled, or never configured, every run resets: a
-   * disabled streak ends them all. Run once per UTC day, after it turns over; safe to run again,
-   * since a player already at zero or already qualified for the new day is left alone.
-   */
   async closeDay(now: Date): Promise<number> {
     const yesterday = yesterdayOf(now);
-    // A rollback can no longer change a day before yesterday, so what its rounds counted is done.
     await this.drizzle.db
       .delete(promoStreakRoundWager)
       .where(lt(promoStreakRoundWager.day, yesterday));

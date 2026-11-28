@@ -52,10 +52,6 @@ function capturedTerms(grant: StreakGrantView, configured: StreakFixedReward | u
   return configured;
 }
 
-/**
- * Every fixed reward the player can see: the configured ones, plus any a player unlocked that the
- * config no longer lists. An unlocked one shows the terms captured at unlock, never the config's.
- */
 export function fixedRewardViews(
   configured: readonly StreakFixedReward[],
   grants: readonly StreakGrantView[],
@@ -89,7 +85,6 @@ export function fixedRewardViews(
   });
 }
 
-/** The nearest day above `current` that earns a rate or unlocks a reward that is not already unlocked. */
 export function nextMilestoneAfter({
   current,
   rakebackMilestones,

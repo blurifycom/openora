@@ -20,7 +20,6 @@ const INPUT_SHAPE_FIX =
 
 const STATEMENT_ACTIONS = new Map<string, readonly string[]>(Object.entries(adminStatement));
 
-// A regex or an open-ended format such as email does not cap length; only these fixed shapes do.
 const FIXED_WIDTH_STRING_FORMATS: ReadonlySet<string> = new Set([
   'uuid',
   'date',
@@ -49,7 +48,6 @@ export function mcpToolModelName(toolId: string): string {
   return toolId.replaceAll('.', '_');
 }
 
-/** Throws a `[mcp] tool ...` error naming the first rule the registration breaks. */
 export function assertValidMcpTool(
   { contract, owner, factory }: McpRegistrationCandidate<McpToolContract>,
   registered: McpRegistrations,
@@ -79,7 +77,6 @@ export function assertValidMcpTool(
   }
 }
 
-/** Throws a `[mcp] action type ...` error naming the first rule the registration breaks. */
 export function assertValidActionType(
   { contract, owner, factory }: McpRegistrationCandidate<ActionTypeContract>,
   registered: McpRegistrations,
@@ -110,7 +107,6 @@ export function assertValidActionType(
   }
 }
 
-/** The payload schema's own top-level field, or null; the schema is a validated z.object. */
 function payloadField(contract: ActionTypeContract, field: string): z.ZodType | null {
   const shape = contract.payloadSchema.shape as Record<string, z.ZodType>;
   return Object.hasOwn(shape, field) ? (shape[field] ?? null) : null;
@@ -522,7 +518,6 @@ function jsonFieldRejection(
   if (node.const !== undefined || node.enum !== undefined) {
     return null;
   }
-  // zod emits a plain `.nullable()` as `type: [T, 'null']` rather than an anyOf.
   if (Array.isArray(node.type)) {
     return firstRejection(
       node.type.filter((type) => type !== 'null'),

@@ -1,13 +1,3 @@
-/**
- * Pull port for "this account must set up a second factor before it does anything else".
- * Bound by the identity module (it owns the `user` table); the request middleware depends
- * only on this port and never on the identity schema (ADR-0019/0025).
- *
- * `isSetupRequired` answers true while an account requires a second factor on login but
- * has none enrolled - the state a support reset of a player's 2FA leaves behind. The
- * middleware then marks the request: `getUserId` refuses it unless the route opts in, and
- * the identity router refuses every route but the enrolment, sign-in and sign-out ones.
- */
 import { createToken, type Token } from './token.js';
 
 export type TwoFactorSetupPolicy = {

@@ -8,18 +8,12 @@ import type { DrizzleDb, DrizzleTx } from '../db/index.js';
 import { ac, roles } from './permissions.js';
 import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC, type MailTemplate } from '@openora/core/contracts';
 
-// Mirrors `maskEmail` in pam/identity/service/two-factor-delivery.service.ts - duplicated
-// rather than imported so server/auth (lower-level) doesn't depend on pam/identity
-// (built on top of it). Masks a registered address down to what is safe to show an
-// inbox that has not yet proven it belongs to this account.
 function maskEmail(email: string): string {
   const [local = '', domain = ''] = email.split('@');
   const head = local.length > 1 ? local.slice(0, 1) : '';
   return `${head}***@${domain}`;
 }
 
-// Transport-agnostic OTP-mail hook; the identity plugin wires it to MAIL_DISPATCH.
-// A silent no-op when omitted (tests, the SessionResolver-only createAuth()).
 export type DispatchOtpMail = (args: {
   to: string;
   template: MailTemplate;
@@ -27,10 +21,6 @@ export type DispatchOtpMail = (args: {
   antiPhishingCode?: string | null;
 }) => Promise<void> | void;
 
-// Transport-agnostic second-factor OTP hook. The identity plugin binds the
-// implementation and fans the code out over whichever delivery port the operator has
-// bound, so core never names a delivery vendor. Omitted = the code is generated but
-// never delivered (eg tests).
 type SendTwoFactorOtp = (args: {
   userId: string;
   email: string;
@@ -39,9 +29,7 @@ type SendTwoFactorOtp = (args: {
 }) => Promise<void> | void;
 
 type TwoFactorOptions = {
-  /** Seconds a device stays trusted after a successful second factor. */
   trustDeviceMaxAgeSec?: number;
-  /** Minutes a delivered OTP stays valid. */
   otpPeriodMinutes?: number;
   sendOtp?: SendTwoFactorOtp;
 };
@@ -51,40 +39,14 @@ export type AuthOptions = {
   schema?: Record<string, unknown>;
   dispatchOtpMail?: DispatchOtpMail;
   onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void;
-  /**
-   * Blocks sign-in until the address is verified. Default off: unverified players stay
-   * unrestricted while the KYC toggle is off. Operators that need the stricter gate set
-   * `registration.requireEmailVerification` in platform config.
-   */
   requireEmailVerification?: boolean;
   onExistingUserSignUp?: (user: { id: string; email: string }) => Promise<void> | void;
-  /**
-   * True while the reset code being sent was triggered by a sign-up on an address that
-   * already has an account, rather than by its owner asking to reset. better-auth issues
-   * both through the same `forget-password` OTP type, so `sendVerificationOTP` cannot tell
-   * them apart on its own - and the two need different copy.
-   */
   isExistingAccountSignUp?: (email: string) => boolean;
-  /** True while the reset code being sent was triggered by an administrator, not the owner. */
   isAdminPasswordReset?: (email: string) => boolean | Promise<boolean>;
   cookieDomain?: string;
   twoFactor?: TwoFactorOptions;
 };
 
-/**
- * Builds the one shared better-auth instance for the whole app - both the
- * per-request session middleware and `AdminGuard` resolve sessions through it,
- * never a second `createAuth()` over the same DB. Bundles the org, admin
- * (role/permission), and two-factor plugins; `dispatchOtpMail` is a silent no-op
- * when omitted (eg tests) rather than throwing. The explicit `BetterAuthType`
- * return annotation is load-bearing, not stylistic - it dodges a TS2883 Zod v4
- * `$strip` portability error the inferred type would otherwise surface.
- *
- * `cookieDomain` (or `AUTH_COOKIE_DOMAIN`) widens the session cookie to a parent
- * domain, so a frontend on `app.example.com` still sends it to an API on
- * `api.example.com`. Left unset the cookie stays host-only, which is correct when
- * both run on one host and is the safer default everywhere else.
- */
 export function createAuth(options: AuthOptions): BetterAuthType {
   const dispatchOtpMail: DispatchOtpMail = options.dispatchOtpMail ?? (() => {});
   const cookieDomain = options.cookieDomain ?? process.env['AUTH_COOKIE_DOMAIN'];
@@ -97,10 +59,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     advanced: {
       database: {
         generateId: () => randomUUID(),
-        // better-auth 1.7 checks the schema on first use and fails every request on a gap.
-        // The organization() tables and the admin plugin's session.impersonatedBy were never
-        // migrated (neither feature is used), and consumers inject only the identity tables,
-        // so the check would 500 every sign-in.
         validateSchema: false,
       },
       ...(cookieDomain ? { crossSubDomainCookies: { enabled: true, domain: cookieDomain } } : {}),
@@ -110,33 +68,22 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       updateAge: 24 * 60 * 60,
     },
     user: {
-      // Surfaces `theme`/`language` on the session/`me` user and lets `updateUser`
-      // write them, so every user (player + admin) syncs a UI theme + locale. Both
-      // are validated at the route (theme against the enum, language against
-      // PlatformConfig.supportedLanguages).
       additionalFields: {
         username: { type: 'string', required: false, input: true },
         theme: { type: 'string', required: false, input: true, defaultValue: 'system' },
         language: { type: 'string', required: false, input: true, defaultValue: 'en' },
-        // The address the account was created with, never written again: the support
-        // history checks its oldest recorded email change against it.
         registeredEmail: { type: 'string', required: false, input: false, returned: false },
       },
     },
     databaseHooks: {
       user: {
         create: {
-          // Runs after better-auth lowercased the address, so this is the stored login email.
           before: async (u) => ({ data: { registeredEmail: u.email } }),
         },
       },
     },
     emailAndPassword: {
       enabled: true,
-      // Sign-up never mints a session: better-auth only returns the indistinguishable
-      // duplicate-email response when autoSignIn is off (or verification is required,
-      // which is now operator-configurable). The session is minted by the OTP
-      // verification step instead - see `autoSignInAfterVerification` below.
       autoSignIn: false,
       requireEmailVerification: options.requireEmailVerification ?? false,
       revokeSessionsOnPasswordReset: true,
@@ -152,14 +99,9 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         : undefined,
     },
     emailVerification: {
-      // The verification OTP is sent by IdentityService.register(), never by better-auth:
-      // its sign-up hook fires on the synthetic duplicate-email response too, which would
-      // mail a valid code to an existing account's address (takeover).
       sendOnSignUp: false,
       autoSignInAfterVerification: true,
     },
-    // Without this, better-auth's admin plugin defaults new signups to its own
-    // 'user' role, which UserRoleSchema (player|admin) rejects everywhere downstream.
     plugins: [
       organization(),
       adminPlugin({ ac, roles, defaultRole: 'player' }),
@@ -168,8 +110,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
           ? { trustDeviceMaxAge: options.twoFactor.trustDeviceMaxAgeSec }
           : {}),
         otpOptions: {
-          // better-auth defaults this to "plain", which parks a live second factor in
-          // `verification.value` in cleartext for the whole of its window.
           storeOTP: 'hashed',
           ...(options.twoFactor?.otpPeriodMinutes !== undefined
             ? { period: options.twoFactor.otpPeriodMinutes }
@@ -187,12 +127,8 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       emailOTP({
         otpLength: OTP_CODE_LENGTH,
         expiresIn: OTP_EXPIRES_IN_SEC,
-        // OTP goes to the NEW address; the current one is not re-verified (the caller
-        // already holds a live session). IdentityService wraps the endpoints this unlocks.
         changeEmail: { enabled: true },
         async sendVerificationOTP({ email, otp, type }, request) {
-          // Allow-list, not a fallback: an OTP type this app never issues (sign-in)
-          // must send nothing rather than borrow another template's copy.
           if (
             type !== 'email-verification' &&
             type !== 'forget-password' &&
@@ -201,9 +137,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
             return;
           }
           if (type === 'change-email') {
-            // The row still carries the pre-swap address at this point - IdentityService
-            // has only asked better-auth to mail a code, nothing has changed yet - so the
-            // caller's live session is the only place left to read it from.
             const session = await auth.api.getSession({
               headers: request?.headers ?? new Headers(),
             });
@@ -231,23 +164,12 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         },
       }),
     ],
-    // Library boundary: better-auth infers an options-specific instantiation that isn't
-    // assignable to its own exported `Auth` alias. No way to narrow without matching the
-    // full generic - the one sanctioned cast, see conventions.
   }) as unknown as BetterAuthType;
   return auth;
 }
 
 export type Auth = BetterAuthType;
 
-/**
- * Runs `fn` - better-auth `auth.api` calls - with every better-auth write inside the caller's
- * Drizzle transaction `tx`, so they commit or roll back with the caller's own rows. better-auth
- * after-hooks queued inside run when `fn` returns, before `tx` commits; none that matters here
- * (`user.update.after`) is configured. `runWithTransaction` is a better-auth internal: the exact
- * `better-auth` / `@better-auth/core` 1.7.18 pin and the email-change E2E fault and single-txid
- * tests are the gate for upgrading either.
- */
 export async function runInAuthTransaction<T>(
   tx: DrizzleTx,
   { auth, schema }: { auth: Auth; schema: Record<string, unknown> },

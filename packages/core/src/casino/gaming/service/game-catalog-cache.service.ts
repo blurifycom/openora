@@ -23,11 +23,6 @@ function catalogEntryKey(epoch: string, key: string): string {
   return `gaming:catalog:${epoch}:${key}`;
 }
 
-/**
- * Public catalog reads, keyed under one epoch so a single `invalidateCatalog` drops every
- * entry at once. Writes outside the admin routes and the ranking/membership jobs (vendor
- * sync, availability changes) surface within the TTL.
- */
 export async function cachedCatalog<T>(
   cache: CacheAdapter | undefined,
   key: string,

@@ -1,13 +1,3 @@
-// Turns the spans `src/trace-recorder.ts` wrote into a markdown backend-trace report:
-// a table of the procedures that changed against a baseline run (dev) and a waterfall per
-// changed procedure, with spans new since the baseline on `+` lines of a diff block.
-//
-//   node scripts/trace-report.ts <trace-results dir> [baseline trace-results dir]
-//   node scripts/trace-report.ts <trace-results dir> [baseline dir] --gantt <procedure text>
-//
-// Without a baseline it lists the procedures with the most queries per request. `--gantt` prints
-// the PR "Trace" section instead: a mermaid gantt of one request per status of each matching
-// procedure (the happy path and its refusals), locks red, writes light, statements new since the baseline prefixed `+`.
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -34,9 +24,7 @@ type ProcedureStats = {
   requests: Request[];
   p50Ms: number;
   queries: number;
-  /** Statements most of its requests run: what a change is judged by. */
   signatures: Set<string>;
-  /** Every statement any request ran: what a baseline is checked against. */
   seen: Set<string>;
 };
 
@@ -70,7 +58,6 @@ const parseSpan = (line: string): SpanRecord[] => {
   }
 };
 
-/** Lines of another shape (a baseline recorded by an older recorder) are skipped. */
 function readSpans(dir: string): SpanRecord[] {
   if (!existsSync(dir)) {
     return [];
@@ -85,11 +72,6 @@ function readSpans(dir: string): SpanRecord[] {
 const HTTP_ROOT = /^[A-Z]+ \//;
 const ID_SEGMENT = /\/([0-9a-f]{8}-[0-9a-f-]{27}|\d+)(?=\/|$)/gi;
 
-/**
- * A request is a trace rooted at the `<METHOD> <path>` span (or a bare oRPC span for a call
- * that skipped the traced fetch); setup and event-consumer queries have neither. It is keyed
- * by procedure and status, so a rejected call is not averaged into the happy path.
- */
 function toRequests(spans: SpanRecord[]): Request[] {
   const byTrace = Map.groupBy(spans, (span) => span.traceId);
   return [...byTrace.values()].flatMap((traceSpans) => {
@@ -110,13 +92,11 @@ function toRequests(spans: SpanRecord[]): Request[] {
   });
 }
 
-/** Upper median: of a 0-query rejection and a 6-query write, the write is the typical one. */
 const median = (values: number[]): number => {
   const sorted = values.toSorted((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 };
 
-/** Same statement shape regardless of parameter count or literals. */
 const signature = (sql: string): string =>
   sql
     .toLowerCase()
@@ -126,11 +106,6 @@ const signature = (sql: string): string =>
     .replace(/\b\d+\b/g, '?')
     .trim();
 
-/**
- * A statement counts as part of a procedure once 1 in 10 of its requests run it. A timer or
- * consumer started inside a request keeps its trace context, so a few unrelated queries leak
- * into busy routes; judged against everything the baseline ever ran, they never read as new.
- */
 function signatureCounts(requests: Request[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const request of requests) {
@@ -168,7 +143,6 @@ function signatureSets(requests: Request[]): Pick<ProcedureStats, 'signatures' |
 
 const withoutStatus = (procedure: string): string => procedure.replace(/ \d{3}$/, '');
 
-/** Which branch a racing test lands on varies by run, so a statement is new only if no status ran it. */
 function withSeenAcrossStatuses(
   baseline: Map<string, ProcedureStats>,
 ): Map<string, ProcedureStats> {
@@ -208,13 +182,11 @@ function changeRow({ current, baseline, moreQueries }: Change): string {
   return `| \`${current.procedure}\` | ${current.requests.length} | ${ms(current.p50Ms)} | ${p50Delta} | ${current.queries} | ${queryDelta} |`;
 }
 
-/** `SELECT wallet, wallet_balance` from the statement's tables, for a row label. */
 function queryLabel(sql: string): string {
   const verb = sql.trim().split(/\s/, 1)[0]?.toUpperCase() ?? '';
   const tables = [
     ...new Set([...sql.matchAll(/\b(?:from|join|into|update)\s+"?(\w+)"?/gi)].map((m) => m[1])),
   ];
-  // No table (advisory lock, nextval): the call itself is the most telling part.
   const subject = tables.length > 0 ? tables.join(', ') : (sql.match(/\b(\w+)\(/)?.[1] ?? '');
   return `pg ${verb} ${subject}`.trim();
 }
@@ -230,15 +202,12 @@ type Row = {
 
 const LOCK =
   /\bfor\s+(?:no\s+key\s+update|update|key\s+share|share)\b|\bpg_(?:try_)?advisory_(?:xact_)?lock/i;
-// A write leads the statement or a CTE (`with x as (insert ...)`), once leading comments are gone.
 const WRITE = /^\(?\s*(?:insert|update|delete)\b|\bas\s*\(\s*(?:insert|update|delete)\b/i;
 const COMMENTS = /^(?:\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/))*\s*/;
-/** A row or advisory lock is drawn red (`crit`), a write light (`active`). */
 const kindOf = (sql: string): Row['kind'] =>
   LOCK.test(sql) ? 'lock' : WRITE.test(sql.replace(COMMENTS, '')) ? 'write' : undefined;
 const TAG = { lock: 'crit, ', write: 'active, ' } as const;
 
-/** Root, named middleware and queries; a BEGIN..COMMIT on one connection becomes a parent row. */
 function rows(request: Request, baselineSignatures: Set<string> | undefined): Row[] {
   const { root } = request;
   const out: Row[] = [
@@ -321,7 +290,6 @@ function waterfall(request: Request, baselineSignatures: Set<string> | undefined
   return [header, ...lines].join('\n');
 }
 
-/** A request running a query new since dev if any, else the one at the median duration. */
 function typicalRequest(
   stat: ProcedureStats,
   baseline: ProcedureStats | undefined,
@@ -338,16 +306,12 @@ function typicalRequest(
   );
 }
 
-// Mermaid reads `:` as the field separator and `#`/`;` as comment and statement ends.
 const ganttLabel = (text: string): string =>
   text.replace(/[:#;]/g, ' ').replace(/\s+/g, ' ').trim();
 
-// Same-name sibling statements shorter than this fold into one gantt row (`pg SELECT user ×3`).
 const FOLD_MS = 0.5;
-// Axis room after the last bar so its label is not cut at the chart edge.
 const AXIS_PAD = 0.15;
 
-/** Gantt rows: the root row dropped (the title says it), a run of short same-name siblings folded. */
 function ganttRows(all: Row[]): Row[] {
   const inner = all.filter((row) => row.depth > 0).map((row) => ({ ...row, depth: row.depth - 1 }));
   const folds = (row: Row | undefined, like: Row): row is Row =>
@@ -355,7 +319,6 @@ function ganttRows(all: Row[]): Row[] {
     row.depth === like.depth &&
     row.label === like.label &&
     row.durationMs < FOLD_MS &&
-    // A locking read keeps its red bar: never folded with a plain read of the same table.
     row.kind === like.kind &&
     !row.isNew;
   const out: Row[] = [];
@@ -381,7 +344,6 @@ function ganttRows(all: Row[]): Row[] {
   return out;
 }
 
-/** One request as a mermaid gantt: times in ms from the request start, locks `crit`, writes `active`, new statements `+`. */
 function gantt(request: Request, baselineSignatures: Set<string> | undefined): string {
   const { root } = request;
   const tasks = ganttRows(rows(request, baselineSignatures)).map((row) => {
@@ -397,7 +359,6 @@ function gantt(request: Request, baselineSignatures: Set<string> | undefined): s
     'gantt',
     `  title ${ganttLabel(request.procedure)} · ${ms(root.durationMs)}`,
     '  dateFormat x',
-    // `dateFormat x` reads times as epoch ms; `%L` is the millisecond within a second.
     `  axisFormat ${root.durationMs < 1000 ? '%L ms' : '%S.%L s'}`,
     `  section ${ganttLabel(root.name.replace(ID_SEGMENT, '/:id'))}`,
     ...tasks,
@@ -416,7 +377,6 @@ export function ganttReport(
     throw new Error(`No spans in the baseline ${baselineDir}: run the suite there first.`);
   }
   const current = stats(toRequests(readSpans(currentDir)));
-  // Same rule as the CI report: a statement is new only if no status of the procedure ran it.
   const baseline = withSeenAcrossStatuses(stats(toRequests(baselineSpans)));
   const seenByName = new Map(
     [...baseline.values()].map((stat) => [withoutStatus(stat.procedure), stat.seen]),
@@ -450,8 +410,6 @@ function report(currentDir: string, baselineDir: string | undefined): string {
   if (current.size === 0) {
     return '### ⏱ Backend trace\n\nNo procedure spans recorded.\n';
   }
-  // oRPC reads its tracer from a global keyed by the @orpc/shared version, so a core oRPC
-  // bump that leaves this package's pin behind silently drops every procedure span.
   if (!currentSpans.some((span) => span.name.startsWith('orpc.'))) {
     return "### ⏱ Backend trace\n\n⚠ No oRPC spans: align `@orpc/shared` in packages/testing with core's `@orpc/server`.\n";
   }

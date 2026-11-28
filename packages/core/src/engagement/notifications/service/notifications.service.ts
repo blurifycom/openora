@@ -33,13 +33,6 @@ export class NotificationsService {
     private readonly events: EventBus,
   ) {}
 
-  /**
-   * Looked up by the plugin's `notifications.created` subscriber, the one place every
-   * `create()` call - core's own dispatch jobs and an overlay's own `NotificationsService`
-   * instance alike, since both share this module's event bus - ends up pushed onto the
-   * realtime channel from. `create()` cannot publish itself: it runs before the router factory
-   * has bound a realtime transport into this instance.
-   */
   async getById(id: string): Promise<Notification | null> {
     const [record] = await this.drizzle.db
       .select()
@@ -48,13 +41,10 @@ export class NotificationsService {
     return record ?? null;
   }
 
-  // Parsed here, not only on the dispatch job: an overlay calls this directly.
   async create(raw: CreateNotificationInput): Promise<Notification | null> {
     return this.insert(CreateNotificationInputSchema.parse(raw));
   }
 
-  // The dispatch worker's entry: a job queued by the previous release has no `params`.
-  // ponytail: remove together with the title/body columns; the worker then calls create().
   async createFromQueuedJob(raw: CreateNotificationInput): Promise<Notification | null> {
     return this.insert(QueuedNotificationInputSchema.parse(raw));
   }
@@ -139,8 +129,6 @@ export class NotificationsService {
     return { count: rows.length };
   }
 
-  // Unconditional on age (read or unread), not gated on readAt - deletes anything past
-  // the retention window regardless of read state.
   async purgeExpired(retentionDays: number) {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     const result = await this.drizzle.db

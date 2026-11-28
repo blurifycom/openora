@@ -118,9 +118,6 @@ export class PhoneVerificationService {
     if (!caller) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
-    // A verified number is also a login credential: PhoneLoginService mints a session
-    // from an SMS code alone. Binding one therefore stays a player-only control, so a
-    // backoffice account cannot trade its password login for a single SMS factor.
     if (caller.role !== 'player') {
       throw new ORPCError('FORBIDDEN', {
         message: 'Only players can verify a phone number.',
@@ -144,11 +141,6 @@ export class PhoneVerificationService {
       .from(user)
       .where(eq(user.phoneNumber, input.phone))
       .limit(1);
-    // Anti-enumeration, the same trade PhoneLoginService makes for this identifier: a
-    // number owned by someone else answers with the ordinary success shape and no SMS,
-    // rather than a CONFLICT that would confirm to any signed-in player that a given
-    // number belongs to an account here. No challenge is written, so `confirm` then fails
-    // as invalid-or-expired, which is indistinguishable from a wrong code.
     if (phoneOwner && phoneOwner.id !== userId) {
       return {
         expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
@@ -241,9 +233,6 @@ export class PhoneVerificationService {
     }
 
     if (hashCode(input.code) !== otp.codeHash) {
-      // Outside any transaction on purpose: a rejected attempt has to survive the throw
-      // that rejects it, and the increment is atomic so concurrent guesses cannot each
-      // read a stale count and slip past the cap (same shape as PhoneLoginService).
       const [attempt] = await this.drizzle.db
         .update(phoneVerificationSession)
         .set({ failedAttempts: sql`${phoneVerificationSession.failedAttempts} + 1` })
@@ -260,9 +249,6 @@ export class PhoneVerificationService {
     let previousPhoneVerified = false;
     try {
       await this.drizzle.db.transaction(async (tx) => {
-        // Consuming the challenge and binding the number commit together, and the
-        // conditional delete is what makes a concurrent second confirm lose the race:
-        // only the transaction whose DELETE returns a row proceeds to the update.
         const [consumed] = await tx
           .delete(phoneVerificationSession)
           .where(eq(phoneVerificationSession.id, otp.id))
@@ -270,8 +256,6 @@ export class PhoneVerificationService {
         if (!consumed) {
           throw phoneVerificationInvalidError();
         }
-        // Read before the write: RETURNING yields the new row, and the audit record needs
-        // the state this verification replaced.
         const [before] = await tx
           .select({ phoneVerified: user.phoneVerified })
           .from(user)

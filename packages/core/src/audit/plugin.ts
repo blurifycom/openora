@@ -37,7 +37,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
-// Identity topics also fire for admins; a player-backed account is filed under the player.
 function identitySubject(
   p: Record<string, unknown>,
 ): Pick<RecordInput, 'resourceType' | 'resourceId'> {
@@ -46,7 +45,6 @@ function identitySubject(
     : { resourceType: 'user', resourceId: str(p['userId']) };
 }
 
-// Withdrawal decisions are about the player; the withdrawal id stays in `after.transactionId`.
 function withdrawalSubject(
   p: Record<string, unknown>,
 ): Pick<RecordInput, 'resourceType' | 'resourceId'> {
@@ -72,7 +70,6 @@ export async function mapEventToRecord(
     userAgent: typeof p['userAgent'] === 'string' ? p['userAgent'] : null,
   };
 
-  // payload `userId` is the SUBJECT player here, not the actor (an admin changed it).
   if (topic === 'compliance.kyc.updated') {
     return {
       ...base,
@@ -90,8 +87,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player submitted KYC documents. actorId = resourceId = the player (self-action),
-  // both resolved by the emitter as playerId.
   if (topic === 'compliance.kyc.submitted') {
     return {
       ...base,
@@ -107,7 +102,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-driven re-KYC trigger. No admin actor; resource = the subject player.
   if (topic === 'compliance.kyc.reverify_required') {
     return {
       ...base,
@@ -148,8 +142,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // No actor: the subject is the request's own origin, and there is no account yet on the
-  // registration, login and page-gate paths that produce this.
   if (topic === 'compliance.geo.access_blocked') {
     return {
       ...base,
@@ -222,8 +214,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player requested a withdrawal (funds held). actorId = the player (resolved
-  // playerId); resourceId = the withdrawal transaction.
   if (topic === 'wallet.withdrawal.requested') {
     return {
       ...base,
@@ -235,9 +225,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin approve/reject of a withdrawal, a PSP-rail failure on an approved one, or its
-  // completion. actorId = the reviewing admin (none on completed, auto-approved or
-  // webhook-driven outcomes); filed under the player; reason carried on reject.
   if (
     topic === 'wallet.withdrawal.approved' ||
     topic === 'wallet.withdrawal.rejected' ||
@@ -249,7 +236,6 @@ export async function mapEventToRecord(
       actorType: p['adminId'] ? 'admin' : 'system',
       actorId: str(p['adminId']),
       ...withdrawalSubject(p),
-      // A rejection is the admin's decision carried out, not a failed action.
       result: topic === 'wallet.withdrawal.failed' ? 'failure' : 'success',
       after: {
         userId: str(p['userId']),
@@ -261,7 +247,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // created: the inviting admin acts; accepted: the invitee's new account acts.
   if (topic.startsWith('iam.invitation.')) {
     const isAccepted = topic === 'iam.invitation.accepted';
     return {
@@ -278,8 +263,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = acting admin; resourceId = subject role. permissions.changed/updated
-  // carries the matrix diff; assigned/revoked carries the target user in after.userId.
   if (topic.startsWith('iam.role.')) {
     const carriesMatrix = topic === 'iam.role.permissions.changed' || topic === 'iam.role.updated';
     const carriesTarget = topic === 'iam.role.assigned' || topic === 'iam.role.revoked';
@@ -300,8 +283,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin cleared a lockout. resource = the unlocked user; before/after carry the
-  // failed-attempt + lockout state that was reset.
   if (topic === 'identity.user.unlocked') {
     return {
       ...base,
@@ -317,8 +298,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin triggered a password-reset OTP send for a player. resource = the subject
-  // player; actor = the admin who acted.
   if (topic === 'identity.password.admin_reset_requested') {
     return {
       ...base,
@@ -330,8 +309,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the resolved playerId when the caller was a player, else the raw
-  // (admin) userId.
   if (topic === 'identity.user.unauthorized_access') {
     const resource = str(p['resource']) ?? 'admin';
     const action = str(p['action']);
@@ -347,8 +324,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A deactivated account's sign-in was refused after its credential was proven. The refused
-  // account is both actor and subject; system-driven, so outcome failure.
   if (topic === 'identity.user.login_blocked') {
     return {
       ...base,
@@ -358,7 +333,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player authenticated via SMS OTP. actorId = resource = the player; success outcome.
   if (topic === 'identity.user.phone_login') {
     return {
       ...base,
@@ -369,8 +343,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // An OTP was issued (smsOtpSession row created/upserted). System-driven credential
-  // dispatch; resourceId = the user the code was sent for.
   if (topic === 'identity.phone_otp.requested') {
     return {
       ...base,
@@ -381,8 +353,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A pending OTP was cancelled. `max_attempts` is a system-driven security event
-  // (guessing exhausted); recorded as a failure with the reason for the trail.
   if (topic === 'identity.phone_otp.cancelled') {
     return {
       ...base,
@@ -394,8 +364,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A lockout is a system-driven security control: the subject is the resource, not the
-  // actor, and it is a failure outcome (the base regex would otherwise mark it success).
   if (topic === 'identity.user.lockout.triggered') {
     return {
       ...base,
@@ -410,17 +378,11 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player/Admin revoked one or all of their own sessions, an admin forced it, or
-  // AdminGuard forced it itself on a fingerprint mismatch (no actorId at all - never
-  // read the subject's own userId as a stand-in, that is what mislabels a
-  // system-triggered kill as a self-revoke). Self-revoke sends its own userId as
-  // actorId, so only a *different*, present actorId is an admin acting.
   if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
     const isSingle = topic === 'identity.session.revoked';
     const rawActorId = p['actorId'];
     const isSystem = rawActorId === undefined || rawActorId === null;
     const isForced = !isSystem && rawActorId !== p['userId'];
-    // An admin acting on its own account has no player row: it is recorded under its user id.
     const ownPlayerId = typeof p['playerId'] === 'string' ? p['playerId'] : null;
     const actorType = isSystem ? 'system' : isForced || !ownPlayerId ? 'admin' : 'player';
     const actorId = isSystem
@@ -438,8 +400,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the (un)blocking player's resolved playerId; resource = the
-  // blocked/unblocked player's resolved playerId.
   if (topic === 'chat.user.blocked' || topic === 'chat.user.unblocked') {
     return {
       ...base,
@@ -450,8 +410,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the (un)ignoring player's resolved playerId; resource = the
-  // ignored/unignored player's resolved playerId.
   if (topic === 'chat.user.ignored' || topic === 'chat.user.unignored') {
     return {
       ...base,
@@ -462,8 +420,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the moderator's resolved playerId; resource = the affected player in
-  // that room (not player-typed - resourceId stays the raw member userId).
   if (topic === 'chat.room.member.kicked') {
     return {
       ...base,
@@ -475,7 +431,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A room ban only comes from a room moderator on a player route, never from the back office.
   if (topic === 'chat.room.member.banned') {
     return {
       ...base,
@@ -492,7 +447,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the creating/deleting player's resolved playerId; resource = the room.
   if (topic === 'chat.private_room.created' || topic === 'chat.private_room.deleted') {
     return {
       ...base,
@@ -530,8 +484,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the joining/leaving player's resolved playerId; resource is not
-  // player-typed - resourceId stays the raw member userId.
   if (topic === 'chat.room.member.joined' || topic === 'chat.room.member.left') {
     const adminId = str(p['adminId']);
     return {
@@ -544,9 +496,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the acting player's resolved playerId (inviter on sent, invitee on accepted and
-  // declined), falling back to their raw user id; resource = the invite row. A decline is the
-  // invitee's own choice, so it records as a success despite the topic suffix.
   if (topic === 'chat.room.invite.sent' || topic === 'chat.room.invite.withheld') {
     return {
       ...base,
@@ -597,9 +546,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the granting/revoking owner's resolved playerId, falling back to the raw acting
-  // user id when no player record backs them (the actor must never be lost on a permission
-  // change). resource = the member whose role moved; before/after carry the two roles.
   if (topic === 'chat.room.member.role-changed') {
     const actorPlayerId = str(p['playerId']);
     return {
@@ -648,7 +594,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Only the admin player routes reach PlayerService.update / remove.
   if (topic === 'player.account.closed' || topic === 'player.account.reopened') {
     return {
       ...base,
@@ -660,7 +605,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // The admin player routes, or a system suspension (null actorId) on an under-age KYC result.
   if (topic === 'player.status.changed') {
     return {
       ...base,
@@ -673,8 +617,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorType = admin (the only path flipping isActive is the back-office route);
-  // resource = the subject user. after carries the new active state.
   if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
     const isActive = topic === 'identity.user.reactivated';
     return {
@@ -688,8 +630,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin changed a player's level via PlayerService.update(). resource = the
-  // subject player; before/after carry the level transition.
   if (topic === 'player.level.changed') {
     return {
       ...base,
@@ -702,8 +642,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-automated or admin-manual tag assignment/removal.
-  // actorId = SYSTEM_ACTOR_ID (zero UUID) for automated ops; admin user id for manual.
   if (topic === 'tag.player.assigned' || topic === 'tag.player.removed') {
     const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
     const actorId = str(p['actorId']);
@@ -717,8 +655,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A player sent a friend request. actorId = the requester; resourceId = the
-  // friendship row; recipient carried in after so the trail shows who was notified.
   if (topic === 'social.friend_request.sent') {
     return {
       ...base,
@@ -730,8 +666,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A pending friend request became a friendship. actorId = whoever's action
-  // triggered the accept (accepterId - see events.ts for the mutual-request case).
   if (topic === 'social.friend_request.accepted') {
     return {
       ...base,
@@ -755,7 +689,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A pending friend request was declined by its addressee - audit-only (see events.ts).
   if (topic === 'social.friend_request.declined') {
     return {
       ...base,
@@ -767,7 +700,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A pending friend request was cancelled by its requester - audit-only (see events.ts).
   if (topic === 'social.friend_request.cancelled') {
     return {
       ...base,
@@ -779,8 +711,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Scheduled-banner mutations are auditable against the schedule row itself so an
-  // update remains attributable even when its configuration later changes state.
   if (topic === 'cms.banner.schedule.created' || topic === 'cms.banner.schedule.updated') {
     return {
       ...base,
@@ -800,8 +730,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page, banner
-  // configuration, or banner image (whichever id that topic's payload carries).
   if (
     topic === 'cms.page.created' ||
     topic === 'cms.page.updated' ||
@@ -839,8 +767,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-generated in-app notification (fed by a wallet withdrawal event); the
-  // recipient is the notification's subject, not an acting player.
   if (topic === 'notifications.created') {
     return {
       ...base,
@@ -851,7 +777,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Admin updated a tag rule configuration.
   if (topic === 'tag.rule.upserted') {
     return {
       ...base,
@@ -862,8 +787,6 @@ export async function mapEventToRecord(
       after: isRecord(p['after']) ? p['after'] : null,
     };
   }
-  // Admin created or deleted a tag catalog definition (the tag itself, not a
-  // player assignment - see the tag.player.assigned/removed branch for that).
   if (topic === 'tag.created' || topic === 'tag.deleted') {
     return {
       ...base,
@@ -873,7 +796,6 @@ export async function mapEventToRecord(
       resourceId: str(p['key']),
     };
   }
-  // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
   if (
     topic === 'rg.limit.set' ||
     topic === 'rg.limit.change_requested' ||
@@ -931,9 +853,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-driven login block on an excluded/cooled-off player. actorType is
-  // 'system' (no admin acted here) and the outcome is a failure, not the base
-  // regex's default 'success' (the topic doesn't end in failed/rejected/declined).
   if (topic === 'rg.exclusion.login_blocked') {
     return {
       ...base,
@@ -944,9 +863,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-driven login rejection for a suspended/closed player account (Backoffice-
-  // initiated block, not an admin action happening right now) - actorType 'system',
-  // outcome 'failure'.
   if (topic === 'player.login_blocked') {
     return {
       ...base,
@@ -957,9 +873,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-driven: a reconciliation run's open findings exceeded the configured
-  // threshold. resource = the run itself; after carries counts only, NEVER a finding's
-  // payload (an address or tx hash must never reach the audit log through this event).
   if (topic === 'wallet.reconciliation.alert') {
     return {
       ...base,
@@ -975,8 +888,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Backoffice game-catalog mutations. actorId = the acting admin; resource = the
-  // catalog row; before/after carry the config snapshot so visibility flips are diffable.
   if (topic === 'gaming.provider.created') {
     return {
       ...base,
@@ -1080,8 +991,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the zero UUID for an event-driven or scheduled evaluation; the admin's id
-  // for an on-demand one.
   if (topic === 'gaming.category.membership_evaluated') {
     const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
     const actorId = str(p['actorId']);
@@ -1218,8 +1127,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Catalogue rows an importer inserted or rewrote outside the admin update: no actor, and the
-  // event carries ids only. `before` is what the rewritten games were linked to.
   if (topic === 'gaming.games.created') {
     return { ...base, resourceType: 'game', before: null, after: { gameIds: p['gameIds'] ?? [] } };
   }
@@ -1244,9 +1151,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Wallet events carry the txn ref in transactionId; surface it as resourceId so
-  // a transaction reference is searchable (it otherwise stays buried in `after`).
-  // actorId = the resolved playerId (the wallet owner).
   if (topic.startsWith('wallet.')) {
     return {
       ...base,
@@ -1258,28 +1162,14 @@ export async function mapEventToRecord(
     };
   }
 
-  // Registration always precedes player-row creation (public sign-up only, no
-  // admin path): actorType stays 'player' even though playerId is legitimately
-  // null at emit time, before the async listener creates the row.
   if (topic === 'identity.user.registered') {
     return { ...base, actorId: str(p['playerId']), actorType: 'player' };
   }
 
-  // A rejected attempt has no account behind it, so there is no actor to name - only the
-  // address that was tried, which `after` already carries. `resourceType` is narrowed off
-  // the default 'identity' so an auditor can pull registration attempts on their own.
   if (topic === 'identity.user.registration.failed') {
     return { ...base, resourceType: 'registration' };
   }
 
-  // Admin-on-behalf topics: `userId` names the affected account, not the actor - the
-  // acting admin travels in its own `actorId` field, same as compliance.kyc.updated.
-  // Both also fire self-service: `disableTwoFactor` / `regenerateBackupCodes` tear down
-  // the caller's own trust with `actorId === userId`, and
-  // `identity.trusted_device.revoked` fires with no actorId at all when AdminGuard
-  // revokes the trust itself on a fingerprint mismatch. Same system/forced/self split
-  // as the session-revoked mapper above, so a self-teardown is never logged as an
-  // admin acting on the account.
   if (topic === 'identity.2fa.reset' || topic === 'identity.trusted_device.revoked') {
     const rawActorId = p['actorId'];
     const isSystem = rawActorId === undefined || rawActorId === null;
@@ -1293,8 +1183,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player (or admin, when no player row backs the account) replaced their login email.
-  // before/after carry the two addresses so the regulatory trail is diffable.
   if (topic === 'identity.email.changed') {
     const playerId = p['playerId'];
     return {
@@ -1365,7 +1253,6 @@ export async function mapEventToRecord(
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
       ...identitySubject(p),
-      // Booleans only - the PIN and its hash never reach the audit trail.
       before: { withdrawalPinSet: p['wasAlreadySet'] ?? null },
       after: { withdrawalPinSet: true },
     };
@@ -1401,16 +1288,11 @@ export async function mapEventToRecord(
       actorType: playerId ? 'player' : 'admin',
       actorId: playerId ? str(playerId) : str(p['userId']),
       ...identitySubject(p),
-      // The code value never reaches the audit trail, only that it was set.
       before: { antiPhishingCodeSet: p['wasAlreadySet'] ?? null },
       after: { antiPhishingCodeSet: true },
     };
   }
 
-  // Shared identity self-action topics: the same `/identity/*` endpoints serve
-  // both player and admin accounts, so playerId only resolves for a player. A
-  // null playerId means the account has no player row - attribute to the
-  // admin's own userId instead of mislabeling them as a player.
   if (
     topic === 'identity.user.login' ||
     topic === 'identity.user.logout' ||
@@ -1434,8 +1316,6 @@ export async function mapEventToRecord(
       : { ...base, ...identitySubject(p), actorId: str(p['userId']), actorType: 'admin' };
   }
 
-  // Generic player-self-action fallback (gaming rounds, chat, self-service RG
-  // limits, ...): actorId = the resolved playerId.
   if (typeof p['userId'] === 'string') {
     return { ...base, actorId: str(p['playerId']), actorType: 'player' };
   }
@@ -1443,19 +1323,10 @@ export async function mapEventToRecord(
   return base;
 }
 
-// One broker consumer group for the whole deployment, not one per service: every service that
-// loads this plugin would otherwise get its own copy of each event to map and queue (the
-// `event_id` dedupe keeps the log to one row, but each copy costs a write). This is only the
-// local part: createApp scopes it to `<REALTIME_NAMESPACE>/audit`, so two deployments sharing one Redis do not
-// compete for each other's events. Renaming it, or changing the namespace, strands the old
-// group's pending entries and starts the new one at the stream tail.
 const AUDIT_CONSUMER_GROUP = 'audit';
 
-// The databases this process runs an audit shipper on.
 const shippedDatabases = new WeakSet<object>();
 
-// A published topic is audited when the subscriber records it or its writer already did at source;
-// an exempt one is not, so publishing it leaves the request's trail as bare as before.
 const AUDITED_TOPICS: ReadonlySet<string> = new Set([
   ...SUBSCRIBED_TOPICS,
   ...Object.entries(AUDIT_COVERAGE_GAPS)
@@ -1465,25 +1336,18 @@ const AUDITED_TOPICS: ReadonlySet<string> = new Set([
 
 const SUBSCRIBED: ReadonlySet<string> = new Set(SUBSCRIBED_TOPICS);
 
-// The record an audited event maps to, or null when the topic is not one the subscriber records
-// or its writer already recorded it at source.
 export async function auditRecordFor(
   topic: string,
   payload: unknown,
   envelope: Pick<EventEnvelope, 'correlationId'> | undefined,
 ): Promise<RecordInput | null> {
-  // KYC exemptions and game geo rule syncs append their audit record inside the state
-  // transaction, then publish this event for realtime and other consumers after commit.
   if (!SUBSCRIBED.has(topic) || !isRecord(payload) || payload['auditRecorded'] === true) {
     return null;
   }
   const record = await mapEventToRecord(topic, payload);
-  // A bulk operation's id, when the topic maps one, outranks the emitter's correlation id.
   return { ...record, correlationId: record.correlationId ?? envelope?.correlationId ?? null };
 }
 
-// Each audit pool's size per replica; replicas x this must stay within the audit roles'
-// connection limit (20, set by migrate).
 const AUDIT_POOL_SIZE_ENV = { env: 'AUDIT_DATABASE_POOL_MAX', fallback: 3 };
 
 function splitAuditUrls(): { audit: string; shipper: string } | null {
@@ -1503,14 +1367,8 @@ function splitAuditUrls(): { audit: string; shipper: string } | null {
 export default {
   id: 'audit',
   register(ctx) {
-    // Subscriptions are wired before router factories run (create-app.ts boot order),
-    // so dbRef is null at registration but set before any real event arrives.
     let dbRef: DrizzleDb | null = null;
 
-    // The chain's own database when AUDIT_DATABASE_URL names one (as the writer role `migrate`
-    // creates), and the main one as the shipper role; else the main one for both: the same
-    // instance, which is what "not split" means. Checked here, so a split deployment without its
-    // shipper url fails at boot.
     const split = splitAuditUrls();
     const ownPool = (c: Pick<Container<CoreTokenCatalog>, 'onDispose'>, url: string) => {
       const svc = new DrizzleService(url, { poolSize: AUDIT_POOL_SIZE_ENV });
@@ -1534,8 +1392,6 @@ export default {
     });
 
     for (const topic of SUBSCRIBED_TOPICS) {
-      // Awaited and thrown, never swallowed: a failed write leaves the event pending, so the
-      // broker redelivers it instead of the change going unaudited (ADR-0045).
       ctx.events.on(
         topic,
         async (payload, envelope) => {
@@ -1546,10 +1402,6 @@ export default {
           if (!dbRef) {
             throw new Error(`audit record for '${topic}' skipped - service not constructed`);
           }
-          // Keyed by the event id, so an event its emitter's transaction already queued through
-          // the tap below, or a redelivery, leaves one row.
-          // The event's time, not the moment this path queued it, keeps the tap's and the
-          // consumer's entries for one event equal, as the outbox delete guard checks.
           await dbRef.transaction((tx) =>
             envelope
               ? enqueueEventAuditInTransaction(tx, record, envelope)
@@ -1566,17 +1418,12 @@ export default {
       const auditDrizzle = c.get(AUDIT_DRIZZLE);
       const svc = new AuditService(drizzle, events, c.get(IDENTITY_READER), auditDrizzle);
       dbRef = drizzle.db;
-      // An audited event emitted in a transaction queues its record in that transaction, so the
-      // record commits with the change instead of waiting on broker delivery.
       events.tapTransactional(async (tx, envelope) => {
         const record = await auditRecordFor(envelope.topic, envelope.payload, envelope);
         if (record) {
           await enqueueEventAuditInTransaction(tx as DrizzleTx, record, envelope);
         }
       });
-      // Plugins have no start hook; router factories run in every service that loads this plugin,
-      // routes or not, so each database a service writes audit records to gets a shipper. One
-      // per database per process, however often the factory runs.
       if (!shippedDatabases.has(drizzle.db)) {
         shippedDatabases.add(drizzle.db);
         const shipper = new AuditShipper(c.get(AUDIT_SHIPPER_DRIZZLE).db, {

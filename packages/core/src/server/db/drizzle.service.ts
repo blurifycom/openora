@@ -12,41 +12,17 @@ import { createLogger } from '../kernel/logger.js';
 
 export const DRIZZLE: Token<DrizzleService> = createToken('DRIZZLE');
 
-/**
- * The database that holds the audit chain (`audit_log`). Only the audit module binds it: a pool of
- * its own on `AUDIT_DATABASE_URL` when that is set, the `DRIZZLE` service itself otherwise. Sealed,
- * so no overlay can point the chain somewhere else. `audit_outbox` always stays in `DRIZZLE`.
- */
 export const AUDIT_DRIZZLE: SealedToken<DrizzleService> =
   createSealedToken<DrizzleService>('AUDIT_DRIZZLE');
 
-/**
- * The main database as the audit shipper reaches it to delete what it shipped from `audit_outbox`.
- * With the chain in its own database, a pool of its own on `AUDIT_SHIPPER_DATABASE_URL`, the one
- * role the outbox guard lets delete there; the `DRIZZLE` service itself otherwise. Sealed, like
- * `AUDIT_DRIZZLE`.
- */
 export const AUDIT_SHIPPER_DRIZZLE: SealedToken<DrizzleService> =
   createSealedToken<DrizzleService>('AUDIT_SHIPPER_DRIZZLE');
 
-/**
- * One primary pool plus optional read replicas (single-tenant, ADR-0026). Holds the
- * connections for the composition root.
- *
- * `db` is always the primary. `replica` sends plain selects to a replica listed in
- * `DATABASE_REPLICA_URLS` (the primary when none is set) and writes to the primary.
- * A replica lags, so it is opt-in: only for reads that tolerate stale rows (catalogs,
- * lists, reports), never for a gate, an idempotency check, or a read after a write.
- */
 export class DrizzleService {
   private readonly pools: Pool[];
   readonly db: NodePgDatabase;
   readonly replica: NodePgDatabase;
 
-  /**
-   * `url` opens that database alone, without replicas; omitted, `DATABASE_URL` and its replicas.
-   * `poolSize` sizes each pool by another env variable than `DATABASE_POOL_MAX`.
-   */
   constructor(url?: string, { poolSize }: { poolSize?: PoolSizeEnv } = {}) {
     const primaryUrl = url ?? process.env['DATABASE_URL'];
     if (!primaryUrl) {
@@ -69,10 +45,6 @@ export class DrizzleService {
 
 function openPool(connectionString: string, poolSize?: PoolSizeEnv): Pool {
   const pool = createPool(connectionString, poolSize);
-  // A pg Pool emits 'error' when an idle backend connection dies (DB restart,
-  // failover, network drop). With no listener Node escalates it to an
-  // uncaughtException and crashes the process, so log it - which reports it via
-  // the error reporter - and let the pool re-establish on the next query.
   pool.on('error', (err) => {
     createLogger('db').error({ err }, 'idle database pool connection error');
   });

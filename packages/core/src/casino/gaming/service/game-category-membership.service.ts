@@ -41,7 +41,6 @@ export const GameCategoryMembershipContendedError = createDomainError<[categoryI
 const MAX_EVALUATE_ATTEMPTS = 3;
 const MEMBERSHIP_LAST_ERROR_MAX = 500;
 
-// Only this module's own messages leave it, never a definition's raw error.
 export function failureReason(err: unknown) {
   const reason =
     isUnresolvableRuleError(err) ||
@@ -57,7 +56,6 @@ export type MembershipDiff = {
   toRemove: string[];
 };
 
-/** The inserts and deletes that turn `currentIds` into `matchedIds`. */
 export function diffMembership(
   currentIds: readonly string[],
   matchedIds: readonly string[],
@@ -74,8 +72,6 @@ type EvaluateArgs = {
   categoryId: GameCategory['id'];
   trigger: GameCategoryMembershipTrigger;
   actor?: CatalogActor;
-  // Checked against each claimed rule before it resolves, so a permission binds to the
-  // rule this run evaluates rather than one the caller read earlier.
   authorizeRule?: GameCategoryRuleAuthorizer;
 };
 
@@ -93,11 +89,6 @@ type Applied = {
   evaluatedAt: Date;
 };
 
-/**
- * Owns the `game_category_game` rows of every rule-mode category: writes what
- * GameCategoryRuleService resolves as a diff, so every reader keeps joining the link
- * table unchanged. See docs/modules/gaming.md for the lock order.
- */
 export class GameCategoryMembershipService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -106,19 +97,10 @@ export class GameCategoryMembershipService {
     private readonly rules: GameCategoryRuleService,
   ) {}
 
-  /**
-   * Re-materializes one rule-mode category. Throws `GameCategoryNotFoundError` or
-   * `GameCategoryNotRuleManagedError` when there is nothing to evaluate, whatever
-   * `authorizeRule` throws, an unresolvable rule's error, or
-   * `GameCategoryMembershipContendedError` after three stale attempts. A repeat run with
-   * nothing to change writes no link rows.
-   */
   async evaluate(args: EvaluateArgs) {
     const { categoryId, trigger, actor, authorizeRule } = args;
     for (let attempt = 0; attempt < MAX_EVALUATE_ATTEMPTS; attempt += 1) {
       const snapshot = await this.claimEvaluation(categoryId);
-      // lockAndDiff applies nothing unless this claim is still current, so the rule
-      // authorized here is the one whose matches are written.
       if (authorizeRule && snapshot.membershipRule) {
         await authorizeRule(snapshot.membershipRule);
       }
@@ -142,12 +124,6 @@ export class GameCategoryMembershipService {
     throw new GameCategoryMembershipContendedError(categoryId);
   }
 
-  /**
-   * The job entry point, as the system actor. A category deleted or switched to manual
-   * after the job was queued is skipped, and so is a rule that does not resolve - no
-   * retry can fix it; the next sweep tries again in case an overlay came back. A rule
-   * that could not be resolved right now throws, so the queue retries the job.
-   */
   async evaluateJob({ categoryId, trigger }: GameCategoryMembershipJob): Promise<void> {
     try {
       await this.evaluate({ categoryId, trigger });
@@ -167,7 +143,6 @@ export class GameCategoryMembershipService {
     }
   }
 
-  // See "Lock order" in docs/modules/gaming.md.
   private async evaluateOnce(
     args: EvaluateArgs,
     snapshot: EvaluationSnapshot,
@@ -218,8 +193,6 @@ export class GameCategoryMembershipService {
     throw new GameCategoryNotRuleManagedError(categoryId);
   }
 
-  // A null rule in rule mode is a stored value that no longer parses (zodJsonb reads it
-  // as null): a rule that does not resolve, never a manual category.
   private async resolveOrRecordFailure(args: EvaluateArgs, snapshot: EvaluationSnapshot) {
     try {
       const rule = snapshot.membershipRule;
@@ -271,7 +244,6 @@ export class GameCategoryMembershipService {
     ) {
       return { status: 'stale' };
     }
-    // A game to add that was deleted since the unlocked read is no longer a match.
     const pendingAdd = new Set(toAdd);
     const liveMatchedIds = matchedIds.filter((id) => !pendingAdd.has(id) || lockedGameIds.has(id));
     const diff = diffMembership(await this.memberIds(tx, categoryId), liveMatchedIds);
@@ -323,14 +295,12 @@ export class GameCategoryMembershipService {
         );
     }
     if (diff.toAdd.length > 0) {
-      // One array parameter: a row-per-value insert would outgrow the bind-parameter limit.
       await tx.execute(sql`
         INSERT INTO game_category_game (game_id, category_id, source)
         SELECT g, ${categoryId}::uuid, 'rule'
         FROM unnest(${sql.param(diff.toAdd)}::uuid[]) AS g
       `);
     }
-    // Rows an admin added before the switch to rule mode that the rule also matches.
     const relabeled = await tx
       .update(gameCategoryGame)
       .set({ source: 'rule' })
@@ -385,8 +355,6 @@ export class GameCategoryMembershipService {
     });
   }
 
-  // Best effort: a failure here is logged, not thrown, so the caller still sees the
-  // error that mattered.
   private async recordFailedAttempt(
     categoryId: GameCategory['id'],
     snapshot: EvaluationSnapshot,

@@ -121,15 +121,6 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   return headers;
 }
 
-// Deletes every session row for `userId` created at or before `deadline`, except the
-// caller's freshly minted one (matched by `sparedToken`), and returns the ids of what
-// it deleted. Run a short delay after a password change: better-auth rotates the
-// password hash and deletes sessions in separate, untransacted statements, so a
-// sign-in that verified the OLD password just before the rotation can still insert
-// its session row immediately after `deleteUserSessions()` ran. That row predates
-// `deadline` (captured once the change is known committed), so this catches it while
-// sparing anything created afterwards.
-// Exported for direct testing; the service schedules it via setTimeout.
 async function sweepRacedSessionsAfterPasswordChange(
   db: DrizzleService['db'],
   params: { userId: User['id']; sparedToken: Session['token']; deadline: Date },
@@ -148,8 +139,6 @@ async function sweepRacedSessionsAfterPasswordChange(
   return deleted.map((row) => row.id);
 }
 
-// better-auth returns Date objects and may omit theme/language; the public
-// UserSchema requires ISO strings and always-present values.
 type BetterAuthUser = Omit<User, 'theme' | 'language' | 'createdAt' | 'updatedAt'> & {
   theme?: Theme | null;
   language?: string | null;
@@ -185,8 +174,6 @@ function makeLoginIpRateLimitKey(ip: string): `login-ip:${string}` {
   return `login-ip:${ip}`;
 }
 
-// Read only Better Auth's pending-cookie VALUE, never a similarly suffixed cookie or the
-// raw Cookie header: unrelated cookie pairs must not change the challenge identity.
 function twoFactorPendingCookieValue(headers: Headers, cookieName: string): string | undefined {
   const cookieHeader = headers.get('cookie');
   if (!cookieHeader) {
@@ -200,8 +187,6 @@ function twoFactorPendingCookieValue(headers: Headers, cookieName: string): stri
   return undefined;
 }
 
-// A web Response exposes Set-Cookie as full attribute strings; a request carries only
-// the name=value pairs.
 function requestCookieHeader(res: globalThis.Response): string {
   return (res.headers.getSetCookie?.() ?? [])
     .map((cookie) => {
@@ -225,9 +210,6 @@ function hasTrustDeviceCookie(headers: Headers): boolean {
   return false;
 }
 
-// better-auth sets `<prefix>.dont_remember` when a user signs in with `rememberMe: false`.
-// Presence is enough here: we only use it to shorten the caller's own rotated session,
-// so a forged cookie can at worst clamp its owner's session earlier - never extend one.
 function hasDontRememberCookie(headers: Headers): boolean {
   const cookieHeader = headers.get('cookie');
   if (!cookieHeader) {
@@ -241,8 +223,6 @@ function hasDontRememberCookie(headers: Headers): boolean {
   return false;
 }
 
-// Drops the one pair and leaves every other byte alone: the cookies that stay carry
-// signed, percent-encoded values better-auth re-verifies exactly as the browser sent them.
 function withoutTrustDeviceCookie(headers: Headers): Headers {
   const cookieHeader = headers.get('cookie');
   if (!cookieHeader) {
@@ -264,10 +244,6 @@ function withoutTrustDeviceCookie(headers: Headers): Headers {
   return next;
 }
 
-// createAuth() is cast to the base better-auth `Auth` type (to dodge the Zod v4
-// $strip portability error), so the twoFactor() plugin endpoints are absent from
-// the static type. We declare the narrow shapes we call and route through a typed
-// accessor - no `any`. asResponse:true makes every call return a web Response.
 type AuthCall<B> = (opts: {
   body?: B;
   query?: Record<string, string>;
@@ -275,8 +251,6 @@ type AuthCall<B> = (opts: {
   asResponse: true;
 }) => Promise<globalThis.Response>;
 
-// better-auth's email-otp change-email key: `change-email-otp-<userId>:<newEmail>`.
-// userId is a UUID, so it holds no LIKE wildcard.
 const pendingEmailChangeIdentifierPattern = (userId: Uuid) => `change-email-otp-${userId}:%`;
 
 type ExtendedAuthApi = {
@@ -286,9 +260,6 @@ type ExtendedAuthApi = {
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string; trustDevice?: boolean }>;
   verifyBackupCode: AuthCall<{ code: string; trustDevice?: boolean }>;
-  // The OTP pair backing the `email` and `sms` methods. Both resolve their subject from
-  // a live session first and the pending-challenge cookie second, which is what lets one
-  // endpoint serve enrolment, resend and the login challenge.
   sendTwoFactorOTP: AuthCall<Record<string, never>>;
   verifyTwoFactorOTP: AuthCall<{ code: string; trustDevice?: boolean }>;
   generateBackupCodes: AuthCall<{ password: string }>;
@@ -339,17 +310,6 @@ const BetterAuthErrorBodySchema = z.object({
   code: z.string().optional(),
 });
 
-// better-auth calls use `asResponse: true`, which returns an error *Response*
-// (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
-// to the right HTTP status instead of the handler silently returning success.
-// Only reads the body on failure, so a subsequent res.json() on success is safe.
-// 401 -> UNAUTHORIZED (bad credentials), 403 -> FORBIDDEN (better-auth's
-// TOO_MANY_ATTEMPTS on checkVerificationOTP/resetPasswordEmailOTP), else BAD_REQUEST.
-// `opts.genericMessage` lets a BAD_REQUEST *or* FORBIDDEN caller opt into a fixed
-// message instead of better-auth's raw one - some better-auth 400s (eg
-// checkVerificationOTP's USER_NOT_FOUND-before-INVALID_OTP ordering) leak account
-// existence otherwise. When genericMessage is set, a 403 is masked down to
-// BAD_REQUEST too, so a caller can't tell "too many attempts" apart from "wrong code".
 async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: string }) {
   if (res.ok) {
     return;
@@ -378,7 +338,6 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   });
 }
 
-// better-auth answers FAILED_TO_CREATE_USER when its user insert throws, e.g. on the email unique index.
 async function isUserInsertFailure(res: globalThis.Response) {
   const body = BetterAuthErrorBodySchema.safeParse(
     await res
@@ -390,28 +349,14 @@ async function isUserInsertFailure(res: globalThis.Response) {
 }
 
 const MINUTE_MS = 60 * 1000;
-const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
-// Coarse abuse throttles keyed by the caller identifier the context provides (email/
-// token/session), NOT IP. The lockout above is a per-account credential-failure
-// counter; these bound raw request volume on each brute-force surface. An overlay
-// rebinds RATE_LIMITER to change the backend, not the policy - the numbers are here.
-// Credential-guessing keys fail closed when the limiter backend is down: an
-// unthrottled login/2fa/reset window is worse than a transient 429. The volume
-// throttles (register/resend/etc.) keep the default fail-open.
+const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60;
 const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
-// Per-IP companion to LOGIN_RATE_LIMIT above: catches credential stuffing spread across
-// many accounts from one source, which the per-email counter can't see (each guess lands
-// on a different key). Limit is deliberately far above LOGIN_RATE_LIMIT's per-account 10/5min
-// so a shared network (office NAT) never blocks legitimate players signing into their own
-// accounts. Overridable via IDENTITY_OPTIONS.loginIpRateLimit.
 const DEFAULT_LOGIN_IP_RATE_LIMIT = {
   limit: 100,
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
 const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
-// Keyed on the caller, not the handle: the abuse shape here is enumerating many
-// usernames from one client, not probing one username repeatedly.
 const USERNAME_AVAILABILITY_RATE_LIMIT = { limit: 30, windowMs: MINUTE_MS };
 const PASSWORD_RESET_REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const PASSWORD_RESET_RATE_LIMIT = {
@@ -425,34 +370,20 @@ const PASSWORD_RESET_VERIFY_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 const VERIFY_2FA_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
-// Fails closed with the verify budget below: better-auth issues a fresh code (and a fresh
-// 3-attempt counter) per resend, so an unbounded resend loop is an unbounded guess budget.
 const EMAIL_VERIFICATION_RATE_LIMIT = {
   limit: 3,
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
-// Fails closed like the other secret-guessing budgets: the emailed code is six digits,
-// so an unthrottled window is a brute-force window, not a degraded-UX window.
 const VERIFY_EMAIL_RATE_LIMIT = {
   limit: 5,
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
-// How long after a password change to re-sweep the user's sessions for a row that a
-// concurrent old-password sign-in raced in just after better-auth's revoke ran. This
-// is the residual exposure window; keep it short.
 const RACED_SESSION_SWEEP_DELAY_MS = 2_000;
-// better-auth's `createSession` gives a `dontRememberMe` session this fixed TTL
-// (`getDate(3600 * 24, 'sec')`). `revokeOtherSessions` mints the caller's replacement
-// session without that flag, so we re-apply the clamp when the request carries the
-// `dont_remember` cookie. Matches `SESSION_TTL_MS` in phone-login.service.
 const DONT_REMEMBER_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
-// Fails closed: every call spends real money on an `sms` enrolment and fills a mailbox
-// on an `email` one, and better-auth issues a fresh code per send, so an unbounded
-// resend loop is both a toll-fraud channel and an unbounded guess budget.
 const SEND_2FA_OTP_RATE_LIMIT = {
   limit: 3,
   windowMs: 5 * MINUTE_MS,
@@ -480,12 +411,10 @@ export function loginShadowKey(email: string): string {
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
 
-// A `player` role is a casino account; every other role is staff.
 function matchesAudience(role: string, audience: 'staff' | 'player'): boolean {
   return (role === 'player') === (audience === 'player');
 }
 
-// Gate input for a caller whose account could not be resolved: never exempt as staff.
 const NO_ROLE = { role: 'player' };
 
 function hasErrorCode(error: unknown, code: string) {
@@ -526,26 +455,11 @@ export type IdentityServiceDeps = {
   cache?: CacheAdapter;
   trustedDevices?: TrustedDeviceService;
   twoFactorLockout?: TwoFactorLockoutService;
-  // Routes a generated second-factor code to the transport the account's enrolled
-  // method names. Required: without it better-auth mints `email`/`sms` codes that
-  // are never delivered, which locks the account out of its own second factor.
   twoFactorDelivery: TwoFactorDeliveryService;
-  // Used by the step-up self-service routes (disable 2FA, regenerate backup codes) to
-  // tear down live sessions once the account's standing credentials have changed.
   sessions?: SessionService;
-  // Projects a new account into the ledger's play eligibility, without which it cannot stake.
   playEligibility: PlayEligibilityPublisher;
 };
 
-/**
- * Thin wrapper over the shared better-auth instance (register/login/2FA/
- * password/email flows) that layers on platform-specific policy better-auth
- * doesn't provide: per-account lockout after N failed logins, RG
- * (responsible-gambling) login blocking, and rate limiting keyed by
- * caller-identifier (email/token/session), never IP. better-auth calls use
- * `asResponse: true` and return an error Response rather than throwing, so
- * every call is routed through `ensureOk` to surface failures as `ORPCError`s.
- */
 export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
   private readonly drizzle: DrizzleService;
@@ -559,11 +473,6 @@ export class IdentityService {
   private readonly playerProvisioning?: PlayerProvisioning;
   private readonly geoCheck?: GeoCheckCommands;
   private readonly cache?: CacheAdapter;
-  // Addresses whose reset code is being sent because a sign-up hit an existing account.
-  // Held only for the duration of that send: `requestPasswordResetEmailOTP` drives
-  // `sendVerificationOTP` -> `render` inside the same await, so the flag is read before
-  // the `finally` clears it. Not cache-backed - it never has to outlive the call or
-  // cross a process.
   private readonly existingAccountSignUps = new Set<string>();
   private readonly trustedDevices?: TrustedDeviceService;
   private readonly twoFactorLockout?: TwoFactorLockoutService;
@@ -627,8 +536,6 @@ export class IdentityService {
             },
           }
         : {}),
-      // Binds the plugin's OTP hook to the transport fan-out. Without it better-auth
-      // still mints codes for the `email`/`sms` methods and drops them on the floor.
       twoFactor: { sendOtp: (args) => twoFactorDelivery.deliver(args) },
       requireEmailVerification:
         this.platformConfig?.registration?.requireEmailVerification ?? false,
@@ -666,10 +573,6 @@ export class IdentityService {
     });
   }
 
-  // Ends the sessions and revokes the MCP tokens together. better-auth has already deleted the
-  // sessions and committed the new password when this runs, so no session from before the
-  // reset can issue a token meanwhile. A failed revocation is logged, as below: the sessions
-  // are gone regardless.
   private async endSessionsAfterPasswordReset(userId: User['id'], meta: ClientMeta) {
     try {
       await this.sessions?.endSessionsAfterPasswordReset(userId, meta);
@@ -678,8 +581,6 @@ export class IdentityService {
     }
   }
 
-  // The new password is committed before this runs, and the MCP authenticator refuses every
-  // token issued before it either way, so a failed revocation is logged rather than rethrown.
   private async revokeMcpTokensAfterCredentialChange(userId: User['id'], meta: ClientMeta) {
     try {
       await this.sessions?.revokeMcpTokens(userId, userId, meta);
@@ -698,8 +599,6 @@ export class IdentityService {
   }
 
   private get api() {
-    // Library boundary: the admin/organization plugin endpoints aren't on better-auth's
-    // base `api` type. Sanctioned cast, see conventions.
     return this.auth.api as unknown as ExtendedAuthApi;
   }
 
@@ -714,9 +613,6 @@ export class IdentityService {
     return (await this.currentSession(headers))?.userId ?? null;
   }
 
-  // Both the caller's userId and the id of the session row they are authenticating
-  // with, for handlers that must tell the caller's own device apart from their others
-  // (eg sparing the acting session from a revoke-all).
   private async currentSession(
     headers: Headers,
   ): Promise<{ userId: User['id']; sessionId?: Session['id'] } | null> {
@@ -726,9 +622,6 @@ export class IdentityService {
   }
 
   private async securityControlsFor(userId: User['id']): Promise<SecurityControls> {
-    // 0 when trusted devices are not wired at all (some deployments), matching what
-    // `trust()` itself does with a non-positive `trustedDeviceDays`: a client reading 0
-    // knows the offer is not real anywhere it might otherwise render one.
     const controls = await getSecurityControls(
       this.drizzle,
       userId,
@@ -740,8 +633,6 @@ export class IdentityService {
     return controls;
   }
 
-  // Scoped to one token: the account's other devices did nothing wrong, and signing them
-  // out here would be indistinguishable from a session hijack.
   private async expireSessionToken(token: string | null | undefined) {
     if (token) {
       await this.drizzle.db
@@ -751,7 +642,6 @@ export class IdentityService {
     }
   }
 
-  /** Re-reads the account a pending 2FA login belongs to and applies the sign-in gate to it. */
   private async assertChallengedAccountNotBlocked(userId: User['id'], meta: ClientMeta) {
     const [account] = await this.drizzle.db
       .select({
@@ -768,7 +658,6 @@ export class IdentityService {
     }
   }
 
-  // Same gate as password login and phone login, from the one shared implementation.
   private assertAccountNotBlocked(
     account: { id: User['id']; isActive: boolean; rgBlocked: boolean; rgBlockedUntil: Date | null },
     meta: ClientMeta,
@@ -783,11 +672,6 @@ export class IdentityService {
     });
   }
 
-  /**
-   * Emitted on every registration attempt that produced no account. The audit trail is
-   * the one place that records what actually happened - the HTTP response deliberately
-   * does not, because a truthful answer on a known address is an enumeration oracle.
-   */
   private emitRegistrationFailed(
     reason: RegistrationFailureReason,
     input: RegisterInput,
@@ -803,8 +687,6 @@ export class IdentityService {
   }
 
   async register(input: RegisterInput, reqHeaders: NodeHeaders) {
-    // Read before the config guard: a rejected attempt is audited too, and an audit row
-    // with no origin is barely a record.
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const meta = { ip, userAgent };
     const registration = this.platformConfig?.registration;
@@ -813,8 +695,6 @@ export class IdentityService {
       this.emitRegistrationFailed('registration_disabled', input, meta);
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
-    // `assertRateLimit` throws and is shared by a dozen call sites, so the emit wraps it
-    // here rather than moving into it.
     try {
       await assertRateLimit(
         this.limiter,
@@ -860,22 +740,15 @@ export class IdentityService {
         this.emitRegistrationFailed('email_already_registered', input, meta);
         return { status: 'check-email' as const };
       }
-      // The `lower(username)` unique index is the only arbiter - a pre-flight check
-      // could not close the race anyway, so the taken handle is read off the failure.
       if (await this.findUserIdByUsername(input.username)) {
         this.emitRegistrationFailed('username_taken', input, meta);
         throw new UsernameConflictError();
       }
-      // `ensureOk` always throws on a non-ok response, so emitting first needs no catch.
       this.emitRegistrationFailed('error', input, meta);
       await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
     }
     const body = (await authResponse.json()) as { user: BetterAuthUser };
-    // A known address gets an indistinguishable success response (and a reset mail)
-    // rather than a new account, so only a genuinely new user is provisioned.
     if ((await this.findUserIdByEmail(input.email)) !== body.user.id) {
-      // The known-address branch: no account was created, so the attempt failed even
-      // though the caller is told it succeeded. Only the audit trail says so.
       this.emitRegistrationFailed('email_already_registered', input, meta);
       return { status: 'check-email' as const };
     }
@@ -887,8 +760,6 @@ export class IdentityService {
       userId: body.user.id,
       playerId,
       countryCode: registrationGeo?.countryCode ?? null,
-      // Only claimed when the consent row was actually written - a discarded capture
-      // must not leave an audit trail implying evidence that does not exist.
       ...(consentStored
         ? {
             termsVersion: registration.termsVersion,
@@ -899,8 +770,6 @@ export class IdentityService {
       ip,
       userAgent,
     });
-    // Written to the outbox with the player row: consumers attach records to the new
-    // player, so a broker outage at sign-up must delay the event, never lose it.
     let registeredEmitted = false;
     let playEligibilityPublished = false;
     let consent: Awaited<ReturnType<IdentityService['recordRegistrationConsent']>>;
@@ -918,7 +787,6 @@ export class IdentityService {
             registered(playerId, true),
           );
           registeredEmitted = true;
-          // With the player row, so the ledger never holds an account it cannot see the status of.
           await this.playEligibility.publish(tx as DrizzleTx, body.user.id);
           playEligibilityPublished = true;
         },
@@ -928,14 +796,10 @@ export class IdentityService {
       throw err;
     }
     const { playerId, consentStored } = consent;
-    // After the consent write, which is what materialises the player row the zone lands on.
-    // No session yet, but the browser is here now and a first login may be days away.
     await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
-    // Without it the new account cannot stake; the boot backfill heals a crash in between.
     if (!playEligibilityPublished) {
       await this.playEligibility.sync(body.user.id);
     }
-    // The player row already existed, or the provisioning adapter predates `onCreated`.
     if (!registeredEmitted) {
       this.events.emit(
         'identity.user.registered',
@@ -945,11 +809,6 @@ export class IdentityService {
         ),
       );
     }
-    // Sent here rather than by better-auth's sendOnSignUp hook: that hook also fires on
-    // the synthetic duplicate-email response, mailing a live code to an address whose
-    // owner never asked for it - and `verifyEmail` signs that code's bearer in.
-    // A mail failure is logged, never surfaced: the account exists either way and the
-    // player can ask for a new code, so failing the call here would only mislead them.
     const otpResponse = await this.api.sendVerificationOTP({
       body: { email: input.email, type: 'email-verification' },
       headers,
@@ -982,11 +841,6 @@ export class IdentityService {
     return row?.id ?? null;
   }
 
-  /**
-   * Better Auth commits the user inside its own transaction before returning, so a
-   * failure here would otherwise leave an account with no consent record. The user is
-   * deleted instead (sessions and accounts cascade), making registration all-or-nothing.
-   */
   private async recordRegistrationConsent(
     provisioning: PlayerProvisioning,
     userId: User['id'],
@@ -1019,8 +873,6 @@ export class IdentityService {
       throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Registration is unavailable' });
     }
     if (!outcome.created) {
-      // A player row already existed, so this consent capture was discarded. Never
-      // silent: the acceptance evidence is a compliance record.
       identityLogger.error(
         { userId, termsVersion },
         'registration consent not stored - player row already existed',
@@ -1047,37 +899,11 @@ export class IdentityService {
     };
   }
 
-  /**
-   * Credentials are verified FIRST; the RG login block is checked only AFTER
-   * a pass, so a pre-auth probe can't distinguish a restricted account from a
-   * wrong password. An RG-blocked account still authenticates then has its
-   * fresh session immediately expired and the cookie withheld - it never
-   * counts toward the lockout budget. A 2FA-enrolled account returns
-   * `{ twoFactorRedirect: true }` instead of a session; the client completes
-   * via `verifyTwoFactor`. Failed-attempt counting only advances on a genuine
-   * credential rejection (never on a transient/backend error), via an atomic
-   * `UPDATE ... SET attempts = attempts + 1` so concurrent failures can't each
-   * read a stale count and slip past the lockout threshold.
-   */
   async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
-    // IP gate runs before the per-email one: it is the broad, cheap-to-refill resource
-    // (100/15min) guarding the narrow, scarce one (10/5min) - an IP that has already
-    // tripped its own throttle must not keep spending a targeted email's budget on every
-    // further attempt. Falls back to a shared 'unknown' bucket when the IP can't be
-    // derived, matching every sibling per-IP key in this file (register-ip:,
-    // verify-email-ip:, change-email-ip:, confirm-email-change-ip:) - skipping the gate
-    // outright on a missing IP would let an attacker disable this protection for free by
-    // simply not sending the header.
-    //
-    // `ip` is X-Real-IP as `createApp` leaves it: the socket address, unless the peer is a
-    // configured trusted proxy (`trustedProxies` / TRUSTED_PROXIES), in which case it is
-    // derived from that proxy's appended X-Forwarded-For address. A direct caller cannot
-    // choose its bucket by rotating either forwarding header.
     const ipRateLimitOptions = this.options?.loginIpRateLimit;
     if (ipRateLimitOptions?.enabled ?? true) {
       await assertRateLimit(this.limiter, makeLoginIpRateLimitKey(ip ?? 'unknown'), {
@@ -1092,9 +918,6 @@ export class IdentityService {
     await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
-    // Read once for the lockout budget, the admin-bypass check, and the RG login gate
-    // (indexed email lookup). Read unconditionally - the RG gate runs even when lockout
-    // is disabled.
     const [existingUserRow] = await this.drizzle.db
       .select({
         id: user.id,
@@ -1138,8 +961,6 @@ export class IdentityService {
       if (new Date(existingUser.lockoutUntil) > new Date(nowMs)) {
         throw createAccountLockedError(new Date(existingUser.lockoutUntil));
       }
-      // Lock window elapsed: clear it so the next failure starts from a fresh budget
-      // instead of one more wrong password immediately re-locking the account.
       await this.clearLockout(existingUser.id);
       existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
     }
@@ -1183,13 +1004,8 @@ export class IdentityService {
       }
     }
 
-    // better-auth honours its trust-device cookie on its own and offers no way to revoke
-    // one. The revocable half of a trusted device is the row this module keeps, so a login
-    // presenting the cookie without a live row has to fall back to the full challenge.
     let signInHeaders = headers;
     if (existingUser && this.trustedDevices && hasTrustDeviceCookie(headers)) {
-      // "Require 2FA every login" outranks the cookie outright, so no lookup is needed -
-      // how well this browser is trusted stops mattering while the preference holds.
       const trusted =
         !existingUser.requireTwoFactorOnLogin &&
         (await this.trustedDevices.isTrusted(existingUser.id, userAgent));
@@ -1206,9 +1022,6 @@ export class IdentityService {
       });
       await ensureOk(authResponse);
 
-      // RG and backoffice blocks, applied only AFTER credentials verify so a pre-auth
-      // probe can't distinguish a restricted account from a wrong password. Resolves
-      // playerId once, so the eventual login success event can carry it too.
       const playerId = existingUser
         ? await this.assertAccountNotBlocked(existingUser, { ip, userAgent })
         : null;
@@ -1220,8 +1033,6 @@ export class IdentityService {
         twoFactorRedirect?: boolean;
       };
 
-      // Before any cookie is forwarded, so a denied caller holds neither a session nor a
-      // pending 2FA challenge; the session better-auth just minted is expired outright.
       await assertCountryAllowed(
         this.geoCheck,
         existingUser ?? NO_ROLE,
@@ -1238,9 +1049,6 @@ export class IdentityService {
         },
       );
 
-      // Same placement as the country gate: after the credential, before any cookie, so a
-      // player never holds a backoffice session (or a pending 2FA challenge) and a staff
-      // account never gets a player profile and wallet from the casino.
       if (input.audience && existingUser && !matchesAudience(existingUser.role, input.audience)) {
         await this.expireSessionToken(body.token);
         this.events.emit('identity.user.login.failed', {
@@ -1258,10 +1066,6 @@ export class IdentityService {
       this.forwardCookies(authResponse, resHeaders);
 
       if (body.twoFactorRedirect || !body.user || !body.token) {
-        // The challenge screen has to know whether to ask for an authenticator code or
-        // to push one, and there is no session yet to read the account's method from.
-        // Naming it here reveals nothing the challenge would not show anyway. Same for
-        // the trust window: an operator's configured length is not account-specific.
         return {
           twoFactorRedirect: true,
           trustedDeviceDays: this.trustedDevices?.getTrustedDeviceDays() ?? 0,
@@ -1308,11 +1112,6 @@ export class IdentityService {
         }),
       };
     } catch (error) {
-      // An RG or country block is not a credential failure - surface it as-is, without touching
-      // the lockout budget or emitting login.failed again (the block was already recorded). Match on
-      // the RG_BLOCKED marker, not the bare FORBIDDEN code - ensureOk also maps a banned-user
-      // 403 (better-auth's admin plugin) to FORBIDDEN, and that path must still fall through
-      // to the generic branch below to emit login.failed.
       if (
         error instanceof ORPCError &&
         error.code === 'FORBIDDEN' &&
@@ -1324,8 +1123,6 @@ export class IdentityService {
       ) {
         throw error;
       }
-      // Only a genuine credential rejection counts toward lockout - a transient DB/network
-      // error must never lock the account out.
       const isAccountLocked =
         error instanceof ORPCError &&
         error.code === 'UNAUTHORIZED' &&
@@ -1337,8 +1134,6 @@ export class IdentityService {
       if (lockoutEnabled && existingUser && isCredentialFailure) {
         const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
         const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
-        // Atomic increment: concurrent failures can't each read a stale count and slip past
-        // the threshold (the read-modify-write this replaces was bypassable under load).
         const [row] = await this.drizzle.db
           .update(user)
           .set({
@@ -1358,7 +1153,6 @@ export class IdentityService {
 
         if (isLocking) {
           const nowMs = Date.now();
-          // Escalate the lockout duration for repeat offenders inside the 24h window.
           const { tier, durationMs } = computeLockoutTier({
             lockoutCount: existingUser.lockoutCount ?? 0,
             lastFailedLoginAt: existingUser.lastFailedLoginAt ?? null,
@@ -1370,9 +1164,6 @@ export class IdentityService {
           const [lockoutRow] = await this.drizzle.db
             .update(user)
             .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
-            // Only the first request that reaches the threshold creates the lockout.
-            // Other concurrent failures must observe and return the winner's lockout
-            // instead of overwriting its tier or emitting a duplicate event.
             .where(and(eq(user.id, existingUser.id), isNull(user.lockoutUntil)))
             .returning({ lockoutUntil: user.lockoutUntil });
 
@@ -1557,16 +1348,13 @@ export class IdentityService {
       identityLogger.warn({ email, err }, 'admin password reset marker cache write failed');
     }
 
-    // Mirrors requestPasswordReset - the send failure is swallowed the same way.
-    try {
-      await this.api.requestPasswordResetEmailOTP({
+    await this.api
+      .requestPasswordResetEmailOTP({
         body: { email },
         headers: new Headers(),
         asResponse: true,
-      });
-    } catch {
-      // intentionally ignored
-    }
+      })
+      .catch(() => undefined);
 
     this.events.emit('identity.password.admin_reset_requested', {
       userId,
@@ -1579,10 +1367,6 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  /**
-   * The account's role, or null when there is no such user. Admin routes that act on another
-   * account read it to tell a player (`player:update` is enough) from staff (super-admin only).
-   */
   async findAccountRole(userId: User['id']) {
     const [row] = await this.drizzle.db
       .select({ role: user.role })
@@ -1628,7 +1412,6 @@ export class IdentityService {
   async logout(reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    // Resolve the user BEFORE signOut so the audit log can attribute the logout.
     const session = await this.auth.api.getSession({ headers });
     const userId = (session?.user as BetterAuthUser | undefined)?.id;
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
@@ -1653,20 +1436,6 @@ export class IdentityService {
     return toUser(session.user as BetterAuthUser);
   }
 
-  /**
-   * Starts enrolment. All three methods share the one secret better-auth mints here;
-   * `method` only decides how the code that activates it arrives, and is written
-   * before the send so the delivery hook knows where to route. better-auth flips
-   * `twoFactorEnabled` only once the first code clears, so abandoning a first
-   * enrolment leaves the account unprotected exactly as it was.
-   *
-   * A transport failure on the first send throws (see `sendOtpForCurrentMethod`)
-   * after `two_factor_method` is already written, but that write is inert on its
-   * own: `twoFactorStatus` reports it only once `enabled` is true, and the CONFLICT
-   * guard below only fires once it is. The caller recovers by retrying either
-   * `sendTwoFactorOtp` (resend) or this route again - both read the method that was
-   * already persisted, so neither loses the player's choice.
-   */
   async enableTwoFactor(
     input: Enable2faInput,
     reqHeaders: NodeHeaders,
@@ -1684,12 +1453,6 @@ export class IdentityService {
     }
     await this.assertMethodAvailable(userId, input.method);
 
-    // There is no switch-in-place: a player changes method by disabling and enrolling
-    // again. better-auth's enable leg deletes and recreates the `twoFactor` row with a
-    // fresh secret and fresh backup codes, and marks it verified straight away when one
-    // was already verified - so re-running it on a live account destroys the working
-    // authenticator the moment the call lands, and abandoning the step strands the
-    // player on a secret they never scanned with `two_factor_enabled` still true.
     if (await this.isTwoFactorEnabled(userId)) {
       throw new ORPCError('CONFLICT', {
         message: 'Two-factor authentication is already enabled. Disable it first to change method.',
@@ -1710,19 +1473,10 @@ export class IdentityService {
       return { totpUri: body.totpURI, backupCodes: body.backupCodes };
     }
 
-    // The first code has to reach the player before they can activate the method, so
-    // the send belongs to enrolment rather than a separate call the client must know
-    // to make. "Resend code" then replays it through sendTwoFactorOtp.
     const masked = await this.sendOtpForCurrentMethod(userId, headers, resHeaders);
     return { backupCodes: body.backupCodes, maskedDestination: masked };
   }
 
-  /**
-   * Re-sends the one-time code for an account on the `email` or `sms` method - the
-   * "Resend code" action during enrolment, and the send leg of a login challenge.
-   * Resolves its subject from a live session first and the pending-challenge cookie
-   * second, because at login there is no session yet.
-   */
   async sendTwoFactorOtp(reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const pendingCookie = await this.twoFactorPendingCookie(headers);
@@ -1733,13 +1487,10 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
     await assertRateLimit(this.limiter, `send2faOtp:${userId}`, SEND_2FA_OTP_RATE_LIMIT);
-    // An account inside a lockout window cannot spend a code, so minting one only
-    // hands out fresh guesses - and, on `sms`, bills the operator for them.
     await this.twoFactorLockout?.assertNotLocked(userId);
     return { maskedDestination: await this.sendOtpForCurrentMethod(userId, headers, resHeaders) };
   }
 
-  /** Whether a second factor is active, which method it uses, and where a code can go. */
   async twoFactorStatus(reqHeaders: NodeHeaders): Promise<TwoFactorStatus> {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
@@ -1763,8 +1514,6 @@ export class IdentityService {
     const enabled = row.twoFactorEnabled ?? false;
     return {
       enabled,
-      // The column outlives an abandoned enrolment, so an account that never cleared
-      // its first code must still read as having no active method.
       method: enabled ? (row.twoFactorMethod ?? null) : null,
       maskedEmail: maskEmail(row.email),
       maskedPhone: row.phoneVerified && row.phoneNumber ? maskPhone(row.phoneNumber) : null,
@@ -1772,11 +1521,6 @@ export class IdentityService {
     };
   }
 
-  /**
-   * Rejects a method the account cannot actually receive a code on. Enrolling into
-   * `sms` without a verified phone would mint a secret the player can never clear,
-   * locking them out of their own account at the next login.
-   */
   private async assertMethodAvailable(
     userId: User['id'],
     method: TwoFactorDeliveryMethod,
@@ -1793,10 +1537,6 @@ export class IdentityService {
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
-    // A code can only guard the account if the address it goes to is one the account
-    // has proven it holds. `registration.requireEmailVerification` is off by default,
-    // so an unverified or mistyped address would otherwise enrol and lock the player
-    // out at the next login - the same failure the phone check already prevents.
     if (method === 'email' && !row?.emailVerified) {
       throw new ORPCError('BAD_REQUEST', {
         message: 'Verify your email address before using email for two-factor authentication',
@@ -1809,10 +1549,6 @@ export class IdentityService {
     }
   }
 
-  /**
-   * The account's delivery method, defaulting to `app`: an enrolment that predates the
-   * column reads as null, and every one of those was an authenticator.
-   */
   private async resolveTwoFactorMethod(userId: User['id']): Promise<TwoFactorDeliveryMethod> {
     const [row] = await this.drizzle.db
       .select({ twoFactorMethod: user.twoFactorMethod })
@@ -1859,10 +1595,6 @@ export class IdentityService {
     }
     const res = await this.api.sendTwoFactorOTP({ body: {}, headers, asResponse: true });
     await ensureOk(res);
-    // A 200 here means the code was minted, not that it left the building: the send
-    // hook is wrapped in `.catch(logger.error)` upstream. Telling the player a code is
-    // on its way when the transport just failed strands them on a screen waiting for
-    // something that is never coming.
     const failure = this.twoFactorDelivery.takeFailure(userId);
     if (failure) {
       throw new ORPCError('SERVICE_UNAVAILABLE', {
@@ -1874,11 +1606,6 @@ export class IdentityService {
     return destination.masked;
   }
 
-  /**
-   * Whether the account insists on a second factor every login. Read off the row rather
-   * than passed in: mid-challenge there is no session yet, so the only handle on the
-   * account is the id the pending cookie resolved to.
-   */
   private async requiresTwoFactorEveryLogin(
     userId: User['id'] | null | undefined,
   ): Promise<boolean> {
@@ -1894,7 +1621,6 @@ export class IdentityService {
   }
 
   private async twoFactorPendingCookie(headers: Headers) {
-    // The two-factor plugin's own cookie key; it does not export the constant.
     const { name } = (await this.auth.$context).createAuthCookie('two_factor');
     return twoFactorPendingCookieValue(headers, name);
   }
@@ -1921,15 +1647,10 @@ export class IdentityService {
     if (challengedUserId) {
       await this.twoFactorLockout?.assertNotLocked(challengedUserId);
     }
-    // The password was proven from wherever the challenge was issued; the session is handed
-    // to wherever it is answered. Enrolment (a live session) signs no one in.
     if (challengedUserId && !sessionUserId) {
       await assertCountryAllowed(this.geoCheck, await this.accountRole(challengedUserId), ip);
     }
 
-    // A backup code is a single-use recovery credential, not a second factor to bind a
-    // browser to: it clears the challenge but never buys the trust window. A pushed
-    // `otp` is a real factor and does, the same as a live authenticator code.
     const trustDevice =
       input.trustDevice &&
       input.method !== 'backup_code' &&
@@ -1959,9 +1680,6 @@ export class IdentityService {
         throw new ORPCError('UNAUTHORIZED', { message: 'Invalid two-factor challenge' });
       }
     }
-    // The challenge proves the password as it stood when the pending login began. An account
-    // deactivated or blocked since then must not get a session by completing it, so the gate
-    // runs here, on the session better-auth just minted, before its cookie is forwarded.
     if (challengedUserId && !sessionUserId) {
       await this.assertChallengedAccountNotBlocked(challengedUserId, { ip, userAgent });
     }
@@ -1969,19 +1687,10 @@ export class IdentityService {
       await this.twoFactorLockout?.reset(challengedUserId);
     }
     this.forwardCookies(res, resHeaders);
-    // better-auth rotates the session on a successful challenge, so the request cookie is
-    // already dead here - the actor is the identity resolved before the call.
     const userId = challengedUserId ?? (await this.currentUserId(headers));
-    // Ground truth for the caller: `trustDevice` already reflects backup-code and
-    // require-2fa-every-login refusals, but only actually buys the cookie below, and
-    // only when `userId` resolved. The client asked to trust this device and deserves to
-    // know whether that request was honoured rather than silently dropped.
     let trustGranted = false;
     if (userId) {
       const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
-      // A challenge answered from a live session is the enrolment step: better-auth only
-      // flips twoFactorEnabled once the first code clears. Every later verification is a
-      // sign-in, which carries the pending cookie instead and must not re-announce setup.
       if (sessionUserId) {
         this.events.emit('identity.2fa.enabled', {
           userId,
@@ -2017,12 +1726,6 @@ export class IdentityService {
     return { ...SUCCESS, trustGranted };
   }
 
-  /**
-   * Grants this browser its trust window without a sign-out. better-auth issues the
-   * trust cookie only on the sign-in leg of a challenge, so the grant has to replay
-   * that leg: the account proves its password and a fresh second factor, and the
-   * cookies better-auth returns are the ones the browser keeps.
-   */
   async trustCurrentDevice(
     input: TrustCurrentDeviceInput,
     reqHeaders: NodeHeaders,
@@ -2035,8 +1738,6 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in' });
     }
     await assertRateLimit(this.limiter, `trustDevice:${userId}`, TWO_FACTOR_PASSWORD_RATE_LIMIT);
-    // Granting trust the login path is contractually going to ignore would leave the
-    // player with a device listed as trusted that still gets challenged every time.
     if (await this.requiresTwoFactorEveryLogin(userId)) {
       throw new ORPCError('UNPROCESSABLE_CONTENT', {
         message: 'Turn off two-factor on every login before trusting this device.',
@@ -2065,18 +1766,11 @@ export class IdentityService {
       });
     }
 
-    // Only the cookies the challenge just issued: leaving the live session cookie in
-    // place makes better-auth treat the call as a settings change and skip the trust.
     const challengeHeaders = new Headers(headers);
     challengeHeaders.set('cookie', requestCookieHeader(signIn));
 
     await this.twoFactorLockout?.assertNotLocked(userId);
 
-    // Authenticator accounts only. This route replays a fresh sign-in leg, and
-    // better-auth keys a pushed code by the pending-challenge cookie that leg mints -
-    // so an `email`/`sms` account has no code that can answer this challenge, and
-    // letting the call through would only spend its lockout budget on a credential it
-    // is impossible to present. Refusing says so instead of failing as a wrong code.
     const challengeMethod = await resolveChallengeMethod(this.drizzle, userId);
     if (challengeMethod !== 'totp') {
       throw new ORPCError('CONFLICT', {
@@ -2105,9 +1799,6 @@ export class IdentityService {
       ip,
       userAgent,
     });
-    // The challenge leg above ran without a session cookie, so better-auth minted a new
-    // session and this response carries it. That is a new authenticated session like any
-    // other, and the security alert has to see it.
     this.events.emit('identity.authentication.succeeded', {
       userId,
       playerId,
@@ -2118,21 +1809,6 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  /**
-   * A step-up gate for the self-service routes that change standing 2FA state: the
-   * caller has to clear a second factor, not just the account password. Routed through
-   * TwoFactorLockoutService so a hijacked session plus a reused password cannot grind
-   * the second factor here the way the password-only paths let it.
-   *
-   * A backup code is accepted only where the caller asks for it, and spends itself doing
-   * so - see `disableTwoFactor`. It is spent by being checked, so the password is verified
-   * first: a typo there must not cost the player a code they may have no replacement for.
-   * A wrong password on that path still banks a lockout strike, so the password check
-   * cannot be ground through it any faster than through the code itself.
-   *
-   * Returns the credential that cleared it, so the action's own audit event can say
-   * whether it was authorised by the enrolled method or by a recovery code.
-   */
   private async assertFreshSecondFactor({
     userId,
     headers,
@@ -2217,8 +1893,6 @@ export class IdentityService {
     this.forwardCookies(res, resHeaders);
     const body = (await res.json()) as { backupCodes: string[] };
 
-    // The old set is void the moment a new one is minted, so any device still trusted
-    // off the old recovery flow re-verifies on its next login.
     await this.trustedDevices?.revokeAllForUser(userId, userId);
 
     this.events.emit('identity.2fa.backup_codes_regenerated', {
@@ -2252,8 +1926,6 @@ export class IdentityService {
       method: input.method,
     });
 
-    // Read before the teardown clears it, so the audit trail records which method the
-    // account was actually protected by rather than a blank.
     const disabledMethod = await resolveChallengeMethod(this.drizzle, userId);
 
     const res = await this.api.disableTwoFactor({
@@ -2265,14 +1937,8 @@ export class IdentityService {
     this.forwardCookies(res, resHeaders);
     await this.setTwoFactorMethod(userId, null);
 
-    // Dropping the second factor takes every standing bypass with it, the same teardown
-    // a Super Admin reset performs - a browser must not keep the access 2FA was guarding.
     await this.trustedDevices?.revokeAllForUser(userId, userId);
     await this.sessions?.revokeAllSessions(userId, userId, { ip, userAgent });
-    // Must clear alongside the method: leaving it set strands the account with
-    // `twoFactorEnabled: false, requireTwoFactorOnLogin: true` - a state `trustCurrentDevice`
-    // reads as "still enforced" while `setRequireTwoFactorOnLogin` itself refuses to turn it
-    // off without `twoFactorEnabled`, so nothing in the product could ever escape it again.
     await this.drizzle.db
       .update(user)
       .set({ requireTwoFactorOnLogin: false })
@@ -2296,18 +1962,13 @@ export class IdentityService {
       makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_REQUEST, email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
-    // Always returns success - never reveal whether the email exists. The reset OTP
-    // (if any) is enqueued through better-auth's emailOTP hook -> MAIL_DISPATCH. Any
-    // underlying error is swallowed for the same anti-enumeration reason.
-    try {
-      await this.api.requestPasswordResetEmailOTP({
+    await this.api
+      .requestPasswordResetEmailOTP({
         body: { email },
         headers: new Headers(),
         asResponse: true,
-      });
-    } catch {
-      // intentionally ignored
-    }
+      })
+      .catch(() => undefined);
     return SUCCESS;
   }
 
@@ -2341,10 +2002,6 @@ export class IdentityService {
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
 
-    // better-auth's resetPasswordEmailOTP internally invokes the onPasswordReset hook
-    // (wired in the constructor above), which emits `identity.password.reset` and
-    // clears the lockout - do not duplicate that here (was double-emitting/double-
-    // clearing on every real reset).
     return SUCCESS;
   }
 
@@ -2358,8 +2015,6 @@ export class IdentityService {
     const { userId, sessionId } = caller;
     await assertRateLimit(this.limiter, `change-password:${userId}`, CHANGE_PASSWORD_RATE_LIMIT);
     const res = await this.api.changePassword({
-      // revokeOtherSessions: better-auth deletes every session for this user and
-      // mints a fresh one for the caller; forwardCookies below ships that cookie.
       body: {
         currentPassword: input.currentPassword,
         newPassword: input.newPassword,
@@ -2370,19 +2025,9 @@ export class IdentityService {
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    // Captured once the rotation is known committed - the deferred sweep below deletes
-    // any session row created at or before this instant (i.e. one a concurrent
-    // old-password sign-in raced in), sparing anything created afterwards.
     const sweepDeadline = new Date();
-    // The token of the session better-auth just minted for the caller. `ensureOk` only
-    // reads the body on failure, so this read is safe here.
-    // Library boundary: `Response.json()` resolves to `any`, and better-auth publishes no
-    // response type for this route, so its shape is asserted once here.
     const rotatedToken =
       ((await res.json().catch(() => ({}))) as { token?: string | null }).token ?? null;
-    // better-auth's response only carries the token, not the row id - look the row up
-    // once here and reuse its id both to clamp the dontRememberMe TTL below and to
-    // spare this (legitimate) session from the sweep's own revoke push further down.
     const rotated = rotatedToken
       ? (
           await this.drizzle.db
@@ -2392,11 +2037,6 @@ export class IdentityService {
             .limit(1)
         )[0]
       : undefined;
-    // `revokeOtherSessions` makes better-auth mint the replacement session via
-    // `createSession(userId)` with no `dontRememberMe` argument, so a caller who signed
-    // in with `rememberMe: false` silently gets a full-TTL row. better-auth's own
-    // `setSessionCookie` still honours the `dont_remember` cookie for the cookie maxAge,
-    // but not the DB row - clamp it back to the non-remembered TTL to match.
     if (rotated && hasDontRememberCookie(headers)) {
       await this.drizzle.db
         .update(session)
@@ -2404,30 +2044,16 @@ export class IdentityService {
         .where(eq(session.id, rotated.id));
     }
     const { ip, userAgent } = extractClientMeta(reqHeaders);
-    // Independent of each other and of `rotated` - one round trip instead of two on a
-    // user-facing endpoint. (The TTL clamp above does depend on `rotated`, so it stays
-    // sequential.)
     const [, playerId] = await Promise.all([
       this.drizzle.db.update(user).set({ passwordMeetsPolicy: true }).where(eq(user.id, userId)),
       this.identityReader.getPlayerIdByUserIdSafe(userId),
     ]);
-    // Dedicated, non-sensitive record that the login credential itself changed -
-    // the audit mapper keys the action off the topic, so a plain
-    // `identity.sessions.revoked_all` alone would read as "revoked all sessions",
-    // not "changed password". Every state-changing credential action needs its own
-    // accurately named audit record.
     this.events.emit('identity.password.changed', {
       userId,
       playerId,
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
-    // Same event the admin "revoke all sessions" path emits, so the streamSession
-    // SSE handler pushes { type: 'revoked' } to this user's OTHER tabs.
-    // exceptSessionId is the caller's PRE-rotation session id - it's the id the
-    // caller's already-open streamSession connection captured at stream-open, and the
-    // only value its SSE compare can ever match, so this is what spares the
-    // initiating tab.
     this.events.emit('identity.sessions.revoked_all', {
       userId,
       playerId,
@@ -2436,12 +2062,6 @@ export class IdentityService {
       userAgent: userAgent ?? null,
       exceptSessionId: sessionId,
     });
-    // better-auth rotates the password hash and deletes sessions in separate,
-    // untransacted statements; a sign-in that verified the OLD password just before
-    // the rotation can still insert its session row right after. Re-sweep shortly
-    // after to delete it, sparing the caller's fresh session by token. Skipped when
-    // the rotated token is unknown - without it the sweep cannot tell the caller's
-    // own new session apart. Residual exposure: RACED_SESSION_SWEEP_DELAY_MS.
     if (rotatedToken) {
       const timer = setTimeout(() => {
         void sweepRacedSessionsAfterPasswordChange(this.drizzle.db, {
@@ -2450,9 +2070,6 @@ export class IdentityService {
           deadline: sweepDeadline,
         })
           .then((deletedIds) => {
-            // A session the sweep just force-deleted got no push and no audit record
-            // otherwise: it raced in after the primary revoked_all above already
-            // fired, so this is the only notice it gets of either.
             if (deletedIds.length === 0) {
               return;
             }
@@ -2462,12 +2079,6 @@ export class IdentityService {
               actorId: userId,
               ip: ip ?? null,
               userAgent: userAgent ?? null,
-              // The caller's PRE-rotation session id, same as the primary emit above -
-              // it's what the initiating tab's already-open streamSession connection
-              // captured at stream-open, and the only value its SSE compare can match.
-              // `rotated.id` (the NEW row) can never match that, so using it here would
-              // force-revoke the legitimate acting tab the moment the sweep actually
-              // deletes a raced session.
               exceptSessionId: sessionId,
             });
           })
@@ -2489,12 +2100,6 @@ export class IdentityService {
     return this.securityControlsFor(userId);
   }
 
-  /**
-   * Resolves the caller of a security-preference setter and refuses anyone who is not a
-   * player. These setters reject before any shared guard runs, so a denial still owes the
-   * audit log the same signal AdminGuard emits (docs/standards/audit.md) - `resource`
-   * names which preference was attempted.
-   */
   private async assertPlayerPreferenceCaller(
     reqHeaders: NodeHeaders,
     resource: string,
@@ -2585,12 +2190,6 @@ export class IdentityService {
     return { ...before, autoLogoutDuration: input.duration };
   }
 
-  /**
-   * Turning this on also tears down the devices already trusted: stripping the trust
-   * cookie at login is enough to force the challenge, but leaving live rows behind would
-   * show a player devices that no longer buy anything, and hand them straight back the
-   * moment the toggle goes off again.
-   */
   async setRequireTwoFactorOnLogin(
     input: SetRequireTwoFactorOnLoginInput,
     reqHeaders: NodeHeaders,
@@ -2626,13 +2225,6 @@ export class IdentityService {
     return { ...before, requireTwoFactorOnLogin: input.enabled };
   }
 
-  /**
-   * Sets (or overwrites) the player's anti-phishing code: a free-text, case-sensitive
-   * recognition phrase stamped into every outgoing platform email so the player can tell a
-   * genuine email from a phishing attempt. Unlike the withdrawal PIN this authorizes nothing,
-   * so - like `setLoginWithdrawalAlerts` - it takes no reauth and there is no remove route;
-   * calling it again with a new value just changes the code.
-   */
   async setAntiPhishingCode(
     input: SetAntiPhishingCodeInput,
     reqHeaders: NodeHeaders,
@@ -2648,8 +2240,6 @@ export class IdentityService {
       .where(eq(user.id, userId))
       .limit(1);
     if (caller?.role !== 'player') {
-      // A service-level denial still owes the audit log the same signal AdminGuard emits,
-      // since this check rejects before any shared guard runs (docs/standards/audit.md).
       this.events.emit('identity.user.unauthorized_access', {
         userId,
         playerId: null,
@@ -2683,12 +2273,6 @@ export class IdentityService {
       ip,
       userAgent,
     });
-    // Deliberately address-only: resolving a user recipient later would stamp the email with
-    // the replacement code. This notice instead carries the prior code, which lets the owner
-    // recognise it even if a stolen session changed the current value.
-    // The row is already committed, so a failed enqueue must not fail the mutation: the
-    // caller would see an error for a change that landed, and retrying the same value exits
-    // at the no-op branch above without ever re-sending the notice.
     try {
       await this.mailDispatch?.toAddress({
         email: caller.email,
@@ -2705,13 +2289,6 @@ export class IdentityService {
     return { ...before, antiPhishingCode: input.code };
   }
 
-  /**
-   * Resends the registration code. Unauthenticated by design - the player has no session
-   * until the code is verified - so it answers SUCCESS for every address and only mails a
-   * code to an account that exists and is still unverified. Verified accounts are skipped
-   * deliberately: `verifyEmail` signs the code's bearer in, so resending to a verified
-   * address would turn this into passwordless sign-in for anyone who can read that inbox.
-   */
   async sendEmailVerification(input: ResendEmailVerificationInput, reqHeaders: NodeHeaders) {
     const { ip } = extractClientMeta(reqHeaders);
     const email = input.email.toLowerCase();
@@ -2734,22 +2311,11 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  /**
-   * Consumes the 6-digit code mailed by `register()` and signs the player in -
-   * better-auth's `autoSignInAfterVerification` mints the session here rather than at
-   * sign-up, which is what lets sign-up stay sessionless and therefore keep its
-   * duplicate-email response indistinguishable. Same post-credential gates as `login`:
-   * a code is proof of address ownership, not a bypass for an RG or backoffice block.
-   */
   async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const email = input.email.toLowerCase();
-    // Keyed on the address under attack (six digits are guessable) and on the caller, so
-    // one client can neither grind a single account nor sweep many.
     await assertRateLimit(this.limiter, `verify-email:${email}`, VERIFY_EMAIL_RATE_LIMIT);
-    // Only when the caller's IP is actually known: an `unknown` bucket would be shared by
-    // every anonymous caller, letting one client stall everyone else's sign-up.
     if (ip) {
       await assertRateLimit(this.limiter, `verify-email-ip:${ip}`, VERIFY_EMAIL_RATE_LIMIT);
     }
@@ -2761,9 +2327,6 @@ export class IdentityService {
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
     const body = (await res.json()) as { token?: string | null; user: BetterAuthUser };
 
-    // better-auth has already committed `emailVerified` by now, so the audit record is
-    // emitted before any gate below can throw - a state change that leaves no trail is a
-    // compliance gap, see docs/standards/audit.md.
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(body.user.id);
     this.events.emit('identity.email.verified', { userId: body.user.id, playerId, ip, userAgent });
 
@@ -2782,20 +2345,12 @@ export class IdentityService {
     if (account) {
       await this.assertAccountNotBlocked(account, { ip, userAgent });
     }
-    // The code mints a session, so it is a sign-in path like any other.
     await assertCountryAllowed(this.geoCheck, account ?? NO_ROLE, ip, () =>
       this.expireSessionToken(body.token),
     );
-    // Before the 2FA branch below: that path ends the session it just minted, but the zone
-    // the browser reported is good either way.
     await captureTimezone(this.playerProvisioning, body.user.id, input.timezone);
 
-    // better-auth mints this session with `createSession`, which its twoFactor plugin only
-    // hooks on the sign-in routes - so an enrolled account would get a full session from
-    // the emailed code alone, bypassing its second factor. Verification still stands; the
-    // session does not, and the player signs in through `login` to face the challenge.
     if (account?.twoFactorEnabled) {
-      // The RG/backoffice branch above is the one that revokes everything.
       await this.expireSessionToken(body.token);
       return { twoFactorRedirect: true as const };
     }
@@ -2828,13 +2383,6 @@ export class IdentityService {
     };
   }
 
-  /**
-   * Step 1 of the email change: better-auth mails a code to `newEmail` (type
-   * `change-email`), answering success even when the address is already taken so this
-   * never reveals whether an account exists. A live session is not proof enough on its
-   * own for a change this sensitive, so it demands the same fresh password/2FA proof as
-   * a withdrawal PIN or phone rebind (`assertFreshReauthentication`).
-   */
   async requestEmailChange(
     input: RequestEmailChangeInput,
     reqHeaders: NodeHeaders,
@@ -2853,10 +2401,6 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
     const newEmail = input.newEmail.toLowerCase();
-    // Keyed on the caller too, not just the target inbox: a target-only bucket lets any
-    // signed-in account (no correct password needed - this runs before reauth) exhaust
-    // a known address's budget and deny the real owner their own change for 15 minutes.
-    // Per-(caller, target) still bounds how many codes one inbox gets from one caller.
     await assertRateLimit(
       this.limiter,
       `change-email-target:${userId}:${newEmail}`,
@@ -2894,14 +2438,6 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  /**
-   * Step 2: the code proves ownership of `newEmail`, so better-auth swaps the login email.
-   * The swap, its audit row and its outbox event commit in one transaction, so no change is
-   * saved without its history. The old address is read first, since no row carries it
-   * afterwards, for the "changed" notice and to reset the verified-email alert opt-in (made on
-   * the old inbox). Every other session and trusted device is torn down too, the same as
-   * `disableTwoFactor`.
-   */
   async confirmEmailChange(
     input: ConfirmEmailChangeInput,
     reqHeaders: NodeHeaders,
@@ -2920,9 +2456,6 @@ export class IdentityService {
       throw new ORPCError('UNAUTHORIZED', { message: 'Not signed in.' });
     }
     const newEmail = input.newEmail.toLowerCase();
-    // Same actor-binding as requestEmailChange's target bucket: a bare-target key lets
-    // any signed-in caller burn a known address's guess budget and lock the real
-    // requester out of confirming their own pending change for 15 minutes.
     await assertRateLimit(
       this.limiter,
       `confirm-email-change-target:${userId}:${newEmail}`,
@@ -2933,8 +2466,6 @@ export class IdentityService {
     }
     const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     const { res, before, changedAt } = await this.drizzle.db.transaction(async (tx) => {
-      // FOR NO KEY UPDATE conflicts with itself, so a concurrent confirm for this account reads
-      // the committed swap.
       const before = findOneOrThrow(
         await tx
           .select({
@@ -2957,23 +2488,16 @@ export class IdentityService {
           asResponse: true,
         }),
       );
-      // A refused code commits too: better-auth's attempt count and expired-code delete
-      // must persist, or every retry would start a fresh guess budget.
       if (!res.ok) {
         const [after] = await tx
           .select({ email: user.email })
           .from(user)
           .where(eq(user.id, userId));
-        // better-auth can answer an error after it swapped the row (a later hook or step); the
-        // swap must then roll back rather than commit without its audit row.
         if (after?.email !== before.email) {
           throw new EmailChangeWithoutHistoryError();
         }
         return { res, before, changedAt };
       }
-      // better-auth keys a pending change by user and new address only, so another one
-      // requested before this swap would still confirm. Drop them under the row lock: a
-      // concurrent confirm waiting on it then finds no code.
       await tx
         .delete(verification)
         .where(like(verification.identifier, pendingEmailChangeIdentifierPattern(userId)));
@@ -3004,15 +2528,6 @@ export class IdentityService {
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
     this.forwardCookies(res, resHeaders);
 
-    // Both inboxes get told - fire-and-forget like `dispatchMail` in
-    // notifications/plugin.ts, right after the commit and before the revocation calls
-    // below: if either of those throws, the swap has already committed and both
-    // owners still need their notice. `randomUUID()` keeps each key unique so the
-    // queue's dedupe window can't swallow a repeat notice.
-    //
-    // To the OLD address - the row no longer holds it, so every field is read from
-    // `before`. Carries the "was this you?" warning and a support CTA: this inbox
-    // could belong to someone who never asked for the change.
     this.mailDispatch
       ?.toAddress({
         email: before.email,
@@ -3028,12 +2543,6 @@ export class IdentityService {
       .catch((err: unknown) =>
         identityLogger.error({ err, userId }, 'email-change notice (old address) enqueue failed'),
       );
-    // To the NEW address - `toAddress` with the fields already in hand from `before`
-    // (name/locale/antiPhishingCode are account-level, unaffected by the swap), not
-    // `toUser`: that reads the row live at delivery time, so a second change started
-    // right after this one would relabel this "new" notice onto whatever address the
-    // account holds by then. Plain confirmation, no warning: this inbox just proved
-    // ownership with a live OTP, it didn't fall victim to one.
     this.mailDispatch
       ?.toAddress({
         email: newEmail,
@@ -3080,8 +2589,6 @@ export class IdentityService {
     }
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    // better-auth's field parser and drizzle's mapUpdateSet both drop `undefined`
-    // values before the SQL SET clause, so omitted fields are safely no-ops here.
     const { name, image, theme, language } = input;
     const res = await this.api.updateUser({
       body: { name, image, theme, language },
@@ -3090,7 +2597,6 @@ export class IdentityService {
     });
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
-    // updateUser returns { status } only - re-read from session to get the full user.
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
     if (current) {

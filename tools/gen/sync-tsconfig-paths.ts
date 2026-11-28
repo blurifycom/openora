@@ -1,7 +1,3 @@
-// Derives packages/core/tsconfig.json `compilerOptions.paths` from that package's
-// `exports` map - the single source of truth for the public subpath surface. Keeps
-// the compiler's source resolution in lockstep with the runtime resolver so the two
-// can never drift. Run via `pnpm regen`; `--check` fails on drift (CI drift gate).
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -39,8 +35,6 @@ function renderPaths(paths: Record<string, [string]>): string {
     .join(',\n');
 }
 
-// Canonical (sorted, key-value) form so formatting-only diffs - eg oxfmt wrapping a
-// long path array across lines - never count as drift; only actual content changes do.
 function canonicalize(paths: Record<string, [string]>): string {
   return JSON.stringify(Object.entries(paths).sort(([a], [b]) => a.localeCompare(b)));
 }
@@ -49,8 +43,6 @@ const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { exports: Record<strin
 const current = readFileSync(tsconfigPath, 'utf8');
 const wantedPaths = derivePaths(pkg.exports);
 
-// Replace the whole `"paths": { ... }` block (closed at 4-space indent) in place so
-// every other field keeps its exact formatting.
 const next = current.replace(
   /"paths": \{[\s\S]*?\n {4}\}/,
   `"paths": {\n${renderPaths(wantedPaths)}\n    }`,

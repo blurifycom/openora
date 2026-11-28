@@ -49,26 +49,14 @@ export const SystemChatMessageSchema = z.object({
 });
 export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
 
-/** @alias A system-authored chat message carrying structured command metadata. */
 export const CommandChatMessageSchema = SystemChatMessageSchema;
 export type CommandChatMessage = SystemChatMessage;
 
-/**
- * Client-facing sentinel for global chat wherever a chat command's `roomId`
- * field is otherwise a real room UUID (`/gift`, `/rain`, `/donate`) - the
- * single canonical way to address global chat on the wire, so callers never
- * send a raw `null`.
- */
 export const GLOBAL_CHAT_ROOM_ID = '__global';
 
-// Author of a system message no player wrote; the nil UUID matches no account.
 export const CHAT_SYSTEM_AUTHOR_ID = '00000000-0000-0000-0000-000000000000';
 export const CHAT_SYSTEM_AUTHOR_USERNAME = 'system';
 
-// The generation of a system card. A replica applies an upsert only when its version is
-// higher than the stored one, so a late or redelivered post never reverts a settled card.
-// A card has one transition, post then one update (claimed, expired or refunded): a second,
-// different update carries the same version and is dropped as stale.
 export const CHAT_SYSTEM_MESSAGE_VERSION = { posted: 1, updated: 2 } as const;
 
 export const CHAT_MODERATION_SCOPES = [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'] as const;
@@ -77,7 +65,6 @@ export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] 
 export const CHAT_ROOM_REACHES = ['global', 'public', 'private'] as const;
 export type ChatRoomReach = (typeof CHAT_ROOM_REACHES)[number];
 
-/** Moderation scopes that reach a room of each kind; a `room` scope reaches only its own room. */
 export const CHAT_SCOPES_COVERING_REACH = {
   global: [GLOBAL_CHAT_ROOM_ID, '__all_public', '__all'],
   public: ['__all_public', '__all'],
@@ -106,11 +93,6 @@ export const ChatRoomIdSchema = z
   .transform((value) => (value === GLOBAL_CHAT_ROOM_ID ? null : value));
 export type ChatRoomIdInput = z.input<typeof ChatRoomIdSchema>;
 
-/**
- * Shared wire input for every money-moving chat command (`/gift`, `/rain`, `/donate`).
- * Omit `currency` and the debit falls on the sender's active currency; when supplied,
- * the recipient is credited in this SAME currency - no conversion ever happens.
- */
 export const ChatMoneyCommandInputSchema = z.object({
   amount: MoneyAmountSchema,
   currency: CurrencyTickerInputSchema.optional(),
@@ -123,7 +105,6 @@ const CurrencyAmountSchema = z.object({
   amount: MoneyAmountSchema,
 });
 
-/** Operator limits on one chat command, stored in its `chat_command_config` row. */
 export const CommandConfigSchema = z.object({
   maxAmount: CurrencyAmountSchema.optional(),
   minAmount: CurrencyAmountSchema.optional(),
@@ -131,7 +112,6 @@ export const CommandConfigSchema = z.object({
 });
 export type CommandConfig = z.infer<typeof CommandConfigSchema>;
 
-/** Canonical chat channel name used by both the chat and chat-commands modules. */
 export function chatChannel(roomId: string | null): string {
   return roomId ? `chat:room:${roomId}` : 'chat:global';
 }

@@ -106,16 +106,6 @@ import {
   readSignatureHeaders,
 } from './internal-api.js';
 
-// Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
-// only (public CMS content and the game catalogue). NOTHING
-// authenticated or per-player (wallet, profile, notifications, admin, chat) - a
-// consumer replaces this wholesale via `httpCache.paths`, extends it via
-// `httpCache.additionalPaths`, or disables caching entirely with `httpCache: false`.
-// This list living in the domain-agnostic engine (rather than each module
-// declaring its own cacheable routes) is accepted debt. Exported so a consumer
-// using `paths` to add one prefix can spread this in instead of hand-copying it.
-// '/cms/banners' is excluded on purpose: its `listBanners` route is unguarded and returns
-// inactive banners, so HTTP-caching it would leak draft banners to a shared cache.
 export const PUBLIC_HTTP_CACHE_PATHS = ['/cms/pages', '/gaming/games'] as const;
 
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
@@ -139,8 +129,6 @@ function resolveCorsOrigins(cors: CreateAppConfig['cors']): string[] | undefined
         'pass `cors: { origins }`, or pass `cors: false` to send no CORS headers at all.',
     );
   }
-  // Hono matches an origin list literally, so a leftover '*' from the old reflect-any
-  // config would match nothing and CORS-block every browser call with no boot error.
   if (origins.includes('*')) {
     throw new Error(
       "[create-app] '*' is not a CORS origin any more. List the exact origins that call this " +
@@ -150,14 +138,6 @@ function resolveCorsOrigins(cors: CreateAppConfig['cors']): string[] | undefined
   return origins;
 }
 
-// Redis Streams consumer group name for MESSAGE_BROKER (the realtime key prefix is separate,
-// see resolveRealtimeNamespace). Distinct deployments/services
-// sharing one Redis MUST use distinct names so their subscribers don't compete for
-// each other's events. The name is a durable identity: renaming it strands the old
-// group's pending (delivered-but-unacked) entries and starts the new one at `$`, so
-// it can never be derived from SERVICE_MANIFEST - that is a LIST of module ids
-// (see service-manifest.ts) whose value reorders and grows as modules move.
-// A split deployment must therefore name itself explicitly.
 function resolveServiceName(): string {
   const serviceName = process.env['SERVICE_NAME'];
   if (serviceName) {
@@ -174,10 +154,6 @@ function resolveServiceName(): string {
   return 'monolith';
 }
 
-// Prefix of every realtime key (channels, signals, presence, revocation). The opposite
-// requirement to the consumer group: services that push to the same clients must share
-// it, or one never sees the other's publishes and presence. Defaults to the service
-// name, so a deployment that sets neither variable keeps its keys unchanged.
 function resolveRealtimeNamespace(serviceName: string): string {
   const namespace = process.env['REALTIME_NAMESPACE'];
   if (namespace) {
@@ -197,11 +173,6 @@ function resolveRealtimeNamespace(serviceName: string): string {
 export type CreateAppConfig = {
   plugins: PluginEntry[];
 
-  // The better-auth identity tables (user/session/account/verification/twoFactor),
-  // owned by the consumer's PAM/identity module. The engine is domain-agnostic and
-  // never imports a domain schema - the composition root injects these so the
-  // SessionResolver can verify the session cookie. Omit for a no-auth edition
-  // (session verification is then disabled). See ADR-0019/0025.
   authSchema?: Record<string, unknown>;
 
   port?: number;
@@ -214,23 +185,12 @@ export type CreateAppConfig = {
 
   igaming?: IgamingConfig;
 
-  // GET-only, path-prefix-matched Cache-Control on PUBLIC_HTTP_CACHE_PATHS. `paths`
-  // replaces that default list wholesale; `additionalPaths` extends it instead (ignored
-  // if `paths` is also given). `false` disables HTTP response caching entirely.
   httpCache?: { paths?: string[]; additionalPaths?: string[]; maxAgeSeconds?: number } | false;
 
   disableHealthModule?: boolean;
 
-  // `false` turns off the anonymous usage telemetry, as OPENORA_TELEMETRY_DISABLED=1 or
-  // DO_NOT_TRACK=1 do. See docs/platform/telemetry.md for what it sends.
   telemetry?: false;
 
-  // Peers (IP or CIDR) allowed to set `X-Real-IP` / `X-Forwarded-For` - the reverse proxy in
-  // front of the API. Any other peer's forwarding headers are replaced with its socket
-  // address, so a direct caller cannot pick the IP that per-IP throttles key on. Falls back
-  // to TRUSTED_PROXIES (comma-separated), then loopback only. Configure every remote proxy
-  // CIDR explicitly. `[]` trusts no proxy. A trusted proxy must append the client address to
-  // X-Forwarded-For, rather than passing a client-supplied value through unchanged.
   trustedProxies?: readonly string[];
 };
 
@@ -262,9 +222,6 @@ function requestMeta(c: Context, trustedProxies: TrustedProxies) {
   };
 }
 
-// The ports AdminGuard reads with has(). An install without iam or identity runs without them
-// everywhere; a split service whose install has them must not, or an admin whose role was
-// revoked in the database, or who never enrolled 2FA, still acts through it.
 const ADMIN_GUARD_CONTROLS = [
   {
     owner: 'AdminGuard',
@@ -381,15 +338,8 @@ function mountMcpTransport(
   });
 }
 
-// Webhook signature schemes (eg aggregator callbacks) and the internal API must hash the
-// verbatim body, so the runtime captures it before oRPC parses the request. Bounded to keep an
-// oversized payload from buffering into memory - past the cap rawBody stays unset and a webhook
-// signature check fails closed (401); an internal call is refused with 413.
 const MAX_CAPTURED_BODY_BYTES = 1_048_576;
 
-// content-length can be absent (chunked) or lie, so the actual stream is bounded rather than
-// the header trusted: past the cap it stops and resolves undefined, so memory stays bounded and
-// a signature check over the body fails closed. No body at all is an empty buffer.
 async function readBoundedBody(req: Request): Promise<Buffer | undefined> {
   if (!req.body) {
     return Buffer.alloc(0);
@@ -413,8 +363,6 @@ async function readBoundedBody(req: Request): Promise<Buffer | undefined> {
       }
       total += value.byteLength;
       if (total > MAX_CAPTURED_BODY_BYTES) {
-        // Not awaited: a clone's cancel settles only once the original body is cancelled or
-        // read to the end, and the handler reads it only after this returns.
         reader.cancel().catch(() => undefined);
         return undefined;
       }
@@ -436,15 +384,10 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
 type InternalApiMount = {
   handler: OpenAPIHandler<OssContext>;
   secrets: readonly string[];
-  // This process's SERVICE_NAME: a request signed for another service is refused here.
   audience: string;
   trustedProxies: TrustedProxies;
 };
 
-// `/internal/v1/*` answers here and never falls through, so no player or admin route can be
-// reached under it, and the session headers are stripped before a handler runs. An unsigned
-// request gets an empty 401 whether or not a route matches, so the surface cannot be enumerated
-// without the secret.
 function mountInternalApi(
   app: Hono,
   { handler, secrets, audience, trustedProxies }: InternalApiMount,
@@ -500,13 +443,6 @@ function mountInternalApi(
   });
 }
 
-// oRPC wraps a thrown native error (a DB failure, a bug) into an
-// ORPCError('INTERNAL_SERVER_ERROR', { cause }). Report anything that is a
-// server fault - a non-ORPCError, or an ORPCError with a 5xx status - and skip
-// expected client errors (4xx: not-found, conflict, validation, rate-limit).
-// Report the underlying `cause` so the tracker gets the real error + stack,
-// not the generic wrapper. A wire error reply the route chose is reported only
-// when it carries the fault as its cause.
 function reportServerFault(error: unknown) {
   if (
     error instanceof ORPCError &&
@@ -518,32 +454,6 @@ function reportServerFault(error: unknown) {
   createLogger('orpc').error({ err }, 'unhandled error');
 }
 
-/**
- * The single composition root: wires the DI container, boots the plugins in
- * `config.plugins` that `SERVICE_MANIFEST` selects (every one when it is unset), and
- * mounts the resulting oRPC router on a Hono app. A manifest that leaves out a module its
- * modules depend on, the module that binds a port they require, or the module behind a
- * control - a selected module's `controlPorts`, or AdminGuard's - that the plugin list has,
- * fails the boot with one error naming all of them; a manifest boot resolves AdminGuard
- * before it serves.
- * `JOB_WORKERS` picks the job queues this process consumes (every one when it is unset).
- * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
- * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER`/
- * `REALTIME_TRANSPORT` to their Redis-backed drivers - the broker being the
- * `RedisStreamsBroker` reference driver and realtime the `RedisPubSubRealtimeTransport`
- * reference driver (ADR-0031), either replaceable by an overlay (RabbitMQ/Kafka, Ably)
- * or a test's `configure` callback. `assertDurableSeamsBound` runs right after plugins
- * + `configure` and throws a clear, actionable error listing every always-needed seam
- * that still has no binding - none of the five has an in-process fallback.
- * The transactional outbox is always on: `OUTBOX` is bound and the `OutboxRelay`
- * runs in every process (ADR-0045).
- * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
- * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
- * before the DB closes. A router namespace registered by more than one plugin
- * throws at boot, not at request time. A boot that fails disposes the container before it
- * rethrows: the caller gets no app to close, so what the boot opened - the Redis client, a
- * connection `configure` bound - is closed here.
- */
 export async function createApp(
   config: CreateAppConfig,
   configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>,
@@ -566,7 +476,6 @@ async function bootApp(
   config: CreateAppConfig,
   configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>,
 ) {
-  // Parsed first so a malformed entry fails the boot before anything is bound.
   const trustedProxies = resolveTrustedProxies(
     config.trustedProxies,
     process.env['TRUSTED_PROXIES'],
@@ -584,8 +493,6 @@ async function bootApp(
     container.onDispose(() => svc.dispose());
     return svc;
   });
-  // Postgres is always present, so the outbox is too: emitInTransaction() commits the
-  // event with its state change and the relay below publishes it (ADR-0045).
   container.register(OUTBOX, () => new DrizzleOutboxWriter());
   container.register(EVENT_BUS, (c) =>
     createEventBus({
@@ -595,8 +502,6 @@ async function bootApp(
       logger: createLogger('event-bus'),
     }),
   );
-  // Resolved eagerly: a misconfigured service name is a boot error, not a surprise on
-  // whichever code path resolves the broker first. It also namespaces handler dedup.
   const serviceName = resolveServiceName();
   const realtimeNamespace = resolveRealtimeNamespace(serviceName);
   const redisUrl = process.env['REDIS_URL'];
@@ -626,14 +531,9 @@ async function bootApp(
       container.onDispose(() => transport.close());
       return transport;
     });
-    // The transport's sidekick: chat resolves it at boot, so an app without it never starts.
     container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
   }
-  // One shared better-auth instance for both the per-request middleware and AdminGuard -
-  // no second createAuth() over the same DB. authSchema is injected (not imported) because
-  // the engine is domain-agnostic (ADR-0019/0025).
   container.register(AUTH_SESSION, (c) => new SessionResolver(c.get(DRIZZLE), config.authSchema));
-  // Ports are read per request, as plugins bind them after this registration.
   container.register(
     LOCAL_SESSION_RESOLVER,
     (c): RequestSessionResolver => ({
@@ -656,15 +556,9 @@ async function bootApp(
     (c) =>
       new AdminGuard(
         c.get(DRIZZLE),
-        // A service with no session tables has no session lookup of its own: the request
-        // middleware already resolved the session through the identity service.
         c.has(REMOTE_SESSION_RESOLVER) ? undefined : c.get(AUTH_SESSION),
-        // has() avoids throwing on an unbound token so boot works without the iam module.
         c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
         c.get(EVENT_BUS),
-        // The player id on a denial is read through accounts when they are bound, so a service
-        // whose database has no player table (accounts read remotely) enriches it too. has()
-        // avoids throwing on an unbound token so boot works without the identity module.
         c.has(ACCOUNT_READER)
           ? playerIdsOf(c.get(ACCOUNT_READER), createLogger('create-app'))
           : c.has(IDENTITY_READER)
@@ -678,13 +572,8 @@ async function bootApp(
     const igaming = config.igaming;
     container.register(IGAMING_CONFIG, () => igaming);
   }
-  // Always bound: loadPlatformConfig() falls back to an empty-but-valid config
-  // when no platform-config.{yaml,yml,json} file is present (PLATFORM_CONFIG_PATH
-  // or cwd discovery). See platform-config-loader.ts.
   container.register(PLATFORM_CONFIG, () => loadPlatformConfig(resolvePlatformConfigPath()));
 
-  // Before loadPlugins/configure: a bad CORS config should fail the boot without
-  // first running every plugin's side effects.
   const corsOrigins = resolveCorsOrigins(config.cors);
 
   const bootLogger = createLogger('create-app');
@@ -707,7 +596,6 @@ async function bootApp(
         };
   const plugins = manifestCheck ? await selectServiceEntries(manifestCheck) : registryEntries;
   if (manifestCheck) {
-    // Logged before loading, so a boot that fails in a plugin still shows what was selected.
     bootLogger.info(
       { modules: plugins.map((e) => (e.noRoutes ? `${e.id} (required only)` : e.id)) },
       'SERVICE_MANIFEST active',
@@ -718,15 +606,12 @@ async function bootApp(
     requiredPorts: manifestCheck ? 'defer' : 'assert',
   });
   if (manifestCheck) {
-    // A `:no-routes` module is loaded for its ports only: what it would consume is left to the
-    // service that selects it (ADR-0050).
     const notConsumed: Record<string, Record<string, number>> = {};
     for (const { owner, kind } of registry.withheld()) {
       const counts = (notConsumed[owner] ??= {});
       counts[kind] = (counts[kind] ?? 0) + 1;
     }
     if (Object.keys(notConsumed).length > 0) {
-      // Warn, not info: a module no process selects runs none of these, audit and RG included.
       bootLogger.warn(
         { notConsumed },
         'SERVICE_MANIFEST: these handlers run only where another process selects their module',
@@ -736,7 +621,6 @@ async function bootApp(
   await configure?.(container);
 
   assertDurableSeamsBound(container);
-  // After configure(), so a port the composition root binds counts.
   if (manifestCheck) {
     await assertServiceComplete({
       ...manifestCheck,
@@ -745,14 +629,8 @@ async function bootApp(
     container.get(ADMIN_GUARD);
   }
 
-  // Every sealed token is settled once the plugins and the composition root have registered: a
-  // holder of the returned container can neither rebind a regulator-mandated service a module
-  // bound (audit writes, bonus wagering) nor bind one that none did.
   container.closeSealedTokens();
 
-  // Sealed after configure() so neither an overlay, the composition root nor a holder of the
-  // returned container can replace the wrapper that enforces IAM and audit, and bound before
-  // the routers so a router factory can resolve it.
   container.registerSealed(MCP_KERNEL, (c) =>
     createMcpKernel({
       tools: registry.mcp.getTools(),
@@ -773,12 +651,6 @@ async function bootApp(
   const bus = container.get(EVENT_BUS);
   for (const [event, handlers] of registry.events.getAll()) {
     for (const { handler, consumer, consumerGroup } of handlers) {
-      // Prefixed with the service: an infra overlay loads in every split service, and
-      // each service's copy of the handler must run. A handler in a shared consumer
-      // group runs once per deployment instead, and a redelivery can land on any
-      // service, so its dedup identity must not name one. Stream keys carry no deployment
-      // part, so the group is what keeps two deployments sharing one Redis apart: the
-      // plugin's local name is scoped by the deployment's namespace.
       bus.on(
         event,
         handler,
@@ -788,8 +660,6 @@ async function bootApp(
       );
     }
   }
-  // The same topics MCP_KERNEL lists, read from the config rather than the kernel so its
-  // tool factories still run after the routers. No listener, no subscription.
   const triggerListeners = registry.triggers.getAll();
   if (triggerListeners.length > 0) {
     for (const trigger of allowedTriggers(container.get(PLATFORM_CONFIG).agents.triggers.topics)) {
@@ -808,8 +678,6 @@ async function bootApp(
     }
   }
 
-  // Resolve DRIZZLE before JOB_QUEUE so disposers run in the right order (workers
-  // drain before the DB closes, since disposers run in reverse).
   const drizzle = container.get(DRIZZLE);
   const jobQueue = container.get(JOB_QUEUE);
 
@@ -830,10 +698,8 @@ async function bootApp(
       'INTERNAL_API_SECRETS is unset: every /internal/v1 request is refused',
     );
   }
-  // Built now so a broken tool or action-type factory fails boot, not the first call.
   const mcpTransport = await loadMcpTransport(container, container.get(MCP_KERNEL));
 
-  // After the router factories: a factory may register a worker too.
   const workers = selectJobWorkers(registry.jobs.getAll(), jobWorkerSelection);
   if (jobWorkerSelection !== null) {
     const queuesOf = (list: typeof workers.consumed) => [...new Set(list.map((w) => w.queue))];
@@ -888,11 +754,6 @@ async function bootApp(
 
   const app = new Hono();
 
-  // Outermost catch for errors thrown in the Hono middleware chain (session
-  // resolution, raw-body capture, etag/cache) - the one seam oRPC's onError
-  // interceptor never sees, since handler.handle turns route/service errors into
-  // responses. logger.error reports via the reporter; HTTPExceptions are deliberate
-  // outcomes, returned without reporting.
   app.onError((err, c) => {
     if (err instanceof HTTPException) {
       return err.getResponse();
@@ -904,8 +765,6 @@ async function bootApp(
     return c.json({ error: 'Internal Server Error' }, 500);
   });
 
-  // Ahead of every app-wide middleware: CORS, the HTTP cache and session resolution never run
-  // for a service-to-service call.
   mountInternalApi(app, {
     handler: internalHandler,
     secrets: internalApiSecrets,
@@ -913,8 +772,6 @@ async function bootApp(
     trustedProxies,
   });
 
-  // Ahead of every app-wide middleware: a served MCP request returns from its own handler, so
-  // CORS, the HTTP cache, raw-body capture and session resolution never run for it.
   if (mcpTransport) {
     mountMcpTransport(app, mcpTransport, trustedProxies);
   }
@@ -925,7 +782,6 @@ async function bootApp(
 
   if (config.bodyLimit !== false) {
     const configuredMax = config.bodyLimit?.maxBytes;
-    // Hono compares sizes with `> maxSize`, so NaN (eg Number(undefined)) would silently disable the cap.
     if (
       configuredMax !== undefined &&
       !(Number.isSafeInteger(configuredMax) && configuredMax > 0)
@@ -953,9 +809,6 @@ async function bootApp(
     const staleWhileRevalidateSeconds = config.httpCache?.maxAgeSeconds
       ? maxAgeSeconds * 2
       : DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS;
-    // GET/HEAD only - the etag middleware short-circuits with a 304 on a matching
-    // If-None-Match, which would swallow a PUT/DELETE's response after it already
-    // ran the mutation (eg PUT /cms/pages/{id} under the /cms/pages cache prefix).
     const etagMiddleware = etag();
     app.use('/*', async (c, next) => {
       const isCacheablePath = cachePaths.some(
@@ -968,12 +821,6 @@ async function bootApp(
       } else {
         await next();
       }
-      // An SSE body is a sequence of small frames that only mean anything on arrival, so any
-      // intermediary that compresses or buffers it holds every event until its own flush
-      // threshold. That is not hypothetical: Next's built-in gzip (and nginx's, and a CDN's)
-      // turned a sub-100ms balance push into an 11-second one, with the events arriving in
-      // batches. `no-transform` is the standards-defined opt-out every one of them honours,
-      // and `X-Accel-Buffering` covers nginx's separate proxy-buffering stage.
       const isEventStream = (c.res.headers.get('content-type') ?? '').includes('text/event-stream');
       if (isEventStream) {
         c.res.headers.set('X-Accel-Buffering', 'no');
@@ -989,8 +836,6 @@ async function bootApp(
     });
   }
 
-  // Read once at boot: a remote resolver subscribes to its purge channel when built, and the
-  // local chain builds its better-auth instance now, so a bad auth config fails the boot.
   const remoteSessions = container.has(REMOTE_SESSION_RESOLVER)
     ? container.get(REMOTE_SESSION_RESOLVER)
     : undefined;
@@ -1008,8 +853,6 @@ async function bootApp(
     };
 
     const { auth, sessionEndedReason, unavailable } = await sessions.resolve(c.req.raw.headers);
-    // No auth: context.auth stays undefined so getUserId 401s. Auth and public routes still
-    // work.
     if (auth) {
       context.auth = auth;
     }

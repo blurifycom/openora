@@ -4,18 +4,12 @@ export const BANNER_LAYOUTS = ['carousel', 'grid', 'single'] as const;
 export type BannerLayout = (typeof BANNER_LAYOUTS)[number];
 export const BannerLayoutSchema = z.enum(BANNER_LAYOUTS);
 
-/** Image-count bounds a banner configuration must satisfy before it can go live, per layout. */
 export const BANNER_IMAGE_COUNT_BOUNDS: Record<BannerLayout, { min: number; max: number }> = {
   carousel: { min: 2, max: 6 },
   grid: { min: 3, max: 3 },
   single: { min: 1, max: 1 },
 };
 
-/**
- * Per-placement replacement for a layout's default bounds: placement -> layout -> bounds.
- * A layout without an entry keeps its default. `min` is at least 1 (a live banner is never
- * empty), `max` at most the layout's own maximum, and `min <= max`.
- */
 export const BannerImageCountBoundsOverridesSchema = z
   .record(
     z.string().min(1),

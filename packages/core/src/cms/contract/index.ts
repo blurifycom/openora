@@ -38,8 +38,6 @@ export const BannerLinkUrlSchema = z
       'linkUrl must be an internal path starting with a single "/" (not "//" or "/\\") or a well-formed http(s) URL',
   });
 
-// Optional, caller-supplied file size metadata for display; core never checks it against the file.
-// Capped at int4 max so an oversized value is a validation error, not a database error.
 export const BannerImageSizeBytesSchema = z.number().int().nonnegative().max(2_147_483_647);
 
 export const BannerImageSchema = z.object({
@@ -63,7 +61,6 @@ export const BannerConfigurationSchema = z.object({
   isDefault: z.boolean(),
   createdBy: UuidSchema,
   createdAt: TimestampSchema,
-  /** Image count the configuration must have to go live: the placement's override, else the layout default. */
   imageCountBounds: z.object({ min: z.number().int(), max: z.number().int() }),
   images: z.array(BannerImageSchema),
 });
@@ -104,13 +101,6 @@ export type PublicBanner = z.infer<typeof PublicBannerSchema>;
 export const CreateBannerConfigurationInputSchema = z.object({
   placement: z.string(),
   layout: BannerLayoutSchema,
-  /**
-   * Return the placement's existing configuration (the default one, else the newest) instead
-   * of creating another. The check and the insert are atomic per placement, so concurrent
-   * callers on an empty placement get the same configuration. The existing one is returned as
-   * it is, whatever its layout. Absent or false = always create. Setting it also requires
-   * `content:update`, since it can return an existing configuration's images.
-   */
   reuseExisting: z.boolean().optional(),
 });
 export type CreateBannerConfigurationInput = z.infer<typeof CreateBannerConfigurationInputSchema>;

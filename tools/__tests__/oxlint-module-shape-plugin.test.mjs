@@ -1,7 +1,3 @@
-// Calls the plugin's rule `create(context)` functions directly (no oxlint binary
-// dependency) - same "no tests exist yet for the boundaries plugin, add one small
-// node test file" mandate, but exercising the actual rule logic instead of a fixture.
-// Run: node --test tools/__tests__/oxlint-module-shape-plugin.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import plugin from '../lint/oxlint-module-shape-plugin.mjs';
@@ -9,7 +5,6 @@ import plugin from '../lint/oxlint-module-shape-plugin.mjs';
 function lint(ruleName, filename, run) {
   const reports = [];
   const context = { filename, report: (d) => reports.push(d.message) };
-  // create() returns {} for out-of-scope files - treat missing handlers as no-ops
   const visitor = new Proxy(plugin.rules[ruleName].create(context), {
     get: (t, k) => t[k] ?? (() => {}),
   });

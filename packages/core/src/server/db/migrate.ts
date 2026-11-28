@@ -1,86 +1,23 @@
-// Uses Drizzle's generated migration journal, but executes one file per database transaction.
-// PostgreSQL enum values cannot be used until the transaction that adds them has committed.
-// Each migration set ships its compiled SQL in the package tarball (the per-module `drizzle/`
-// dirs land in `dist/**` via copy-drizzle), so a consumer runs migrations straight from
-// node_modules with no source checkout. Every module owns its own journal + tracking table and
-// calls `runMigrations`; this file owns only the engine `outbox` set. See ADR-0022/0020/0027.
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { readMigrationFiles, type MigrationMeta } from 'drizzle-orm/migrator';
 import { Pool } from 'pg';
 
 export type RunMigrationsOptions = {
-  /** Absolute path to the drizzle migrations folder (the dir holding the .sql + meta/). */
   migrationsFolder: string;
-  /** Tracking table; omit for drizzle's default `__drizzle_migrations`. */
   migrationsTable?: string;
-  /** Tracking schema; omit for drizzle's default `drizzle`. */
   migrationsSchema?: string;
-  /** Override the DB url; defaults to DATABASE_ADMIN_URL ?? DATABASE_URL. */
   databaseUrl?: string;
-  /**
-   * Maps a legacy journal hash to the hashes in the current migration history that produce the
-   * same final schema. Use only when a released migration history was re-baselined: when the
-   * legacy hash is present, its listed current hashes are treated as already applied.
-   */
   migrationHashAliases?: Readonly<Record<string, readonly string[]>>;
-  /**
-   * Postgres extensions to `CREATE EXTENSION IF NOT EXISTS` before applying. drizzle-kit can't
-   * express extensions in schema, so a module whose index needs one (eg pg_trgm for a GIN
-   * trgm index) declares it here instead of hand-editing a regenerated migration.
-   */
   extensions?: string[];
-  /**
-   * Raw SQL statements to run, in order, before the migrator applies any pending migration.
-   * Unlike `extensions` (a bare identifier interpolated into a fixed `CREATE EXTENSION`
-   * template, hence the strict name check), each entry here is a full statement the caller is
-   * trusted to have written safely - these are literal string constants in module source, never
-   * user input. This is for data cleanup drizzle-kit has no way to generate because it isn't a
-   * schema diff at all (eg deduping rows that violate a new constraint a pending migration is
-   * about to add) - a module declares it here instead of hand-editing a regenerated migration,
-   * same rationale as `extensions`, different problem shape.
-   */
   preSql?: string[];
-  /**
-   * Raw SQL statements to run, in order, under the migration advisory lock and before any pending
-   * migration is read or applied. Same trust model as `preSql`; for a check that must see what a
-   * concurrent runner of the same journal committed while this one waited on the lock, so a
-   * refusal lands before a single migration file commits.
-   */
   lockedPreSql?: string[];
-  /**
-   * Raw SQL statements to run, in order, AFTER every pending migration is applied. Same
-   * trust model as `preSql`; for constraints drizzle-kit cannot express against a table
-   * it has just created (eg an append-only trigger on the audit log). Runs while the
-   * migration advisory lock is still held, so concurrent runners never overlap here.
-   */
   postSql?: string[];
-  /**
-   * `lock_timeout` set inside each migration file's transaction, eg `'5s'`. A migration that
-   * rewrites a busy table under ACCESS EXCLUSIVE then fails fast instead of queueing every query
-   * on that table behind it. drizzle-kit cannot emit it, so it lives here, not in the SQL file.
-   */
   lockTimeout?: string;
 };
 
 const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
 
-/**
- * `postSql` that makes `table` a protected record: DELETE is denied for the whole statement (as
- * the audit log does), and an UPDATE may change only `mutableColumns`, plus `setOnceColumns` while
- * they are still NULL. A `terminal` column also freezes once it holds one of its `values`, and its
- * `growOnly` columns can then only increase, so a finished row cannot be reopened or rewritten
- * downwards. A `growOnlyTotals` group lets its columns move against each other, but never lets
- * their sum fall: a figure may shrink only by growing a column that records the shrink. Every other column, one added later included, is immutable until named
- * here. TRUNCATE is untouched, which keeps test and dev resets working. There is no bypass: a
- * deliberate repair is a migration that disables the trigger itself. The UPDATE check runs per
- * row, so an UPDATE that matches nothing passes.
- *
- * One string per table, re-runnable on every deploy: the functions are replaced in place (the
- * update function carries the column list, so a changed list takes effect without touching the
- * trigger) and a trigger is created only when missing, so the table is never left uncovered and
- * no lock is taken after the first run.
- */
 export function appendOnlyTableSql(
   table: string,
   {
@@ -91,7 +28,6 @@ export function appendOnlyTableSql(
   }: {
     mutableColumns: string[];
     setOnceColumns?: string[];
-    /** A column that may change only along these `[from, to]` pairs; null is an unset column. */
     transitions?: { column: string; allowed: readonly (readonly [string | null, string])[] }[];
     terminal?: {
       column: string;
@@ -226,10 +162,6 @@ type SqlClient = {
   query(sql: string, values?: unknown[]): Promise<unknown>;
 };
 
-/**
- * Serializes migration runners for one journal. The lock is session-scoped, so
- * it remains held while each migration uses its own transaction connection.
- */
 export async function withMigrationAdvisoryLock<T>(
   client: SqlClient,
   lockName: string,
@@ -255,7 +187,6 @@ export async function applyMigrationsIndividually({
   }
 }
 
-/** Apply one migration set against the admin connection. Idempotent: drizzle skips already-recorded migrations. */
 export async function runMigrations(opts: RunMigrationsOptions) {
   if (opts.lockTimeout !== undefined && !/^\d+(ms|s|min)$/.test(opts.lockTimeout)) {
     throw new Error(`Invalid lock timeout: ${opts.lockTimeout}`);
@@ -343,7 +274,6 @@ export async function runMigrations(opts: RunMigrationsOptions) {
   }
 }
 
-/** Apply the engine `outbox` migration set (the outbox and instance tables); domain modules ship their own `migrate`. */
 export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./outbox/drizzle/migrations', import.meta.url)),

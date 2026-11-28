@@ -16,11 +16,8 @@ import { exchangeRateQuote } from '../schema/index.js';
 
 const logger = createLogger('exchange-rate-reader');
 
-/** Tolerated forward clock skew between the provider's `asOf` and this process. */
 const MAX_PROVIDER_CLOCK_SKEW_MS = 60_000;
-/** Upper bound on a plausible pivot-denominated rate; anything beyond is a provider defect. */
 const MAX_PLAUSIBLE_RATE = 1e12;
-/** Hard cap on the failure-cooldown map, so an unbounded code space cannot grow it. */
 const MAX_FAILURE_ENTRIES = 512;
 
 type StoredQuote = { rate: string; providerAsOf: Date };
@@ -61,32 +58,9 @@ export type ExchangeRateReaderServiceDeps = {
   freshTtlMs: number;
   hardMaxAgeMs: number;
   providerTimeoutMs: number;
-  /** See `ExchangeRateConfigSchema.failureCooldownMs`. */
   failureCooldownMs: number;
 };
 
-/**
- * Read-through cache in front of the two exchange-rate provider ports. A player
- * request MAY reach a vendor: a hard-stale or missing quote is fetched
- * synchronously (with a short timeout, failing closed to `null` on error) before
- * answering. Three age bands off the quote's own provider timestamp
- * (`exchange_rate_quote.providerAsOf`), never off the local write time - re-persisting
- * an old quote must not make it look fresh:
- *   - fresh (age < freshTtlMs): return the stored value, no provider call.
- *   - soft-stale (freshTtlMs <= age < hardMaxAgeMs): return the stored value
- *     immediately, kick a single-flight background refresh that is invisible to
- *     the caller (its failure is logged, never thrown, and starts the same failure cooldown
- *     as a synchronous fetch, so a rate-limited vendor is not re-called on every read; a
- *     refresh that brings nothing newer than the stored quote, from a provider serving its
- *     own cache, starts it too).
- *   - hard-stale (age >= hardMaxAgeMs) or no row at all: fetch synchronously
- *     through the same single-flight path; on success return it and persist it in
- *     the background; on failure return `null`.
- * Concurrent callers for the same (currency, pivot) leg share one in-flight
- * provider call. A caller holding a transaction reads the stored quote on it and
- * never waits on the pool: not for the read, not for another caller's read, not for
- * the persist.
- */
 export class ExchangeRateReaderService implements ExchangeRateReader {
   private readonly drizzle: DrizzleService;
   private readonly pivot: string;
@@ -149,8 +123,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     if (currency === this.pivot) {
       return Promise.resolve({ rate: '1.000000000000000000', asOf: new Date().toISOString() });
     }
-    // Not shared: the shared read below runs on the pool, and a caller holding a transaction
-    // that waits on it holds one connection while waiting for another.
     if (tx !== undefined) {
       return this.resolveLegUncached(currency, tx as DrizzleDb);
     }
@@ -178,7 +150,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       db === this.drizzle.db
         ? await this.readPooledRow(currency)
         : await this.readRow(db, currency);
-    // A clock ahead of ours only ever makes a quote look newer, never older, so clamp at 0.
     const ageMs = row
       ? Math.max(0, Date.now() - row.providerAsOf.getTime())
       : Number.POSITIVE_INFINITY;
@@ -229,7 +200,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
   }
 
-  /** Records a cooldown, evicting expired entries first so the map cannot grow without bound. */
   private rememberFailure(currency: string): void {
     const now = Date.now();
     for (const [key, until] of this.failedUntil) {
@@ -247,10 +217,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     this.failedUntil.set(currency, now + this.failureCooldownMs);
   }
 
-  /**
-   * Pool reads requested in the same tick share one query, so a batch of N currencies costs one
-   * round trip instead of N.
-   */
   private async readPooledRow(currency: string): Promise<StoredQuote | null> {
     if (!this.pendingRowReads) {
       const currencies = new Set<string>();
@@ -335,19 +301,12 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
     }
     this.assertUsableQuote(currency, quote);
 
-    // Not awaited: a caller holding a transaction would otherwise wait on the pool for the write.
-    // A lost write only costs the next caller another provider fetch.
     void this.persist(currency, quote).catch((err: unknown) => {
       logger.warn({ err, currency, pivot: this.pivot }, 'exchange rate persist failed');
     });
     return quote;
   }
 
-  /**
-   * A rate is money arithmetic: a zero, negative, absurd or unparseable one would silently
-   * convert a wager to nothing and walk it past an RG limit, and a timestamp we cannot trust
-   * would age wrong. Refuse before persisting, so the bad value never enters the cache.
-   */
   private assertUsableQuote(currency: string, quote: ExchangeRateQuote): void {
     const pair = `${currency}/${this.pivot}`;
     const rate = Number(quote.rate);
@@ -375,7 +334,6 @@ export class ExchangeRateReaderService implements ExchangeRateReader {
       .onConflictDoUpdate({
         target: [exchangeRateQuote.baseCurrency, exchangeRateQuote.quoteCurrency],
         set: { rate: value.rate, providerAsOf, updatedAt: new Date() },
-        // The write is detached, so a slower, older fetch can land after a newer one.
         setWhere: lte(exchangeRateQuote.providerAsOf, providerAsOf),
       });
   }

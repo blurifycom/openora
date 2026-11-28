@@ -1,7 +1,3 @@
-// tsc only emits .ts -> .js; it does not copy the modules' SQL migration
-// folders (src/<domain>/drizzle/**). Their runtime migrate.ts loads the SQL via an
-// import.meta.url-relative path (./drizzle/migrations or ../drizzle/migrations), so
-// dist must mirror src. Copy every src/**/drizzle dir to the matching dist path.
 import { cpSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

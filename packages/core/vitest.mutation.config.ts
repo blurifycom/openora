@@ -17,9 +17,6 @@ function toInstrumentedSource(compiled: string | undefined): string | undefined 
   return module ? `${CORE_ROOT}src/${module}.ts` : undefined;
 }
 
-// The e2e tier reaches core through its package exports and the `dist` paths in
-// `extensions.config.ts`. Stryker instruments `src`, so without this every e2e test would run
-// against unmutated code and no mutant could ever die to one.
 function resolveCoreToInstrumentedSource(): Plugin {
   return {
     name: 'resolve-core-to-instrumented-source',
@@ -34,14 +31,8 @@ function resolveCoreToInstrumentedSource(): Plugin {
   };
 }
 
-// Stryker runs one vitest per mutant, so every tier goes into one config: a mutant only a unit
-// test or only an e2e test catches counts as killed instead of survived. Each tier stays a
-// project because each has its own root, setup files and global setup. Stryker pins the worker
-// count itself, so the tiers' own `maxWorkers` is dropped.
 const { maxWorkers: _coreWorkers, ...coreTest } = integration.test ?? {};
 const { maxWorkers: _e2eWorkers, ...e2eTest } = e2e.test ?? {};
-// One flaky failure in Stryker's initial run aborts the whole run, and one during a mutant run
-// counts as a kill the mutant did not earn.
 const RETRY = 2;
 const SLOW_WAIT_SETUP = `${CORE_ROOT}vitest.mutation.setup.ts`;
 

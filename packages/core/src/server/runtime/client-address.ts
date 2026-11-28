@@ -1,24 +1,16 @@
 import { BlockList, isIP } from 'node:net';
 
-// A same-host reverse proxy works without configuration. Private ranges are deliberately not
-// trusted by default: a VPN user, pod, or another workload can reach an API from one of them
-// directly and would otherwise be able to choose its own forwarding headers.
 const DEFAULT_TRUSTED_PROXIES: readonly string[] = ['127.0.0.0/8', '::1/128'];
 
 export type TrustedProxies = { contains(address: string): boolean };
 
 export function normalizeAddress(address: string): string {
-  // Node reports an IPv4 peer on a dual-stack socket as `::ffff:a.b.c.d`.
   return address.startsWith('::ffff:') && isIP(address.slice(7)) === 4 ? address.slice(7) : address;
 }
 
-// Throws on an entry that is neither an IP nor a CIDR, so a typo in the list fails the boot
-// instead of silently trusting nobody (or everybody behind the proxy it meant to name).
 export function parseTrustedProxies(entries: readonly string[]): TrustedProxies {
   const list = new BlockList();
   for (const raw of entries) {
-    // Anchored so an empty suffix (`10.0.0.1/`) cannot slip through as `Number('') === 0` - a
-    // /0 that would trust every peer - and neither can a second `/…` segment.
     const match = /^([^/]+)(?:\/(\d{1,3}))?$/.exec(raw.trim());
     const address = match?.[1] ?? '';
     const family = isIP(address);
@@ -42,7 +34,6 @@ export function parseTrustedProxies(entries: readonly string[]): TrustedProxies 
   };
 }
 
-// `TRUSTED_PROXIES` is a comma-separated list; an empty value trusts no proxy at all.
 export function resolveTrustedProxies(
   configured: readonly string[] | undefined,
   env: string | undefined,
@@ -71,10 +62,6 @@ function forwardedAddress(value: string): string | undefined {
   return normalizeAddress(address);
 }
 
-// Walks X-Forwarded-For from the right - each proxy appends the address it saw - and stops at
-// the first entry that is not itself a trusted proxy: that is the client. Anything left of it
-// was written by the client and is ignored. A malformed entry ends the walk at the last hop
-// that could still be read, so garbage never becomes the address.
 export function clientFromForwardedFor(
   forwardedFor: string,
   peerAddress: string,
@@ -94,20 +81,6 @@ export function clientFromForwardedFor(
   return client;
 }
 
-// The one place a request's client address is decided. Every per-IP throttle, geo check and
-// audit row downstream reads `X-Real-IP`, so the forwarding headers are only honoured when
-// the peer that sent them is a trusted proxy. Any other peer gets its socket address written
-// over `X-Real-IP` and its `X-Forwarded-For` dropped - rotating either header then buys a
-// direct caller nothing.
-//
-// Behind a trusted proxy, `X-Real-IP` always ends up holding a valid address: the client
-// derived from `X-Forwarded-For` when present, else the proxy's own `X-Real-IP` if it set a
-// usable one, else the proxy's socket address. Prefer XFF because a proxy appends the client
-// address to it; an XFF-only proxy can pass a client-supplied X-Real-IP unchanged. It is never
-// left empty, so no request falls into a shared `unknown` bucket that one caller could exhaust.
-//
-// No peer address means the request never crossed a socket (an in-process `app.request`),
-// so there is no network caller to distrust and the headers are left alone.
 export function applyClientAddress(
   headers: Record<string, string>,
   peerAddress: string | undefined,

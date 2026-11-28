@@ -1,17 +1,3 @@
-// Architectural boundary enforcement for oxlint (replaces eslint-plugin-boundaries).
-// Loaded via jsPlugins in .oxlintrc.json. API is ESLint v9-compatible.
-//
-// Why a hand-written plugin and not eslint-plugin-boundaries:
-//   eslint-plugin-boundaries enforces nothing unless every @openora/* import resolves to
-//   a file - which means a native import resolver (unrs-resolver) plus a maintained
-//   lint-only tsconfig mapping all ~24 @openora/* packages to src (pnpm otherwise
-//   resolves them to dist and misclassifies elements). This plugin matches specifier
-//   strings directly: zero deps, zero resolution, fast. See ADR-0015.
-//
-// Each rule scopes itself once per file in create() and returns {} when the file is out of
-// scope, so out-of-scope files register zero visitors. Specifier rules also cover re-export
-// laundering (export ... from / export * from), not just ImportDeclaration.
-
 function filename(context) {
   return (context.filename ?? context.getFilename?.() ?? '').replace(/\\/g, '/');
 }
@@ -20,7 +6,6 @@ function inPath(file, segment) {
   return file.includes('/' + segment + '/');
 }
 
-// Visits every node that carries an import/re-export source specifier.
 function sourceVisitors(check) {
   const visit = (node) => {
     const spec = node.source?.value;
@@ -69,18 +54,12 @@ const noContractsToRuntime = {
   },
 };
 
-// A per-module contract/ dir under a folded domain (NOT the engine contracts/ zone, which
-// is covered by no-contracts-to-runtime). Matches src/<domain>/contract/ and the multi-slice
-// src/<domain>/<slice>/contract/.
 function isModuleContractZone(file) {
   return /packages\/core\/src\/(?!contracts\/)[^/]+\/(?:[^/]+\/)?contract\//.test(file);
 }
 
 const CONTRACT_RUNTIME_SPECIFIERS = ['@openora/core/server', 'drizzle-orm'];
 
-// The public root barrel (@openora/core/<domain>) re-exports the module's contract/, so the
-// contract MUST stay isomorphic (browser-safe) - no engine, no Drizzle, no /schema
-// (schema pulls Drizzle transitively). Zod + @openora/core/contracts are fine.
 const noModuleContractToRuntime = {
   create(context) {
     if (!isModuleContractZone(filename(context))) {
@@ -190,13 +169,7 @@ const noReactToRuntime = {
   },
 };
 
-// Intra-core domain isolation (post-fold, ADR-0025): a domain is any dir under
-// packages/core/src/<name>/ that is NOT one of the engine zones. Source-isolation
-// invariant (ADR-0024/0025): a domain never imports a sibling domain's internals.
 const ENGINE_ZONES = ['contracts', 'server', 'react', 'scripts'];
-// common/ and testing/ are cross-cutting shared zones, not folded domains - any zone may
-// import them (matches dependency-cruiser's no-cross-domain, which excludes common/). So
-// they are neither a domain-of nor a cross-domain target.
 const SHARED_ZONES = [...ENGINE_ZONES, 'common', 'testing'];
 
 function coreDomainOf(file) {
@@ -207,8 +180,6 @@ function coreDomainOf(file) {
   return m[1];
 }
 
-// The bare `@openora/core/compliance` (sealed-token util) is an engine zone; the
-// compliance DOMAIN is only reachable via subpaths like /contracts, /schema.
 function coreDomainTarget(spec) {
   if (!spec.startsWith('@openora/core/')) {
     return null;
@@ -272,7 +243,6 @@ const noEngineToDomain = {
   },
 };
 
-// Whole-graph rule catches transitive/dynamic edges. See ADR-0021/0025.
 export default {
   meta: { name: 'oss-boundaries' },
   rules: {

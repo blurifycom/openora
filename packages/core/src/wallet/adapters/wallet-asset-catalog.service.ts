@@ -14,11 +14,6 @@ const ASSET_COLUMNS = {
   withdrawalEnabled: walletAsset.withdrawalEnabled,
 };
 
-/**
- * Default DB-backed catalog, bound by the wallet plugin. Reads every row, enabled or not:
- * a payment adapter resolving an in-flight transaction still needs the asset it was
- * created with.
- */
 export class WalletAssetCatalogService implements WalletAssetCatalog {
   constructor(private readonly drizzle: DrizzleService) {}
 

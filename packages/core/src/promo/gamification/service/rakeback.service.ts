@@ -41,7 +41,6 @@ import { activeRakebackRate, isStreakLive, type StreakRate } from '../shared/str
 
 const ZERO = '0';
 
-// Paid when the bet settles, through recordSettledWager, so a rejected or cancelled bet earns nothing.
 const SETTLED_PRODUCT = 'sportsbook';
 const SETTLED_PROVIDER_NAME = 'rakeback-settled';
 
@@ -59,7 +58,6 @@ const DEFAULT_SETTINGS: RakebackSettings = { basis: 'stake', payout: 'instant' }
 const countsToward = (eligibleProducts: readonly string[], product: string) =>
   eligibleProducts.length === 0 || eligibleProducts.includes(product);
 
-/** The part of a bet's own-money stake rakeback is a share of; zero when it cannot be priced. */
 export function rakebackBase(realAmount: string, basis: RakebackBasis, rtp?: string): string {
   return basis === 'stake' ? realAmount : houseEdge(realAmount, rtp);
 }
@@ -92,7 +90,6 @@ export function upliftWithinEdge(
   return moneyMin(uplift, ceiling);
 }
 
-/** `base × rate% × (1 + uplift%)`: the streak uplift multiplies the rank rate, it never adds to it. */
 export function rankedRakeback({
   base,
   ratePercent,
@@ -108,7 +105,6 @@ export function rankedRakeback({
   );
 }
 
-/** A player with no rank earns `ratePercent` of the bet's theoretical GGR, its house edge; zero without a usable rtp. */
 export function unrankedRakeback({
   realAmount,
   rtp,
@@ -125,34 +121,6 @@ type RakebackRate =
   | { mode: 'ranked'; ratePercent: string; upliftPercent: string }
   | { mode: 'unranked'; ratePercent: string };
 
-/**
- * Rakeback on a qualifying bet's own-money stake, or under the `margin` basis that stake times the
- * house edge of the game played (`1 − rtp`). A ranked player earns their rank's percentage; a
- * player's active streak milestone then multiplies it by `1 + uplift%`. A player holding no rank
- * earns nothing from the ladder, but an active streak milestone pays them its unranked rate on the
- * bet's theoretical GGR, the house edge, whatever the basis - so that formula always needs a usable
- * rtp. The streak only counts on its own products, and only while the player's last qualifying day
- * is today or yesterday; the rate is read from the current config when the bet settles.
- *
- * Under the `instant` payout it is credited to the real balance with the bet, and the `cashback`
- * wallet transaction is the whole record, apart from a sportsbook bet, which also writes a
- * `claimed` accrual with no claim so it is paid once. Under `claim` it is written to
- * `promo_rakeback_accrual` and nothing moves until `RakebackClaimService` pays it out; a rollback
- * of the round then takes it back while it is still unclaimed.
- *
- * Runs after `RankService` and before `StreakService` in the composite, so a bet that also crosses
- * a rank threshold pays rakeback at the tier just reached, and the bet that unlocks a streak
- * milestone earns the previous milestone's rate.
- *
- * Own-money only: `args.realAmount` already excludes whatever part of the stake a bonus grant
- * paid for, so wagering a bonus never earns real-money rakeback on funds the player never risked.
- *
- * Takes a `getWallet` thunk rather than a resolved `WalletCommands`: `WALLET_COMMANDS`'s own
- * factory resolves `WAGER_TRACKING` transitively (through the bonus module's wagering service),
- * so resolving `WALLET_COMMANDS` eagerly while `WAGER_TRACKING` itself is still being built is a
- * circular `Container.get`. Deferring the lookup to the first bet - long after both tokens have
- * finished resolving - breaks the cycle.
- */
 export class RakebackService implements WagerTrackingCommands {
   constructor(
     private readonly getWallet: () => WalletCommands | undefined,
@@ -193,15 +161,10 @@ export class RakebackService implements WagerTrackingCommands {
     });
   }
 
-  /** Takes back a reopened bet's unclaimed rakeback; a paid credit is left to a manual adjustment. */
   async reopenSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     await this.reverseWager(tx, args);
   }
 
-  /**
-   * A voided bet keeps the rakeback already paid on it, since paid rakeback is only ever corrected by
-   * a manual adjustment. Each paid row is audited with the void, as the cue for that adjustment.
-   */
   async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     const paid = await tx
       .select({
@@ -299,10 +262,6 @@ export class RakebackService implements WagerTrackingCommands {
     if (!wallet) {
       return [];
     }
-    // Own-money only, priced in the bet's own currency - the currency the player is already
-    // holding a balance in, so unlike a race/streak/rank-challenge prize (priced in whatever
-    // currency their own config carries) this never opens a balance in one the player does not
-    // already use.
     const outcome = await wallet.credit(tx, {
       userId: args.userId,
       amount: rakeback,
@@ -315,25 +274,15 @@ export class RakebackService implements WagerTrackingCommands {
       return [];
     }
     if (providerRef) {
-      // The paid bet's record: a re-settle after a reopen finds it and pays nothing, rather than
-      // repricing the credit at today's rate under the same provider ref, which the wallet refuses.
       await tx
         .insert(promoRakebackAccrual)
         .values({ ...accrual, status: 'claimed', settledAt: new Date() });
     }
-    // `moved: false` is a replayed credit (a duplicate bet-tracking call) - the balance already
-    // changed and was already announced the first time.
     return outcome.moved
       ? [{ transactionId: outcome.transactionId, amount: rakeback, currency: args.currency }]
       : [];
   }
 
-  /**
-   * Takes a rolled-back stake out of the round's accruals, newest first. A claimed or voided row
-   * absorbs its share into `rolledBackStake` with its stake and amount untouched - paid rakeback is
-   * only ever corrected by a manual adjustment - so a rollback after the claim never reaches an
-   * older unclaimed row of the same round, and no share is absorbed twice.
-   */
   async reverseWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     if (moneyCompare(args.realAmount, ZERO) <= 0) {
       return;

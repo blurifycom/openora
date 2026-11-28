@@ -30,11 +30,6 @@ export const tagKeys = [
 export const TagKeySchema = z.enum(tagKeys);
 export type TagKey = z.infer<typeof TagKeySchema>;
 
-/**
- * The operator's hold on a player's payouts and value transfers (an investigation, an
- * "account lock"). Sticky: only an admin with a reason releases it. Wallet refuses a
- * withdrawal request and any approval while it is active; the player can still log in.
- */
 export const WITHDRAWAL_LOCK_TAG = 'withdrawal_lock' satisfies TagKey;
 
 export const tagSchema = z.object({
@@ -88,8 +83,6 @@ export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).ex
 });
 export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;
 
-// Atomic same-key swap (the mutable `level` tag): one actor performs both halves,
-// so the assign actor fields double as the removal actor fields.
 export const replacePlayerTagSchema = assignPlayerTagSchema.extend({
   removalReason: z.string().trim().min(5),
 });
@@ -100,11 +93,8 @@ export const tagRuleSchema = z.object({
   tagId: UuidSchema,
   tagKey: TagKeySchema,
   isEnabled: z.boolean(),
-  /** Amount threshold as a decimal string - same unit as wallet.balance and wallet_transaction.amount (high_roller: lifetime deposits; large_depositor: single deposit; high_risk: single withdrawal). */
   threshold: MoneyAmountSchema.nullable(),
-  /** Inactivity or rolling-window length in days (inactive, high_risk, recent_depositor). */
   thresholdDays: z.number().int().nullable(),
-  /** Minimum event count within the window (high_risk withdrawal frequency). */
   thresholdCount: z.number().int().nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

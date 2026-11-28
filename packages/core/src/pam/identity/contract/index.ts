@@ -57,24 +57,17 @@ export const SessionItemSchema = z.object({
   id: UuidSchema,
   expiresAt: TimestampSchema,
   createdAt: TimestampSchema,
-  // Last time better-auth refreshed the session - "last used" in a device list.
   updatedAt: TimestampSchema,
-  // Last admin request seen on this session. Finer-grained than `updatedAt`, which
-  // better-auth only refreshes once per updateAge window.
   lastSeenAt: TimestampSchema.nullable(),
   ipAddress: z.string().nullable().optional(),
   userAgent: z.string().nullable().optional(),
-  // Human-readable rendering of userAgent for the session list.
   deviceLabel: z.string(),
   browser: z.string().nullable(),
   os: z.string().nullable(),
-  // True for the session making the request; false everywhere it cannot be known
-  // (eg an admin listing someone else's devices).
   current: z.boolean(),
 });
 export type SessionItem = z.infer<typeof SessionItemSchema>;
 
-// A session row plus who it belongs to - the cross-user list is useless without it.
 export const ActiveSessionItemSchema = SessionItemSchema.extend({
   userId: UuidSchema,
   email: z.email(),
@@ -96,11 +89,7 @@ export type TrustedDeviceItem = z.infer<typeof TrustedDeviceItemSchema>;
 
 export const AdminSecurityStatusSchema = z.object({
   twoFactorEnabled: z.boolean(),
-  // Null when no second factor is set up, or when the operator stores backup codes in a
-  // form this process cannot read back.
   backupCodesRemaining: z.number().int().nonnegative().nullable(),
-  // True when the operator requires a second factor and this account has none - the
-  // Backoffice renders the enrolment flow and nothing else while it holds.
   enrollmentRequired: z.boolean(),
   trustedDeviceDays: z.number().int().nonnegative(),
   trustedDeviceUntil: TimestampSchema.nullable(),
@@ -127,7 +116,6 @@ export const identityContract = {
     .route({ method: 'GET', path: '/identity/registration-policy' })
     .output(RegistrationPolicySchema),
 
-  // When 2FA is enabled, better-auth withholds the session and signals `twoFactorRedirect`; client must then call verify2fa.
   login: oc
     .route({ method: 'POST', path: '/identity/login' })
     .input(LoginInputSchema)
@@ -136,14 +124,8 @@ export const identityContract = {
         user: UserSchema.optional(),
         session: SessionSchema.optional(),
         twoFactorRedirect: z.boolean().optional(),
-        // Which second factor the challenge should ask for. Absent when the attempt
-        // never resolved to an account, so the client falls back to an authenticator.
         twoFactorMethod: TwoFactorDeliveryMethodSchema.optional(),
         security: LoginSecurityStateSchema.optional(),
-        // So the challenge screen's "trust this device" copy can name the operator's
-        // actual configured window - there is no session yet to read it from
-        // `security.me`. Same value `SecurityControlsSchema.trustedDeviceDays` carries
-        // post-login; present only alongside `twoFactorRedirect`.
         trustedDeviceDays: z.number().int().nonnegative().optional(),
       }),
     ),
@@ -172,9 +154,6 @@ export const identityContract = {
       .input(SetLoginWithdrawalAlertsInputSchema)
       .output(SecurityControlsSchema),
 
-    // The two halves of "Remember Device". Kept as separate routes rather than one
-    // patch so each carries its own audit event - a licence review asks when 2FA
-    // enforcement changed, not when any security preference did.
     autoLogout: oc
       .route({ method: 'POST', path: '/identity/security/auto-logout' })
       .input(SetAutoLogoutInputSchema)
@@ -185,9 +164,6 @@ export const identityContract = {
       .input(SetRequireTwoFactorOnLoginInputSchema)
       .output(SecurityControlsSchema),
 
-    // Set and Change share this one upsert route (identical New PIN/Confirm PIN/Save
-    // flow); Remove is a separate route with no confirmation step but the same
-    // fresh-reauth proof.
     setWithdrawalPin: oc
       .route({ method: 'POST', path: '/identity/security/withdrawal-pin' })
       .input(SetWithdrawalPinInputSchema)
@@ -198,8 +174,6 @@ export const identityContract = {
       .input(RemoveWithdrawalPinInputSchema)
       .output(SecurityControlsSchema),
 
-    // No reauth (not money-moving, unlike the withdrawal PIN); set/overwrite only, no
-    // remove route. Calling it again with a new value changes the code.
     setAntiPhishingCode: oc
       .route({ method: 'POST', path: '/identity/security/anti-phishing-code' })
       .input(SetAntiPhishingCodeInputSchema)
@@ -244,10 +218,6 @@ export const identityContract = {
     .input(Disable2faInputSchema)
     .output(IdentitySuccessSchema),
 
-  // Pushes a fresh code to an `email`/`sms` account. The subject is resolved from a
-  // live session or, failing that, the signed pending-challenge cookie, so this
-  // answers during enrolment ("Resend code") and mid-login alike - and takes no body,
-  // so the caller can never name an account other than its own.
   sendTwoFactorOtp: oc
     .route({ method: 'POST', path: '/identity/2fa/otp/send' })
     .output(SendTwoFactorOtpResultSchema),
@@ -256,8 +226,6 @@ export const identityContract = {
     .route({ method: 'GET', path: '/identity/2fa/status' })
     .output(TwoFactorStatusSchema),
 
-  // Backup codes are spent one per use and are shown exactly once, so an account that
-  // burns through them needs a way back to a full set without dropping its second factor.
   regenerateBackupCodes: oc
     .route({ method: 'POST', path: '/identity/2fa/backup-codes/regenerate' })
     .input(RegenerateBackupCodesInputSchema)
@@ -283,16 +251,11 @@ export const identityContract = {
     .input(ChangePasswordInputSchema)
     .output(IdentitySuccessSchema),
 
-  // Unauthenticated: the player has no session until the emailed code is verified.
-  // Always answers success, so it never reveals whether the address has an account.
   sendEmailVerification: oc
     .route({ method: 'POST', path: '/identity/email/verify/send' })
     .input(ResendEmailVerificationInputSchema)
     .output(IdentitySuccessSchema),
 
-  // Verifying the registration code is what mints the session (sign-up never does). A
-  // 2FA-enrolled account is verified but NOT signed in - it gets `twoFactorRedirect` and
-  // completes the challenge through `login`, exactly as that route signals it.
   verifyEmail: oc
     .route({ method: 'POST', path: '/identity/email/verify' })
     .input(VerifyEmailInputSchema)
@@ -304,8 +267,6 @@ export const identityContract = {
       }),
     ),
 
-  // Two-step change: `requestEmailChange` mails an OTP to the new address,
-  // `confirmEmailChange` verifies it and swaps the login email.
   requestEmailChange: oc
     .route({ method: 'POST', path: '/identity/email/change/request' })
     .input(RequestEmailChangeInputSchema)
@@ -353,8 +314,6 @@ export const identityContract = {
       .input(z.object({ userId: UuidSchema }))
       .output(IdentitySuccessSchema),
 
-    // Self-service twins of the admin routes above: the caller's own devices only,
-    // scoped by the verified session rather than a `userId` input.
     listMine: oc
       .route({ method: 'GET', path: '/identity/sessions/me' })
       .input(
@@ -370,9 +329,6 @@ export const identityContract = {
       .input(z.object({ id: UuidSchema }))
       .output(IdentitySuccessSchema),
 
-    // Cross-user view: every active session on the platform, for the admin who holds
-    // sessions:view. The per-user route above needs a userId and so cannot answer
-    // "who is logged in right now".
     listAll: oc
       .route({ method: 'GET', path: '/identity/sessions/all' })
       .input(
@@ -395,8 +351,6 @@ export const identityContract = {
       .route({ method: 'GET', path: '/identity/admin-security/trusted-devices' })
       .output(z.array(TrustedDeviceItemSchema)),
 
-    // better-auth mints its trust cookie only on the sign-in leg of a challenge, so
-    // granting the trust from inside the account re-runs that leg behind this route.
     trustCurrentDevice: oc
       .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/trust' })
       .input(TrustCurrentDeviceInputSchema)
@@ -407,23 +361,16 @@ export const identityContract = {
       .input(z.object({ id: UuidSchema }))
       .output(IdentitySuccessSchema),
 
-    // Clears someone else's second factor entirely, back to the unenrolled state.
-    // Super Admin only; the `reason` is recorded on identity.2fa.reset so the audit
-    // trail carries why an account was put back to the unenrolled state.
     resetUserTwoFactor: oc
       .route({ method: 'POST', path: '/identity/admin-security/2fa/reset' })
       .input(z.object({ userId: UuidSchema, reason: z.string().trim().min(10).max(500) }))
       .output(IdentitySuccessSchema),
 
-    // Support-desk twin for a player who lost their device: needs the player-update
-    // grant, works only on player accounts, keeps "require 2FA on login" set and mails
-    // the player. Same `reason` audit trail as the Super Admin route.
     resetPlayerTwoFactor: oc
       .route({ method: 'POST', path: '/identity/admin-security/2fa/reset-player' })
       .input(z.object({ userId: UuidSchema, reason: z.string().trim().min(10).max(500) }))
       .output(IdentitySuccessSchema),
 
-    // Cross-user twin, for a Super Admin cutting off someone else's trusted device.
     revokeUserTrustedDevice: oc
       .route({ method: 'POST', path: '/identity/admin-security/trusted-devices/revoke-for-user' })
       .input(z.object({ userId: UuidSchema, id: UuidSchema }))

@@ -1,68 +1,4 @@
-// Deterministic module-structure + naming lint enforcement for oxlint (jsPlugins).
-// Loaded via jsPlugins in .oxlintrc.json, same house pattern as oxlint-boundaries-plugin.mjs
-// (string/path checks, no AST gymnastics, no import resolution). Scope: packages/core/src/**
-// only, skipping the engine zones (contracts/server/react/scripts) - those are checked by
-// tools/verify-module-shape.ts instead. See AGENTS.md > Where does X go? / db-conventions.
-//
-// Rules:
-//   module-file-placement - every .ts file inside a folded domain must live in one of the
-//     canonical layer dirs (schema, contract, service, router, adapters, react,
-//     drizzle, __tests__, seed, moderation, shared) or be a sanctioned root file (index.ts,
-//     plugin.ts, migrate.ts, drizzle.config.ts, or a surveyed root feature file such as
-//     wallet's admin-reporting.ts). Stops new strays; does not force a mass move of the
-//     current tree.
-//   layer-file-naming - files directly in service/ end .service.ts (plus a short surveyed
-//     allowlist of pre-existing exceptions); files in __tests__/ end .unit.test.ts,
-//     .int.test.ts or .e2e.test.ts.
-//   int-test-file-naming - a test file importing createTestDb/createTestRedis must end
-//     .int.test.ts, so `test:unit` stays the infra-free suite and `test:integration` owns
-//     everything that needs docker Postgres + Redis.
-//   no-inline-pg-enum - pgEnum('name', [...]) with an inline array literal is an error;
-//     values must come from a named tuple (see packages/core/src/wallet/schema/index.ts).
-//   no-relative-zone-escape - a relative import that leaves its module root must instead use
-//     the package's own public subpath (@openora/core/<domain>...). Module root = the
-//     top-most dir under the domain that owns the file, reusing the same derivation as
-//     module-file-placement: a single-slice domain (wallet, iam, ...) has rest[0] itself a
-//     LAYER_DIR, so the whole domain is one module; a multi-slice domain (casino, engagement,
-//     pam) nests a slice dir (casino/gaming) as the module, and a domain-root file (index.ts,
-//     contracts.ts, server.ts, react.ts - anything with rest.length<=1) is the domain's own
-//     composition root, so its module root is the whole domain too (it necessarily reaches
-//     every slice to build the barrel - that's its job, not an escape). Escape-boundary
-//     decision (surveyed against the current tree): a slice importing a SIBLING slice
-//     relatively (eg pam/player-management reaching into pam/profile/schema) IS an escape -
-//     the domain has a published schema/contract/plugin subpath per slice, use it. A slice
-//     importing a domain-root-level shared dir (eg pam/shared, itself a LAYER_DIR sitting at
-//     the domain root next to the slices) or a bare domain-root file is NOT an escape - it has
-//     no public subpath of its own (not every domain-internal file is published) and is
-//     legitimate domain-internal sharing. Reaching an engine zone (contracts/server/react) is
-//     always an escape (each has a public subpath). Reaching common/ or testing/ is never an
-//     escape - those are cross-cutting utility dirs, not folded domains, out of scope exactly
-//     like they are for module-file-placement (no public subpath exists or is warranted).
-//   no-reinfer-imported-schema - `z.infer<typeof X>` where X is imported from a
-//     contract/contracts/schemas path, in a file that is not itself under a contract/ or
-//     schemas/ dir. The type is already exported once from the owning contract; re-running
-//     z.infer locally is a hand-rolled duplicate that silently drifts. Import the type instead.
-//   no-bare-string-id-param - a service/router function or method param (or a member of an
-//     inline object-literal param type) whose name ends `Id` and whose type is a bare
-//     `string`. Type it through the owning contract/schema type (`X['id']`) or the shared
-//     `Uuid` (`@openora/core/contracts`) - never a bare string. A short allowlist covers the
-//     genuinely-external ids the conventions doc already carves out (eg a KYC vendor's own
-//     reference id).
-//   no-unbounded-db-fanout - `Promise.all(rows.map(fn))` over a query result in a service/router
-//     file, where the fan-out opens one pool connection per row. Use mapConcurrent (bounded).
-//   no-naive-timestamp - `timestamp()` in a schema file without { withTimezone: true } - drops
-//     the zone; every datetime column is timestamptz (db-conventions).
-//   no-float-money - `real()`/`doublePrecision()`/`float()` in a schema file - money is exact
-//     decimal (ADR-0029); disable-with-note for a genuine non-money float.
-//   drizzle-snake-case - a pgTable/pgEnum/index name, or an explicit column name, that is not
-//     snake_case - drizzle derives snake_case columns from the camelCase key (db-conventions).
-//   no-raw-z-uuid - `z.uuid()`/`z.string().uuid()` in core source - use the shared UuidSchema.
-//   no-inline-z-enum-outside-contract - `z.enum([...])` inline outside a contract/schemas dir -
-//     define the enum triple on the contract surface (single source of truth).
-
 const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'scripts']);
-// common/ and testing/ are cross-cutting utility dirs, not folded domains (no index.ts at
-// their root, not checked by verify-module-shape.ts either) - out of scope here too.
 const EXCLUDED_TOP_DIRS = new Set(['common', 'testing']);
 
 const LAYER_DIRS = new Set([
@@ -106,7 +42,6 @@ function filename(context) {
   return (context.filename ?? context.getFilename?.() ?? '').replace(/\\/g, '/');
 }
 
-// Path relative to packages/core/src/, split into segments, or null if outside that tree.
 function coreSrcSegments(file) {
   const m = file.match(/packages\/core\/src\/(.+)$/);
   return m ? m[1].split('/') : null;
@@ -195,9 +130,6 @@ const layerFileNaming = {
           return;
         }
         const layer = rest[layerIdx];
-        // Only enforce naming on files directly inside the layer dir, not nested subfolders
-        // (adapters/mock/*, seed/data/* stay free-form - the layer dirs with a naming rule
-        // are service/ and __tests__/, neither of which has nested subfolders today).
         if (rest.length !== layerIdx + 2) {
           return;
         }
@@ -224,9 +156,6 @@ const layerFileNaming = {
   },
 };
 
-// Resolves a relative import specifier against the importing file's dir, both expressed as
-// packages/core/src/-relative segment arrays. Returns null if the relative path climbs above
-// packages/core/src itself (not expected in the current tree).
 function resolveRelativeSegments(fileSegments, spec) {
   const stack = fileSegments.slice(0, -1);
   for (const part of spec.split('/')) {
@@ -245,8 +174,6 @@ function resolveRelativeSegments(fileSegments, spec) {
   return stack.length > 0 ? stack : null;
 }
 
-// Module root for a file/target's segments - mirrors module-file-placement's shape derivation
-// (see the no-relative-zone-escape header note above).
 function moduleRootOf(segments) {
   const [domain, ...rest] = segments;
   if (!domain || ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
@@ -293,9 +220,6 @@ function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source)
   if (LAYER_DIRS.has(targetRest[0])) {
     return;
   }
-  // A single extension-bearing segment is a domain-root file (index.js, server.js,
-  // contracts.js) - legit composition reach. A single extensionless segment is a bare
-  // sibling-slice directory barrel (../../lobby) - an escape, so don't exempt it.
   if (targetRest.length === 1 && targetRest[0].includes('.')) {
     return;
   }
@@ -317,10 +241,6 @@ const noRelativeZoneEscape = {
       return {};
     }
     const [domain] = segments;
-    // scripts + common + testing are exempt (build/cross-cutting; no zone discipline). Engine
-    // zones (contracts/server/react) ARE checked now: their module root is the whole zone, so
-    // an intra-zone import (server/kernel -> server/db) passes the mRoot.length===1 short-circuit
-    // while a cross-zone one (server -> contracts) is flagged -> use @openora/core/contracts.
     if (EXCLUDED_TOP_DIRS.has(domain) || domain === 'scripts') {
       return {};
     }
@@ -363,13 +283,10 @@ const noInlinePgEnum = {
   },
 };
 
-// A per-module contract/ dir (contract/, contracts/) or a base-schemas dir (schemas/) - the
-// zones that OWN a wire shape and are allowed to z.infer it directly.
 function isContractOrSchemaZone(file) {
   return /\/(contract|contracts|schemas)\//.test(file);
 }
 
-// An import specifier reaching a contract/contracts/schemas path, subpath or relative.
 function isContractSchemaSpecifier(spec) {
   return /(^|\/)(contract|contracts|schemas)(\/|$)/.test(spec);
 }
@@ -389,8 +306,6 @@ const noReinferImportedSchema = {
     if (isContractOrSchemaZone(filename(context))) {
       return {};
     }
-    // Populated by ImportDeclaration below, read by TSTypeReference - imports sit above their
-    // use in source order, so this fills in before a same-file z.infer<typeof X> is visited.
     const importedFrom = new Map();
     return {
       ImportDeclaration(node) {
@@ -441,9 +356,6 @@ function isServiceOrRouterFile(file) {
   return rest.includes('service') || rest.includes('router');
 }
 
-// Ids whose value is owned by a third party, not this platform - carved out by name in
-// conventions.md section 3 (the audit contract's correlationId note). Extend this list only
-// for another surveyed external id, not speculatively.
 const EXTERNAL_ID_PARAM_NAMES = new Set(['referenceId']);
 
 function isBareStringType(typeAnnotation) {
@@ -468,9 +380,6 @@ function checkIdParam(context, name, typeAnnotation, node) {
   }
 }
 
-// Only descends one level into an inline object-literal param type (the named-object-param
-// convention's shape) - a param referencing a named type alias is out of scope, same as the
-// rule never reaches into a function's return type.
 function checkParams(context, params) {
   for (const param of params) {
     const paramType = param.typeAnnotation?.typeAnnotation;
@@ -513,9 +422,6 @@ function isPromiseAllCallee(callee) {
   );
 }
 
-// A `.map()`/`.flatMap()` call whose receiver is NOT an array literal - ie a collection of
-// unknown size (a query result). `Promise.all([a, b].map(...))` over a literal is a fixed,
-// bounded fan-out and is left alone.
 function isUnboundedMapCall(node) {
   if (node?.type !== 'CallExpression' || node.callee?.type !== 'MemberExpression') {
     return false;
@@ -550,9 +456,6 @@ const noUnboundedDbFanout = {
   },
 };
 
-// A drizzle schema file - tables live in a `schema/` dir (folded domains) or a `schema.ts`
-// leaf (eg server/db/outbox). The contracts `schemas/` dir (plural) holds ZOD schemas, not
-// drizzle tables, so it is explicitly out of scope.
 function isDrizzleSchemaFile(file) {
   const segments = coreSrcSegments(file);
   if (!segments || segments.includes('schemas')) {
@@ -677,9 +580,6 @@ const drizzleSnakeCase = {
         }
         const name = node.callee.name;
         const literal = stringLiteralValue(node.arguments?.[0]);
-        // Column builders take an OPTIONAL explicit name; when present it must be snake_case
-        // (drizzle derives it from the camelCase key via casing:'snake_case', so a camelCase
-        // literal produces a camelCase SQL column). Name-declarers always take a name string.
         const isDeclarer = DRIZZLE_NAME_DECLARERS.has(name);
         if (!isDeclarer && !DRIZZLE_COLUMN_BUILDERS.has(name)) {
           return;
@@ -702,7 +602,6 @@ const drizzleSnakeCase = {
   },
 };
 
-// Walk a member-call chain (z.string().uuid()) back to its root identifier.
 function rootIdentifierName(node) {
   let current = node;
   while (current) {
@@ -723,7 +622,6 @@ function rootIdentifierName(node) {
 const noRawZUuid = {
   create(context) {
     const file = filename(context);
-    // Scope to the platform's own source; the one sanctioned definition is the shared schema.
     if (!coreSrcSegments(file) || file.endsWith('contracts/schemas/common.ts')) {
       return {};
     }

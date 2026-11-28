@@ -45,14 +45,11 @@ export const SupportChatUnavailableError = createDomainError<[]>(
   { reason: 'unavailable' },
 );
 
-// Its message reaches the player, so the detail is logged where it is thrown instead.
 export const SupportChatLinkMissingError = createDomainError<[]>(
   'SupportChatLinkMissingError',
   () => 'Support chat could not be opened',
 );
 
-// A unique email is not a proven one: an account can be registered on someone else's
-// not-yet-registered address, and the vendor files the ticket under whoever owns that email.
 export const SupportTicketEmailNotVerifiedError = createDomainError<[]>(
   'SupportTicketEmailNotVerifiedError',
   () => 'Verify your email address before writing to support',
@@ -63,8 +60,6 @@ type SupportCustomerReading = Omit<SupportCustomerContext, 'accountStatus' | 'sy
   playerStatus: PlayerStatus;
 };
 
-// A self-exclusion does not move `player.status`, so it is folded in here; a suspended or
-// closed account keeps its own status.
 export function accountStatusOf({
   playerStatus,
   isSelfExcluded,
@@ -95,14 +90,11 @@ function toSupportCustomerContext(
   };
 }
 
-// What the job queue and the error reporter see of a failed vendor write: the listed code only,
-// never the adapter's error or its `cause`.
 export const SupportChatSyncFailedError = createDomainError<[reason: ProviderFailureReason]>(
   'SupportChatSyncFailedError',
   (reason) => `support-chat provider failed: ${reason}`,
 );
 
-/** Extra writes a sync makes when the context moved under it, before it gives up to the job's retry. */
 const MAX_EXTRA_SYNC_ROUNDS = 2;
 
 class SupportContextNotSettledError extends Error {
@@ -112,16 +104,9 @@ class SupportContextNotSettledError extends Error {
   }
 }
 
-// Both sides come from `toSupportCustomerContext`, so their keys are in the same order.
 const withoutSyncedAt = (context: SupportCustomerContext) =>
   JSON.stringify({ ...context, syncedAt: null });
 
-/**
- * Writes `first`, then re-reads and writes again while the context moved, so the last write any
- * sync makes is checked against the database as it stands after that write. Two syncs racing
- * each other therefore converge on the latest state whichever write lands last. Stops quietly
- * when `read` finds nothing; throws once the cap is spent so the job retries later.
- */
 async function syncUntilSettled(
   first: SupportCustomerContext,
   read: () => Promise<SupportCustomerContext | null>,
@@ -141,10 +126,6 @@ async function syncUntilSettled(
   }
 }
 
-/**
- * Whether the player ever opened the chat: only then is there a vendor customer to refresh. Read
- * from the table, so a process without a provider bound still sees a link another process made.
- */
 export async function hasLinkedCustomer(
   drizzle: DrizzleService,
   userId: User['id'],
@@ -174,10 +155,6 @@ type SupportChatDeps = {
 export class SupportChatService {
   constructor(private readonly deps: SupportChatDeps) {}
 
-  /**
-   * A token for the caller's own vendor customer, created and linked on the first call. The
-   * context sync is enqueued, never awaited: vendor writes stay off the request path.
-   */
   async openSession(userId: User['id'], clientMeta: ClientMeta): Promise<SupportChatCustomerToken> {
     const playerId = await this.deps.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) {
@@ -185,7 +162,6 @@ export class SupportChatService {
     }
     const customerId = await this.findCustomerId(playerId);
     if (!customerId) {
-      // The first sync rides on the link's own event, so a queue outage cannot drop it.
       return this.linkNewCustomer(userId, playerId, clientMeta);
     }
     const token = await this.issueToken(playerId, customerId);
@@ -197,10 +173,6 @@ export class SupportChatService {
     return token;
   }
 
-  /**
-   * Hands the vendor one ticket from the caller's own player, under the name, email and language
-   * read from the account now. Not idempotent: a double submit is two tickets.
-   */
   async createTicket(
     userId: User['id'],
     { subject, message }: Pick<SupportTicketRequest, 'subject' | 'message'>,
@@ -240,8 +212,6 @@ export class SupportChatService {
       logger.warn({ playerId, reason: reasonOf(err) }, 'support ticket not created');
       throw new SupportChatUnavailableError();
     }
-    // The ticket exists at the vendor by now, so neither a malformed answer nor a failed audit
-    // write may answer the player as if it did not: a retry would file it twice.
     const ticketId = this.ticketIdOf(playerId, answer);
     await this.deps.audit
       .record({
@@ -253,7 +223,6 @@ export class SupportChatService {
         after: { ticketId },
         ...clientMeta,
       })
-      // Ops match an unaudited ticket by playerId and log time against the requester's tickets.
       .catch((err: unknown) =>
         logger.error(
           { err: loggableError(err), playerId },
@@ -262,26 +231,15 @@ export class SupportChatService {
       );
   }
 
-  /**
-   * The vendor's ticket id, or null when its answer is off the schema. Only the parsed id leaves
-   * here: the raw answer may hold the requester's email, the subject or the message, and the audit
-   * row it would land in is append-only.
-   */
   private ticketIdOf(playerId: Player['id'], answer: unknown): string | null {
-    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
-    try {
-      const parsed = SupportTicketCreatedSchema.safeParse(answer);
-      if (parsed.success) {
-        return parsed.data.ticketId;
-      }
-    } catch {
-      // Logged below as malformed, like an answer that fails the schema.
+    const parsed = SupportTicketCreatedSchema.safeParse(answer);
+    if (parsed.success) {
+      return parsed.data.ticketId;
     }
     logger.warn({ playerId, reason: 'malformed ticket answer' }, 'support ticket id not recorded');
     return null;
   }
 
-  /** Writes the current context onto the player's vendor customer; a player who never opened the chat is skipped. */
   async syncCustomer(userId: User['id']): Promise<void> {
     const linked = await this.readLinkedContext(userId);
     if (!linked) {
@@ -290,8 +248,6 @@ export class SupportChatService {
     await syncUntilSettled(
       linked.context,
       async () => (await this.readLinkedContext(userId))?.context ?? null,
-      // Awaited inside the try, so an adapter that throws before handing back a promise is
-      // wrapped too.
       async (context) => {
         try {
           await this.deps.provider.syncCustomer(linked.customerId, context);
@@ -302,7 +258,6 @@ export class SupportChatService {
     );
   }
 
-  /** The linked vendor customer and the context read now, in one query; null when not linked. */
   private async readLinkedContext(userId: User['id']): Promise<{
     customerId: SupportChatCustomer['providerCustomerId'];
     context: SupportCustomerContext;
@@ -358,11 +313,6 @@ export class SupportChatService {
     return row?.providerCustomerId ?? null;
   }
 
-  /**
-   * Creates a vendor customer and links it. A concurrent first open that linked first wins: this
-   * call then answers for the winner's customer and leaves its own vendor customer unused. A
-   * vendor customer already linked to another player fails the insert rather than merging them.
-   */
   private async linkNewCustomer(
     userId: User['id'],
     playerId: Player['id'],
@@ -403,7 +353,6 @@ export class SupportChatService {
     return linked === created.customerId ? created : this.issueToken(playerId, linked);
   }
 
-  /** The vendor's reason goes to the log only; the player gets the generic unavailable error. */
   private async issueToken(
     playerId: Player['id'],
     customerId?: SupportChatCustomer['providerCustomerId'],
@@ -423,7 +372,6 @@ export class SupportChatService {
     } catch (err) {
       throw refuse(reasonOf(err));
     }
-    // safeParse rethrows what a getter on the answer throws, which is the adapter's text too.
     let parsed: ReturnType<typeof SupportChatCustomerTokenSchema.safeParse>;
     try {
       parsed = SupportChatCustomerTokenSchema.safeParse(answer);

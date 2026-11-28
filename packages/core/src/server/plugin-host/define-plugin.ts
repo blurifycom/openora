@@ -21,23 +21,12 @@ export type McpToolDefinition = {
   handler: (input: unknown) => unknown | Promise<unknown>;
 };
 
-/**
- * Container view a plugin's `provide()`/`provideSealed()` factory and router
- * factories receive: read-only (`get`/`has`/`onDispose`) and catalog-constrained
- * - never the full `Container`, so plugin code can't call `register()` directly
- * and bypass ModuleRegistry's sealed-token rejection.
- */
 export type TypedContainer<C extends TokenCatalog> = {
   get<T extends C[keyof C]>(token: T): TokenValue<T>;
   has<T extends C[keyof C]>(token: T): boolean;
   onDispose(fn: () => void | Promise<void>): void;
 };
 
-// Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
-// `mounted: false` (a `:no-routes` module, loaded for its ports only): the factory still runs,
-// because several modules build their services here, but its router is discarded and the
-// module consumes nothing in this process. Skip what guards the HTTP surface, and upsert no
-// schedule: the service that selects the module owns them (ADR-0050).
 export type RouterFactory<C extends TokenCatalog> = (
   c: TypedContainer<C>,
   options?: { mounted: boolean },
@@ -45,20 +34,6 @@ export type RouterFactory<C extends TokenCatalog> = (
 
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 
-/**
- * Receives every event on the topics the operator allow-listed as agent triggers
- * (`MCP_KERNEL.listTriggers()`), with the trigger it arrived as.
- *
- * - Delivery is at-least-once: dedupe on `envelope.eventId`.
- * - A topic taken off the allow-list and listed again can replay its backlog, up to the
- *   stream's maximum length, when nothing else in the service consumed it meanwhile: drop
- *   events older than you care about by `envelope.occurredAt`.
- * - The payload arrives as emitted and may hold personal data (an IP address, a user agent,
- *   an email address): never hand it to a model.
- * - It runs in line with the topic's other handlers, so a slow listener delays them, and a
- *   throw is logged and the event acked without a retry: enqueue a job and return within a few
- *   milliseconds.
- */
 export type TriggerListener = (
   trigger: TriggerDescriptor,
   payload: unknown,
@@ -70,15 +45,6 @@ export type RegisteredTriggerListener = {
   listener: TriggerListener;
 };
 
-// `consumer` is the handler's dedup identity, `<plugin id>/<topic>`, suffixed `#<n>` for the
-// n-th (n >= 1) further handler the same plugin registers on the same topic. Plugin ids and
-// topics are fixed by code, so it survives restarts, replica changes and plugin reordering;
-// it shifts only when a plugin reorders its own handlers for one topic.
-//
-// `consumerGroup`, when set, joins the handler to that broker consumer group instead of the
-// service's own: every service of one deployment subscribing with the same name competes for
-// each event, so the handler runs once per deployment however many services load its plugin.
-// The name is local to the deployment: createApp scopes it with the realtime namespace.
 export type EventSubscriptionOptions = Pick<SubscribeOptions, 'consumerGroup'>;
 export type RegisteredEventHandler = {
   handler: EventHandler;
@@ -86,8 +52,6 @@ export type RegisteredEventHandler = {
   consumerGroup?: string;
 };
 
-// Tool and action-type factories run once, when MCP_KERNEL is built after every provider is
-// bound - never at registration.
 export type McpToolFactory<
   C extends TokenCatalog,
   I extends z.ZodObject = z.ZodObject,
@@ -111,28 +75,16 @@ export type RegisteredActionType<C extends TokenCatalog> = {
 };
 
 export type ModuleRegistry<C extends TokenCatalog> = {
-  // Last registration wins - an overlay loaded after a module can rebind its adapter token.
-  // T is inferred directly from the token argument (never a keyof reverse lookup) -
-  // that's what makes TokenValue<T> resolve to that one catalog entry instead of a
-  // union of every catalog value.
   provide<T extends C[keyof C] & Token<unknown>>(
     token: T,
     factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void;
-  // Bind-once, owner-only. The ONLY legitimate way to bind a SealedToken - provide()
-  // rejects sealed tokens outright. A second call for the same token (an overlay
-  // trying to override a regulator-mandated service) throws instead of rebinding.
   provideSealed<T extends C[keyof C] & SealedToken<unknown>>(
     token: T,
     factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void;
   routers: {
     add(namespace: string, factory: RouterFactory<C>): void;
-    // Served under `/internal/v1` to the other services of the install only: every request needs
-    // a valid HMAC signature (ADR-0054), no session is read, and the handler's context is an
-    // `InternalContext` naming the calling service. Never listed in `/openapi.json`. Build its
-    // procedures on `internalProcedure`, which refuses a request with no `internalCaller`, so
-    // the same router passed to `add` stays closed on the public surface.
     addInternal(namespace: string, factory: RouterFactory<C>): void;
     getAll(): Map<string, RouterFactory<C>>;
     getInternal(): Map<string, RouterFactory<C>>;
@@ -141,18 +93,15 @@ export type ModuleRegistry<C extends TokenCatalog> = {
     on(event: string, handler: EventHandler, options?: EventSubscriptionOptions): void;
     getAll(): Map<string, RegisteredEventHandler[]>;
   };
-  // Subscribed at boot to the allow-listed trigger topics, which register() cannot read.
   triggers: {
     listen(listener: TriggerListener): void;
     getAll(): readonly RegisteredTriggerListener[];
   };
-  // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect), unless JOB_WORKERS leaves the queue to another process. See ADR-0014, ADR-0049.
   jobs: {
     worker<T>(registration: WorkerRegistration<T>): void;
     getAll(): WorkerRegistration<unknown>[];
   };
   mcp: {
-    /** Legacy untyped form: listed by `getAll()` only, never served by MCP_KERNEL. */
     tool(definition: McpToolDefinition): void;
     tool<I extends z.ZodObject, O extends z.ZodObject>(
       contract: McpToolContract<I, O>,
@@ -172,44 +121,21 @@ export type ModuleRegistry<C extends TokenCatalog> = {
 
 export type PluginContext<C extends TokenCatalog> = ModuleRegistry<C>;
 
-/** A port a plugin resolves with `c.has()`: it runs without one, minus what the port backs. */
 export type OptionalPort<C extends TokenCatalog> = {
   port: C[keyof C];
-  /** What the plugin skips while the port is unbound, as the boot log states it. */
   without: string;
 };
 
-/**
- * An optional port behind a money, compliance, authorization or audit control. An install
- * without the module that binds it has nothing to enforce, so a full boot runs without it. A
- * split service runs beside a process that has that module, so it may not.
- */
 export type ControlPort<C extends TokenCatalog> = OptionalPort<C> & {
-  /** The module that binds the port, named when a SERVICE_MANIFEST leaves the port unbound. */
   boundBy: string;
-  /**
-   * Enforced only where the plugin serves its routes: only a route reaches what the port guards,
-   * so a `:no-routes` selection runs without it.
-   */
   routesOnly?: boolean;
 };
 
 export type Plugin<C extends TokenCatalog> = {
   id: string;
   dependsOn?: readonly string[];
-  // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
   requiresPorts?: readonly C[keyof C][];
-  // Checked at the same point; an unbound one is logged, not fatal.
   optionalPorts?: readonly OptionalPort<C>[];
-  // Logged like optionalPorts, but an unbound one fails a SERVICE_MANIFEST boot.
   controlPorts?: readonly ControlPort<C>[];
-  /**
-   * Declares into `ctx` what the plugin contributes, and does nothing else: no timer, connection,
-   * file or network read, process listener, global, or `process.env` write. A SERVICE_MANIFEST
-   * boot that fails registers every plugin it has not registered yet, each into a container of
-   * its own that is then dropped, to learn which binds which port. Open a resource in a
-   * `provide()` or router factory, closing it with `c.onDispose()`: those run only for the
-   * container that serves. Reading configuration and throwing on a bad value is fine.
-   */
   register(ctx: PluginContext<C>): void | Promise<void>;
 };

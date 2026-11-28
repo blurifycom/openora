@@ -18,8 +18,6 @@ type SupportHistoryState = {
   calls: { listTickets: TicketsInput[]; listChats: ChatsInput[] };
 };
 
-// On the process, not the module: the app loads this file as a separate module instance from
-// the test that steers it.
 const STATE = Symbol.for('openora.testing.support-history');
 const holder = globalThis as typeof globalThis & { [STATE]?: SupportHistoryState };
 const freshState = (): SupportHistoryState => ({
@@ -30,12 +28,10 @@ const freshState = (): SupportHistoryState => ({
 });
 const state = (): SupportHistoryState => (holder[STATE] ??= freshState());
 
-/** Forget every recorded call and every instruction. */
 export const resetSupportHistory = () => {
   holder[STATE] = freshState();
 };
 
-/** What `listTickets` and `listChats` answer from now on; an omitted one keeps its answer. */
 export const answerSupportHistoryWith = (answers: {
   tickets?: SupportHistoryItem[];
   chats?: SupportHistoryItem[];
@@ -47,10 +43,6 @@ export const answerSupportHistoryWith = (answers: {
   };
 };
 
-/**
- * `method` throws a provider error carrying `reason` from now on, or, given an `Error`, throws
- * that error as is - an adapter that let a raw client error escape.
- */
 export const failSupportHistory = (method: Method, reason: SupportHistoryFailureReason | Error) => {
   state().failures[method] = reason;
 };
@@ -67,12 +59,10 @@ const OFFSET_TIMESTAMP_ITEM: SupportHistoryItem = {
   url: 'https://agent.example.test/ticket/offset-timestamp',
 };
 
-/** `method` answers its items plus one with an offset timestamp from now on. */
 export const malformSupportHistory = (method: Method) => {
   state().malformed[method] = OFFSET_TIMESTAMP_ITEM;
 };
 
-/** Every call each method got, in order. */
 export const readSupportHistoryCalls = () => ({
   listTickets: [...state().calls.listTickets],
   listChats: [...state().calls.listChats],
@@ -88,10 +78,6 @@ const answer = async (method: Method): Promise<SupportHistoryItem[]> => {
   return malformed ? [...s.answers[method], malformed] : [...s.answers[method]];
 };
 
-/**
- * Binds a fake support-history vendor that records calls and answers the given items. Steered by
- * the functions above. Opt-in only - pass it in `config.plugins`.
- */
 export default {
   id: 'testing-support-history',
   dependsOn: ['support-chat'],

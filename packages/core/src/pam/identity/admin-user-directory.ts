@@ -28,15 +28,10 @@ import {
 import { user } from './schema/index.js';
 import type { PlayEligibilityPublisher } from './service/play-eligibility.service.js';
 import { expireActiveSessions } from './service/session.service.js';
-// Read-only cross-domain read of the player/profile table via the public /schema
-// subpath (allowed per ADR-0020) so back-office lists can label players by
-// username + KYC without leaking the schema to the consumer module.
 import { player } from '@openora/core/pam/schema/profile';
 
 export const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&');
 
-// Identity owns the `user` table, so it owns the admin directory port.
-// admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.
 const PLAYER_LOOKUP_COLUMNS = {
   playerId: player.id,
   userId: player.userId,
@@ -50,13 +45,6 @@ const PLAYER_LOOKUP_COLUMNS = {
   currency: player.currency,
 };
 
-/**
- * The player table stores kycStatus as free text; coerce unknown values to null so the port's
- * KycStatus contract holds without a cast. Normalize the deprecated `verified` value to
- * `approved` here - the single read boundary every admin consumer (wallet queue filter, tag
- * evaluation, admin-console) goes through - so a legacy row is indistinguishable from a fresh
- * one downstream.
- */
 function withKycStatus<T extends { kycStatus: string | null }>(row: T) {
   const kyc = KycStatusSchema.safeParse(row.kycStatus);
   return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
@@ -78,10 +66,6 @@ function toRow(r: typeof user.$inferSelect) {
 
 type AdminUserPatch = { isActive?: boolean; role?: string };
 
-/**
- * The revocation a patch calls for, keyed on the state it writes rather than on the change it
- * makes: repeating a deactivation or a demotion revokes again.
- */
 export function automaticMcpRevokeReason(
   patch: AdminUserPatch,
 ): McpTokenAutomaticRevokeReason | null {
@@ -193,8 +177,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       if (!updated) {
         return null;
       }
-      // A deactivated account keeps no session: its sessions end with the change, so no open
-      // Backoffice or player tab outlives it. Keyed on the state written, as the tokens are.
       const sessionsEnded = patch.isActive === false ? await expireActiveSessions(tx, id) : 0;
       if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
         await this.playEligibility.publish(tx, id);
@@ -220,8 +202,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       return null;
     }
 
-    // Emit only on an actual active-status flip, after the commit. Literal topics
-    // (not a ternary) so the catalog generator's emit-scanner picks them up.
     if (patch.isActive !== undefined && patch.isActive !== written.wasActive) {
       if (patch.isActive) {
         this.events.emit('identity.user.reactivated', { userId: id, actorId, ip, userAgent });
@@ -229,7 +209,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         this.events.emit('identity.user.deactivated', { userId: id, actorId, ip, userAgent });
       }
     }
-    // Signs the account's open tabs out (the realtime session stream) and audits the revocation.
     if (written.sessionsEnded > 0) {
       this.events.emit('identity.sessions.revoked_all', {
         userId: id,
@@ -259,8 +238,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       .select(PLAYER_LOOKUP_COLUMNS)
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
-      // Exact, case-insensitive match - ILIKE would let % and _ in `username` act as
-      // wildcards, letting a caller-supplied pattern select an arbitrary matching player.
       .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
       .limit(1);
     const [row] = rows;
@@ -294,9 +271,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   }
 
   async findUserIdsByKycStatus(status: KycStatus, limit = 1000) {
-    // player.kycStatus is free text and still carries the deprecated `verified` alias for
-    // `approved` on older rows - match both so a caller asking for `approved` doesn't silently
-    // miss legacy-verified players, same normalization as lookupPlayers' read boundary.
     const matches: KycStatus[] =
       normalizeKycStatus(status) === 'approved' ? ['approved', 'verified'] : [status];
     const rows = await this.drizzle.db

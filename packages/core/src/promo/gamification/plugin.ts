@@ -83,11 +83,7 @@ const RAKEBACK_AUTO_PAYOUT_QUEUE = queue('promo-rakeback-auto-payout');
 const RANK_REWARD_AUTO_PAYOUT_QUEUE = queue('promo-rank-reward-auto-payout');
 const RAKEBACK_SWEEP_QUEUE = queue('promo-rakeback-sweep');
 const RAKEBACK_NOTIFY_QUEUE = queue('promo-rakeback-notify');
-// Races close at whatever timestamp the operator configured, not a shared daily/weekly/monthly
-// anchor - a short recurring tick is what makes "closed within a minute of endAt" true.
 const RACE_PAYOUT_CRON = '*/1 * * * *';
-// A claim can land at any moment (it is detected inline on the bet that crosses a threshold),
-// so settling it - the cash credit and the win announcement - runs on the same short tick.
 const RANK_CHALLENGE_PAYOUT_CRON = '*/1 * * * *';
 const RANK_ANNOUNCE_CRON = '*/1 * * * *';
 const STREAK_ANNOUNCE_CRON = '*/1 * * * *';
@@ -96,15 +92,9 @@ const RANK_PERIOD_PRUNE_CRON = '30 3 * * *';
 const RAKEBACK_SWEEP_CRON = '25 4 * * *';
 const RAKEBACK_NOTIFY_CRON = '11 * * * *';
 
-// The cron tick carries only which payout to run; what is owed is read from the database.
 const RankPayoutJobSchema = z.object({ kind: RankPayoutKindSchema });
 const EmptyJobSchema = z.object({});
 
-/**
- * Forfeiting a player's unclaimed streak rewards when a responsible-gambling block starts runs as
- * a retried job, not inside the best-effort event handler: a failure there would leave the
- * rewards claimable once the block lapses. The `settledAt is null` claim makes a retry harmless.
- */
 const StreakForfeitJobSchema = z.object({
   userId: UuidSchema,
   reason: StreakForfeitReasonSchema,
@@ -115,7 +105,6 @@ const FORFEIT_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs
 
 const AutoPayoutJobSchema = z.object({ userId: UuidSchema });
 
-/** Fans a bet out to every wager-tracking consumer this module owns, on the one sealed port. */
 class CompositeWagerTracking implements WagerTrackingCommands {
   constructor(private readonly consumers: readonly WagerTrackingCommands[]) {}
 
@@ -204,7 +193,6 @@ export default {
   dependsOn: ['exchange-rate', 'audit'],
   requiresPorts: [IDENTITY_READER],
   register(ctx) {
-    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(rakebackLiabilityTool, (c) => {
       const liability = new RakebackLiabilityService(c.get(DRIZZLE));
       return (input) => liability.report(input);
@@ -335,7 +323,6 @@ export default {
           logger.warn({ kind: payload.kind }, 'rank payout skipped - service not constructed');
           return;
         }
-        // Each grant is announced through the outbox in its own transaction.
         if (payload.kind === 'levelUp') {
           await rankPayouts.settleLevelUps();
         } else {
@@ -429,9 +416,6 @@ export default {
           return;
         }
         const { userId, actorId, initiatedBy } = parsed.data;
-        // No queue idempotency key, for the reason the bonus forfeit gives: a second block after
-        // the first lapsed would derive the same key and be dropped. The durable guard is the
-        // `settledAt is null` claim inside `forfeitUnclaimed`.
         void jobs
           .enqueue(
             STREAK_FORFEIT_QUEUE,
@@ -513,8 +497,6 @@ export default {
     });
 
     ctx.routers.add('promo-gamification', (c, options) => {
-      // A cash prize/cashback credit lands here when its own source (a race, a rank challenge
-      // tier) is priced in something else - see `priceForPayout`.
       const payoutCurrency = resolveWalletDefaultCurrency(
         c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG).wallet : undefined,
       );
@@ -592,8 +574,6 @@ export default {
       const jobQueue = c.get(JOB_QUEUE);
       jobs = jobQueue;
       if (options?.mounted !== false) {
-        // The periodic kinds share one tick: each run pays only a period that has closed since
-        // the last, so when a player is actually paid is the anchor in the ladder's settings.
         for (const [kind, cron] of [
           ['levelUp', schedule.ranks.payoutCron],
           ['daily', schedule.ranks.periodicCron],
@@ -604,7 +584,6 @@ export default {
             .schedule(RANK_PAYOUT_QUEUE, `promo-rank-payout.${kind}.cron`, { kind }, { cron })
             .catch((err: unknown) => logger.error({ err, kind }, 'rank payout schedule failed'));
         }
-        // Milestone rewards are claimed by the player now; drop the schedule that used to pay them.
         void jobQueue
           .unschedule(STREAK_PAYOUT_QUEUE, 'promo-streak-payout.cron')
           .catch((err: unknown) => logger.error({ err }, 'streak payout unschedule failed'));

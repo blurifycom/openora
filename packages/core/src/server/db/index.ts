@@ -36,7 +36,6 @@ export {
   sumMoney,
 } from './query-helpers.js';
 
-// Transactional outbox - writer binds atomically with the state change; relay publishes to MESSAGE_BROKER. See ADR-0016/0045.
 export {
   auditOutbox,
   auditOutboxRejected,
@@ -50,6 +49,4 @@ export { DrizzleOutboxWriter } from './outbox/writer.js';
 export { DrizzleProcessedEventLog } from './outbox/processed-events.js';
 export { OutboxRelay, type OutboxRelayOptions, oldestUnrelayedEvent } from './outbox/relay.js';
 
-// @openora/core/server/orm is a framework-free leaf so drizzle-kit can bundle schemas without
-// pulling in DrizzleService; cross-workspace consumers use it to share the physical drizzle-orm copy.
 export * as orm from './orm.js';

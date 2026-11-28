@@ -15,19 +15,8 @@ import {
   bigserial,
 } from 'drizzle-orm/pg-core';
 
-// Insert-order tie-break for rows emitted in the same millisecond. A plain sequence behind a
-// nullable column, not an identity column: adding an identity column rewrites the table under an
-// exclusive lock, this only touches the catalog. Rows written before it exist hold a null `seq`
-// and sort first.
 export const eventOutboxSeq = pgSequence('event_outbox_seq');
 
-// Transactional outbox table. A service writes the event envelope here INSIDE the
-// same db.transaction as its state change (EventBus.emitInTransaction), so the row
-// commits atomically with the state - the event can never be lost in the gap
-// between "state changed" and "event published". The OutboxRelay claims pending
-// rows (claimedAt lease), publishes them to the MESSAGE_BROKER and stamps
-// publishedAt. Delivery is at-least-once; consumers dedup via processed_events.
-// See ADR-0016 and ADR-0045.
 export const eventOutbox = pgTable(
   'event_outbox',
   {
@@ -39,8 +28,6 @@ export const eventOutbox = pgTable(
     correlationId: text(),
     orderingKey: text(),
     occurredAt: timestamp({ withTimezone: true }).notNull(),
-    // Set by the database, never by a writer: breaks ties between rows emitted in the same
-    // millisecond, so the relay publishes them in the order they were written.
     seq: bigint({ mode: 'number' }).default(sql`nextval('event_outbox_seq')`),
     publishedAt: timestamp({ withTimezone: true }),
     claimedAt: timestamp({ withTimezone: true }),
@@ -52,12 +39,6 @@ export const eventOutbox = pgTable(
 
 export type EventOutboxRow = typeof eventOutbox.$inferSelect;
 
-// Audit records waiting for the audit shipper. A writer inserts the entry INSIDE its business
-// transaction, so the record commits if and only if the change it describes does, without
-// taking the audit chain lock there. The shipper appends rows to `audit_log` in `id` order and
-// deletes them only after that append commits; `event_id` is the record's identity across a
-// re-ship, so a crash between the two commits never writes a row twice. Part of the engine set
-// so every database a service writes to carries one.
 export const auditOutbox = pgTable('audit_outbox', {
   id: bigserial({ mode: 'number' }).primaryKey(),
   eventId: uuid().notNull().unique('audit_outbox_event_id_unique'),
@@ -65,10 +46,6 @@ export const auditOutbox = pgTable('audit_outbox', {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// `audit_outbox` rows the shipper could not chain, moved aside as they were with the reason, so
-// the rest keep shipping: an entry that fails its schema, or one whose event id the chain already
-// holds with other content. One row per outbox row; an event id may repeat. Append-only: the audit
-// migration denies UPDATE, DELETE and TRUNCATE on it.
 export const auditOutboxRejected = pgTable('audit_outbox_rejected', {
   id: bigserial({ mode: 'number' }).primaryKey(),
   outboxId: bigint({ mode: 'number' }).notNull().unique('audit_outbox_rejected_outbox_id_unique'),
@@ -79,8 +56,6 @@ export const auditOutboxRejected = pgTable('audit_outbox_rejected', {
   rejectedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// One row per deployment: the anonymous id the usage telemetry reports under. The check pins the
-// table to a single row, so replicas racing on first boot converge on one id.
 export const openoraInstance = pgTable(
   'openora_instance',
   {
@@ -91,11 +66,6 @@ export const openoraInstance = pgTable(
   (t) => [check('openora_instance_singleton', sql`${t.singleton}`)],
 );
 
-// Consumer-side dedup. One row per (event, handler) that finished successfully, so a
-// redelivered event skips the handlers that already ran. `consumer` is the stable
-// handler identity built in createApp: `<service>/<plugin>/<topic>[#n]`. Pruned by the
-// OutboxRelay once older than the stream retention - past it the broker can no longer
-// redeliver the event. See ADR-0045.
 export const processedEvents = pgTable(
   'processed_events',
   {
@@ -104,8 +74,6 @@ export const processedEvents = pgTable(
     processedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // Same as primaryKey({ columns }); depretec flags every primaryKey() call because
-    // of its deprecated variadic overload.
     new PrimaryKeyBuilder([t.eventId, t.consumer]),
     index('processed_events_processed_at_idx').on(t.processedAt),
   ],

@@ -11,11 +11,6 @@ type StoredCard = Pick<typeof chatMessage.$inferSelect, 'roomId' | 'userId' | 't
 
 export type SystemCardOutcome = 'inserted' | 'updated' | 'stale' | 'conflict' | 'room-gone';
 
-/**
- * What an upsert does to the message already stored under its id. The id is the caller's own
- * record id, so a row that is not this actor's system card in this room is someone else's
- * message: it is refused, never overwritten. Same card: only a higher version applies.
- */
 export function resolveSystemCardWrite(
   stored: StoredCard,
   incoming: Pick<SystemCardUpsert, 'roomId' | 'actorId' | 'version'>,
@@ -30,17 +25,12 @@ export function resolveSystemCardWrite(
   return incoming.version > stored.version ? 'updated' : 'stale';
 }
 
-/** Applies `chat.system_message.upserted` to the chat table: idempotent and order-safe. */
 export class ChatSystemCardService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly transport: RealtimeTransport,
   ) {}
 
-  /**
-   * Publishes the card to realtime clients once it is stored, so a refused, stale or dropped
-   * card never reaches them, and a redelivery that changes nothing publishes nothing.
-   */
   async apply(card: SystemCardUpsert, postedAt?: Date): Promise<SystemCardOutcome> {
     const { outcome, record } = await this.write(card, postedAt);
     if (record) {
@@ -68,7 +58,6 @@ export class ChatSystemCardService {
         if (!room || room.deletedAt !== null) {
           return { outcome: 'room-gone' };
         }
-        // The global room is stored as a null room id, as the local writer does.
         roomId = room.slug === GLOBAL_CHAT_ROOM_ID ? null : roomId;
       }
       const [inserted] = await tx
@@ -100,7 +89,6 @@ export class ChatSystemCardService {
         .where(eq(chatMessage.id, card.messageId))
         .for('update');
       if (!stored) {
-        // Deleted between the insert and the read: the next delivery inserts it.
         throw new Error(`chat system card ${card.messageId} vanished mid-upsert`);
       }
       const outcome = resolveSystemCardWrite(stored, { ...card, roomId });

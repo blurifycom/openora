@@ -1,8 +1,6 @@
 import { createAccessControl } from 'better-auth/plugins/access';
 import { adminStatement, type AdminGrant } from '@openora/core/contracts';
 
-// The catalog itself lives in contracts so the browser can import it too; this
-// name stays because better-auth calls it a statement.
 export const statement = adminStatement;
 
 export const ac = createAccessControl(statement);
@@ -72,8 +70,6 @@ export const roles = {
 } as const;
 
 export type RoleName = keyof typeof roles;
-// Server-side aliases of the contract types, so AdminGuard.assert and the
-// permission-level helpers keep reading in `server/auth` terms.
 export type {
   AdminResource as ResourceName,
   AdminActionOf as ActionOf,
@@ -83,11 +79,6 @@ export function isRoleName(name: string): name is RoleName {
   return Object.hasOwn(roles, name);
 }
 
-/**
- * AdminGuard's grant rule. A user holding any DB role assignment has exactly the grants those
- * roles give (`grants`); a user with none (`null`) falls back to the static role table by
- * `user.role`. A role missing from that table holds nothing either way.
- */
 export function holdsGrant(
   { role, grants }: { role: string; grants: readonly AdminGrant[] | null },
   resource: string,

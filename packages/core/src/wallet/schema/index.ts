@@ -53,8 +53,6 @@ import {
   type ManualAdjustmentDirection,
 } from '../contract/index.js';
 
-// Enum values derive from the canonical tuples so the DB enum can never drift from
-// the contract. Editing the value set is a one-place change in wallet-tx.ts.
 export const walletTransactionTypeEnum = pgEnum(
   'wallet_transaction_type',
   WALLET_TRANSACTION_TYPES,
@@ -67,8 +65,6 @@ export const walletTransactionStatusEnum = pgEnum(
 
 export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
 
-// Deprecated, kept for one release - see the comment on `BONUS_CREDIT_SOURCE_TYPES` in
-// contract/index.ts. Not referenced anywhere else.
 export const walletBonusCreditSourceTypeEnum = pgEnum(
   'wallet_bonus_credit_source_type',
   BONUS_CREDIT_SOURCE_TYPES,
@@ -79,10 +75,6 @@ export const walletBonusCreditStatusEnum = pgEnum(
   BONUS_CREDIT_STATUSES,
 );
 
-// Same credit/debit vocabulary as a manual adjustment (contract/index.ts) - a wallet
-// move only ever has these two directions, so one enum covers both. Nullable: rows
-// written before this column existed (all gift/rain legs pre-dating it, plus any
-// other historical row) have no recoverable direction and stay NULL rather than guess.
 export const walletTransactionDirectionEnum = pgEnum(
   'wallet_transaction_direction',
   MANUAL_ADJUSTMENT_DIRECTIONS,
@@ -130,15 +122,6 @@ export const walletBalance = pgTable(
   (t) => [uniqueIndex('wallet_balance_wallet_id_currency_idx').on(t.walletId, t.currency)],
 );
 
-// Where the ledger invariant starts counting for a (wallet, currency): `amount` is the balance
-// the rows up to `asOf` add up to, so the invariant is
-// `amount + effect(rows created after asOf) = wallet_balance.amount`. Every row at or before
-// `asOf` was in a terminal status when it was taken, so none of them can move money again.
-// Append-only history; the latest `asOf` (then `createdAt`) is the one in force. Three writers:
-// - the operator-run backfill, over rows nothing can price (written before `balance_after`,
-//   `direction` or a bet's `real_share` existed), taken from the balance;
-// - the scan itself, rolling a pair that checked clean forward from the ledger alone (`runId`);
-// - a super admin resolving a breach by vouching for the current balance (`findingId`).
 export const walletBalanceBaseline = pgTable(
   'wallet_balance_baseline',
   {
@@ -149,7 +132,6 @@ export const walletBalanceBaseline = pgTable(
     currency: text().notNull(),
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     asOf: timestamp({ withTimezone: true }).notNull(),
-    // The ledger invariant run that took it; NULL when an admin did.
     runId: uuid(),
     findingId: uuid().references(() => walletReconciliationFinding.id),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -173,80 +155,37 @@ export const walletTransaction = pgTable(
     type: walletTransactionTypeEnum().notNull(),
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     currency: text().notNull(),
-    // The wallet's real balance in `currency` right after this row's money moved, written in the
-    // same transaction as the move. The balance before is this minus the signed `amount`, except
-    // for a stake bonus funds partly paid (they sit on the grant, not here) and for a win or bet
-    // reversal on a bonus-funded round: those write the full `amount` but move the balance by
-    // the real share only. Set once, when the
-    // balance moves: a deposit's at completion, a withdrawal's at the request. NULL on rows written
-    // before this column existed and on rows that moved no balance (a pending deposit, a failed one).
     balanceAfter: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
-    // The chain this moved on. A currency does not identify one, so reconciliation and
-    // reporting are per (currency, network). Null on a fiat rail and on any internal
-    // transaction type (bet/win/bonus) that never touches a chain.
     network: text(),
     status: walletTransactionStatusEnum()
       .$type<WalletTransactionStatus>()
       .notNull()
       .default('pending'),
     rail: walletRailEnum().$type<WalletRail>(),
-    // Which way this leg moved money. Derived from what the operation IS (never a
-    // caller input) and set at every insert site going forward; NULL only for rows
-    // written before this column existed. See the enum comment above for why gift/
-    // rain needed this at all - they wrote the same `type` for both legs.
     direction: walletTransactionDirectionEnum().$type<ManualAdjustmentDirection>(),
-    // Admin user id (cross-module). Bare uuid, no .references - the user table is
-    // owned by another domain.
     reviewedBy: uuid(),
     reviewedAt: timestamp({ withTimezone: true }),
     reviewReason: text(),
-    // What an auto-approved payout was worth in the fx pivot at approval. The daily amount cap
-    // sums these, so a rate move after approval cannot shrink what the player already took.
-    // NULL on every other row, and on auto-approvals written before this column existed.
     autoApprovalPivotAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
-    // Deposit, withdrawal and manual adjustment rows: the amount converted into the player's
-    // reference currency when the row was written, with the rate and the rate's own timestamp.
-    // Written once and never recalculated. NULL on every other row type, and on rows written
-    // before these columns existed.
     referenceCurrency: text(),
     referenceAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     referenceRate: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     referenceRateAsOf: timestamp({ withTimezone: true }),
-    // Withdrawal rows: the network fee kept from the debited `amount`, so the payout sent to the
-    // provider is `amount - fee`. NULL on every other row type and on withdrawals without a fee.
     fee: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
-    // The concrete settlement provider (eg a PSP name) and its reference id (eg the
-    // PSP charge id), as first-class typed columns so they are filterable for
-    // reconciliation rather than buried in free-form JSON.
     providerName: text(),
     providerRefId: text(),
     externalRoundId: text(),
-    // Bet rows: the bet's `WagerContext.product`, and its `rtp` when `isWagerRtp` held, so the
-    // ledger can price a bet's house edge. NULL on every other row type and on older bets.
     wagerProduct: walletWagerProductEnum(),
     wagerRtp: decimal({ precision: 19, scale: 18 }),
     destinationAddress: text(),
     destinationTag: text(),
     destinationWalletId: text(),
     txHash: text(),
-    // Reserved escape hatch for genuinely free-form, non-queryable extras. Provider
-    // identity now lives in the typed columns above, not here.
     metadata: text(),
-    // Client-supplied dedup key for deposit/withdraw. A wallet is 1:1 with its user, so
-    // scoping the unique index on walletId is equivalent to scoping on userId.
     idempotencyKey: uuid(),
-    // What a correction debit asked to collect; `amount` is what it took, zero included. NULL on
-    // every other row, so a correction's replay never matches the stake debit it re-collects.
     correctionRequestedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
-    // What a bonus-funded round's win or stake reversal put into the real balance, the rest having
-    // gone to the grant; NULL when all of `amount` was real. On a bet, the part of the stake the
-    // real balance paid, written on every bet (NULL only on bets older than that).
     realShare: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
-    // A `bet_reversal` that named the bet it returns: that bet's row. Unique, so one bet is
-    // reversed at most once. NULL on every other row and on a reversal that named no bet.
     reversedTransactionId: uuid(),
-    // Bet and reversal rows while a turnover requirement is owed: the pivot value this row adds
-    // to (or, as a reversal, takes from) the player's turnover progress. NULL when nothing counted.
     turnoverContribution: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     turnoverState: walletTurnoverStakeStateEnum(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -260,7 +199,6 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_currency_idx').on(t.currency),
     index('wallet_transaction_currency_network_idx').on(t.currency, t.network),
     index('wallet_transaction_tx_hash_idx').on(t.txHash),
-    // Lowercased so the queue search finds an EVM address whatever case the player pasted it in.
     index('wallet_transaction_destination_address_idx').on(sql`lower(${t.destinationAddress})`),
     index('wallet_transaction_provider_ref_idx').on(t.providerRefId),
     index('wallet_transaction_status_type_created_at_idx').on(t.status, t.type, t.createdAt),
@@ -274,7 +212,6 @@ export const walletTransaction = pgTable(
       .on(t.providerName, t.providerRefId)
       .where(sql`${t.providerRefId} IS NOT NULL`),
     index('wallet_transaction_external_round_id_idx').on(t.externalRoundId),
-    // RG netting reads one player's legs of a round; a round id can be shared across players.
     index('wallet_transaction_wallet_id_external_round_id_idx')
       .on(t.walletId, t.externalRoundId)
       .where(sql`${t.externalRoundId} IS NOT NULL`),
@@ -287,10 +224,8 @@ export const walletTransaction = pgTable(
   ],
 );
 
-// Per-player threshold override (unique userId); overrides the global autoWithdrawal.fiatThreshold.
 type LedgerRow = typeof walletTransaction.$inferSelect;
 
-/** A ledger leg as responsible gambling counts play: its type and direction. */
 export type PlayLeg = {
   type: Extract<LedgerRow['type'], 'bet' | 'bet_reversal' | 'win' | 'win_reversal'>;
   direction: NonNullable<LedgerRow['direction']>;
@@ -301,7 +236,6 @@ export const WAGER_LEGS = [
   { type: 'bet_reversal', direction: 'credit' },
 ] as const satisfies readonly PlayLeg[];
 
-// Every ledger leg RG reads as play; RG spend and RG standing both count from this list.
 export const LOSS_LEGS = [
   ...WAGER_LEGS,
   { type: 'win', direction: 'credit' },
@@ -320,13 +254,10 @@ export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
     .$onUpdateFn(() => new Date()),
 });
 
-// A module-owned block on every withdrawal, one row per (player, source). The owning module
-// places and releases it in its own transaction; a source never releases another's hold.
 export const walletWithdrawalHold = pgTable(
   'wallet_withdrawal_hold',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cross-module (identity), bare uuid.
     userId: uuid().notNull(),
     source: text().notNull(),
     reason: text().notNull(),
@@ -368,39 +299,21 @@ export const walletDepositAddress = pgTable(
   ],
 );
 
-// A player's own address book: named payout destinations they pick from at withdrawal
-// time instead of re-typing a 40-character string. Never validated on-chain here - the
-// payment provider rejects a malformed address when the payout is actually attempted.
 export const walletWithdrawalAddress = pgTable(
   'wallet_withdrawal_address',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cross-module (identity), bare uuid - no .references, the user table is another
-    // domain's. Every read and write is scoped on this column.
     userId: uuid().notNull(),
     label: text().notNull(),
     currency: text().notNull(),
     network: text().notNull(),
     address: text().notNull(),
-    // On a tag/memo chain the address alone does not name a beneficiary - one exchange address
-    // serves every account behind it, and the tag picks which. The tag is therefore part of the
-    // whitelisted destination, not a per-withdrawal free field: without it here a player who
-    // saved a shared address could pay out to anyone else holding an account at it.
     destinationTag: text(),
-    // Which custody provider `providerWalletId` belongs to. Without it a provider swap would
-    // silently reuse the previous vendor's id and pay out to whatever that id now names.
     providerName: text(),
-    // The provider-side whitelisted destination this address was registered as, in whatever
-    // form the bound custody vendor names one. Null when the adapter does not whitelist - a
-    // synchronous PSP has no such concept - and the payout path then has nothing to send to,
-    // which is the intended failure: an unwhitelisted address must not be payable.
     providerWalletId: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // A double submit conflicts instead of duplicating the same destination twice. The tag is
-    // coalesced because two NULLs are distinct to a unique index, which would let the untagged
-    // form of an address be saved twice.
     uniqueIndex('wallet_withdrawal_address_user_id_currency_network_address_idx').on(
       t.userId,
       t.currency,
@@ -430,8 +343,6 @@ export const walletProviderVault = pgTable(
   ],
 );
 
-// Global fiat/crypto auto-withdrawal thresholds, Super-Admin-editable at runtime.
-// singletonKey's unique constraint DB-enforces exactly one row ever ('global').
 export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique().default('global'),
@@ -444,9 +355,6 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
     .default(
       sql`ARRAY['high_risk','bonus_abuser','kyc_rejected','withdrawal_review','multi_account']::text[]`,
     ),
-  // Withdrawal velocity: a wallet with >= `velocityCount` withdrawals in the trailing
-  // `velocityWindowHours` goes to manual review. NULL disables the check entirely; the
-  // defaults are the values the rule shipped hardcoded.
   velocityCount: integer().default(3),
   velocityWindowHours: integer().notNull().default(24),
   updatedBy: uuid(),
@@ -456,8 +364,6 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// One row per player owing turnover, all amounts in `pivotCurrency`. Remaining is
-// `greatest(required - progress, 0)`. `userId` is the identity user (cross-module, no FK).
 export const walletTurnover = pgTable('wallet_turnover', {
   userId: uuid().primaryKey(),
   pivotCurrency: text().notNull(),
@@ -472,9 +378,6 @@ export const walletTurnover = pgTable('wallet_turnover', {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// One row per credit that added a requirement. `(source, sourceRef)` is the idempotency guard:
-// `sourceRef` is the ledger transaction id, or the grant id for a conversion. `pivotValue` and
-// `required` stay NULL while the entry is `pending` (no rate yet).
 export const walletTurnoverEntry = pgTable(
   'wallet_turnover_entry',
   {
@@ -508,7 +411,6 @@ export const walletTurnoverEntry = pgTable(
   ],
 );
 
-// Staff overrides of `wallet.turnover.productPercent`; a product absent here uses the config.
 export const walletTurnoverConfig = pgTable('wallet_turnover_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique().default('global'),
@@ -521,12 +423,6 @@ export const walletTurnoverConfig = pgTable('wallet_turnover_config', {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// Deprecated, unreferenced by any service or route - chat gifts and rain now grant a
-// `promo_grant` instead (`WalletCommandsService.credit`). Kept so a rolling deploy of the
-// previous release does not 500 on a table that no longer exists; a follow-up migration drops
-// both this table and `wallet_bonus_rollover_config` once a release has fully rolled out. Any
-// row still `active` here represents a player's real locked bonus balance under the old model
-// and needs a data migration into `promo_grant` before that drop, not just a schema change.
 export const walletBonusCredit = pgTable(
   'wallet_bonus_credit',
   {
@@ -574,21 +470,11 @@ export const walletAsset = pgTable(
     minDeposit: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     minWithdrawal: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     withdrawalFee: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
-    // Independent: an asset can take deposits before it can pay out.
     depositEnabled: boolean().notNull().default(true),
     withdrawalEnabled: boolean().notNull().default(true),
-    // Which bound payment vendor settles this (currency, network) pair. Core treats
-    // this as an opaque operator-chosen key, never a vendor's product name - null
-    // means the default single binding (the only adapter bound to PAYMENT_ADAPTER).
     providerName: text(),
-    // The maximum network fee tolerated when sweeping this asset from a per-player
-    // custody container into the pool. Null means no ceiling. Per-asset, not global:
-    // fee units differ per chain, so one global number cannot compare a fee
-    // denominated in one chain's native coin against another's.
     sweepDustThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     sweepFeeCeiling: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
-    // Below this pooled balance, the sweep fee ceiling is ignored - running the pool
-    // dry to save a fee costs more than the fee. Null means never override the ceiling.
     poolLiquidityFloor: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
@@ -604,14 +490,10 @@ export const walletCustodySweepStatusEnum = pgEnum(
   WALLET_CUSTODY_SWEEP_STATUSES,
 );
 
-// An internal transfer of vendor-side funds between containers (per-player custody ->
-// pooled account). Must NEVER touch a player balance - the player was already credited
-// at deposit time, so this table only tracks the vendor-side movement.
 export const walletCustodySweep = pgTable(
   'wallet_custody_sweep',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cross-module (identity), bare uuid - whose custody container this swept.
     userId: uuid().notNull(),
     providerName: text().notNull(),
     currency: text().notNull(),
@@ -619,15 +501,8 @@ export const walletCustodySweep = pgTable(
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     estimatedFee: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     externalId: text(),
-    // Opaque vendor-side id of the pool the funds landed in. Player funds must stay
-    // separate from operator funds, and a regulator asks which account received them -
-    // without this the ledger can evidence that a sweep happened but not where it went.
     poolRef: text(),
     txHash: text(),
-    // `unknown`: a thrown sweepToPool cannot distinguish "vendor never saw it" from
-    // "vendor accepted it and the response was lost". The row moves to `unknown` and
-    // KEEPS holding the in-flight guard below - releasing it would risk a double
-    // transfer of real funds.
     status: walletCustodySweepStatusEnum()
       .$type<WalletCustodySweepStatus>()
       .notNull()
@@ -640,8 +515,6 @@ export const walletCustodySweep = pgTable(
       .$onUpdateFn(() => new Date()),
   },
   (t) => [
-    // The durable in-flight guard: at most one pending/processing/unknown sweep per
-    // (user, currency, network) at a time.
     uniqueIndex('wallet_custody_sweep_user_id_currency_network_idx')
       .on(t.userId, t.currency, t.network)
       .where(sql`status IN ('pending','processing','unknown')`),
@@ -655,12 +528,6 @@ export const walletCustodySweep = pgTable(
 
 export const walletJobRunStatusEnum = pgEnum('wallet_job_run_status', WALLET_JOB_RUN_STATUSES);
 
-// Claim-based concurrency guard plus run history for the wallet cron jobs (sweep,
-// reconciliation). Claiming a run IS the insert; a unique-index conflict means another
-// cycle already owns it. Not a session-level advisory lock: a lock held by a pooled
-// connection that gets returned to the pool is a deadlock waiting to happen. A partial
-// unique index is the same guarantee, enforced by the database, with no connection
-// affinity.
 export const walletJobRun = pgTable(
   'wallet_job_run',
   {
@@ -674,7 +541,6 @@ export const walletJobRun = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // At most one live run per job.
     uniqueIndex('wallet_job_run_job_name_idx')
       .on(t.jobName)
       .where(sql`${t.finishedAt} IS NULL`),
@@ -692,8 +558,6 @@ export const walletReconciliationFindingStatusEnum = pgEnum(
   WALLET_RECONCILIATION_FINDING_STATUSES,
 );
 
-// A finding is a report, never a credit instruction - nothing automated may credit a
-// player or move funds off the back of a row in this table.
 export const walletReconciliationFinding = pgTable(
   'wallet_reconciliation_finding',
   {
@@ -707,8 +571,6 @@ export const walletReconciliationFinding = pgTable(
     address: text(),
     tag: text(),
     txHash: text(),
-    // The deposit's sender, when the vendor reported one: what a refund destination is
-    // compared against.
     sourceAddress: text(),
     externalId: text(),
     transactionId: uuid(),
@@ -717,32 +579,23 @@ export const walletReconciliationFinding = pgTable(
       .$type<WalletReconciliationFindingStatus>()
       .notNull()
       .default('open'),
-    // Cross-module (identity admin user), bare uuid.
     resolvedBy: uuid(),
     resolvedAt: timestamp({ withTimezone: true }),
     resolutionNote: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // Re-running reconciliation over an overlapping window must not duplicate findings.
-    // `providerName` is part of the key because an externalId is only unique WITHIN a
-    // vendor: two providers can hand out the same reference, and without it the second
-    // one's finding is silently swallowed as a duplicate of the first's.
     uniqueIndex('wallet_reconciliation_finding_kind_provider_external_id_idx')
       .on(t.kind, t.providerName, t.externalId)
       .where(sql`${t.externalId} IS NOT NULL`),
     index('wallet_reconciliation_finding_status_created_at_idx').on(t.status, t.createdAt),
     index('wallet_reconciliation_finding_run_id_idx').on(t.runId),
-    // Every ledger run looks up the open findings of one kind by key prefix, page by page.
     index('wallet_reconciliation_finding_open_kind_external_id_idx')
       .on(t.kind, t.providerName, t.externalId)
       .where(sql`${t.status} = 'open'`),
   ],
 );
 
-// One row per vendor deposit an admin refunded on chain, whichever finding it was refunded
-// from. It outlives the finding: a redelivery or a later poll of the same vendor transaction
-// files no new deposit finding and credits nothing, and a second refund of it is refused.
 export const walletRefundedDeposit = pgTable(
   'wallet_refunded_deposit',
   {
@@ -787,22 +640,14 @@ export const walletDepositStatusEvent = pgTable(
 
 export const walletOnRampOrderStatusEnum = pgEnum('wallet_on_ramp_order_status', ON_RAMP_STATUSES);
 
-// A fiat purchase on a vendor's hosted checkout, delivered on-chain to `walletAddress`. Never a
-// ledger row: the deposit path credits the coins when they land. Kept for the player's return
-// status, the AML trail, and so open orders count toward the deposit limit. The id is the
-// purchase id the vendor echoes back.
 export const walletOnRampOrder = pgTable(
   'wallet_on_ramp_order',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Cross-module (identity), bare uuid.
     userId: uuid().notNull(),
     externalId: text(),
-    // Scoped to the player: a replayed checkout returns this order instead of opening another.
     idempotencyKey: uuid().notNull(),
     checkoutUrl: text(),
-    // When the vendor stops taking payment on the checkout; a pending order counts toward the
-    // deposit limit until then.
     expiresAt: timestamp({ withTimezone: true }),
     fiatAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     fiatCurrency: text().notNull(),
@@ -839,13 +684,6 @@ export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
 export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;
-// Ledger API v1 idempotency: one row per key a bet, win or reverse applied or refused, written in
-// the transaction that moved the money (or undid it), with the request's fingerprint and the answer
-// it got, so a retry is answered from here and a reused key with another request is told apart.
-// Append-only. `target_ref_id` is the bet a reverse returned, or found nowhere (a tombstone);
-// unique per provider, so a stake comes back once and a tombstoned bet is never taken.
-// `user_id` and `amount` are what the request moved, for reconciliation to hold the wallet row
-// to; null on rows written before they were recorded.
 export const ledgerApiRequest = pgTable(
   'ledger_api_request',
   {
@@ -870,11 +708,6 @@ export const ledgerApiRequest = pgTable(
 
 export const ledgerPlayerStatusEnum = pgEnum('ledger_player_status', PLAYER_STATUSES);
 
-// The ledger's own view of whether a user may stake: identity's play eligibility inputs, written
-// through PLAY_ELIGIBILITY_PROJECTION in identity's transaction, replayed by the
-// `identity.play_eligibility.changed` event and healed by identity's boot backfill (ADR-0056). A stake reads this row `FOR SHARE` in its own transaction and is refused
-// without one. Every write keeps the highest `version`. `status` is null for a user without a
-// player profile. Time-bounded blocks keep their end and are judged when read.
 export const ledgerPlayEligibility = pgTable('ledger_play_eligibility', {
   userId: uuid().primaryKey(),
   rgBlocked: boolean().notNull(),
@@ -887,11 +720,6 @@ export const ledgerPlayEligibility = pgTable('ledger_play_eligibility', {
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// The ledger's own copy of each user's effective deposit and wager limits: compliance writes it
-// through RG_LIMIT_LEDGER in the transaction that changes a limit, replays it with the
-// `compliance.rg_limits.changed` event and heals it with its boot backfill (ADR-0057). The gate
-// reads these rows, never `user_limit`. One row per limit, keyed by the compliance limit id.
-// `currency` is null when the limit has none (or fails the snapshot contract): the gate refuses.
 export const ledgerUserLimit = pgTable(
   'ledger_user_limit',
   {
@@ -906,8 +734,6 @@ export const ledgerUserLimit = pgTable(
   (t) => [index('ledger_user_limit_user_id_idx').on(t.userId)],
 );
 
-// The version of each user's `ledger_user_limit` rows, kept even when they have none left, so a
-// late event can never resurrect a removed limit. Every write keeps the highest version.
 export const ledgerUserLimitVersion = pgTable('ledger_user_limit_version', {
   userId: uuid().primaryKey(),
   version: integer().notNull(),

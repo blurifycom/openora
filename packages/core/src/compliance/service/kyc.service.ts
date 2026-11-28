@@ -39,9 +39,6 @@ import {
 import { and, desc, eq } from 'drizzle-orm';
 import * as z from 'zod';
 import { kycVerification, type KycVerification } from '../schema/index.js';
-// Cross-domain read via the public /schema subpath (ADR-0020). Lifetime deposits come from
-// WALLET_READER: player.totalDeposits is a display copy in the player's currency, not the pivot
-// this compares in.
 import { player } from '@openora/core/pam/schema/profile';
 import type {
   SubmitKycInput,
@@ -80,9 +77,6 @@ export const KycResubmissionAlreadyRequestedError = makeConflictError(
   'A resubmission is already requested for this tier',
 );
 
-// A vendor session the player opened (not_started) is as live as one awaiting a decision
-// (pending): submit() treats both as the session to continue, and a newer manual row would
-// shadow it.
 const KYC_IN_PROGRESS_STATUSES: ReadonlySet<KycStatus> = new Set(['pending', 'not_started']);
 
 export const KycVerificationInProgressError = makeConflictError(
@@ -90,18 +84,12 @@ export const KycVerificationInProgressError = makeConflictError(
   'A verification of this tier is in progress: wait for its decision, or override the tier KYC status to close it first',
 );
 
-// Fail-closed: a referenceId is supposed to belong to one player. If rows sharing one
-// ever don't, that's a vendor reference collision - refuse to touch any of them rather
-// than risk writing one player's decision onto another player's kyc_verification row.
 const KycReferenceOwnerMismatchError = createDomainError<[referenceId: string]>(
   'KycReferenceOwnerMismatchError',
   (referenceId) =>
     `kyc_verification rows sharing referenceId ${referenceId} belong to different users`,
 );
 
-// The webhook-supplied tier and KycAdapter.resolveDecision's tier disagree for the same
-// referenceId - the vendor's own signals are inconsistent, so refuse the decision rather
-// than guess which tier it actually belongs to.
 const KycReferenceTierMismatchError = createDomainError<[referenceId: string]>(
   'KycReferenceTierMismatchError',
   (referenceId) =>
@@ -208,8 +196,6 @@ function toSummaryDto(dto: NonNullable<PlayerKycView['basic']['current']>): KycV
   };
 }
 
-// An allow-list, not a spread: vendor reference ids, risk signals and checks never reach an agent.
-// The decision reason is the vendor's free text and travels separately, as personal data.
 function toStandingVerification(dto: NonNullable<PlayerKycView['basic']['current']>) {
   return {
     status: normalizeKycStatus(dto.status),
@@ -221,8 +207,6 @@ function toStandingVerification(dto: NonNullable<PlayerKycView['basic']['current
   };
 }
 
-// Player-facing projection: strips riskSignals, checks, decisionReason, provider, and
-// referenceId - those are fraud-detection internals, admin-only via getPlayerKyc.
 export function toPlayerSummaryView(view: PlayerKycView): PlayerKycSummaryView {
   const summarizeTier = (tier: PlayerKycView['basic']) => ({
     current: tier.current ? toSummaryDto(tier.current) : null,
@@ -234,11 +218,6 @@ export function toPlayerSummaryView(view: PlayerKycView): PlayerKycSummaryView {
   };
 }
 
-/**
- * Owns the append-only `kyc_verification` history and the submit/reconcile/re-KYC
- * lifecycle. All `player.kycStatus` writes go through the injected KycStatusWriter
- * (pam-owned single-writer seam); this service never touches the player table for writes.
- */
 export type KycVerificationDeps = {
   drizzle: DrizzleService;
   events: EventBus;
@@ -319,31 +298,11 @@ export class KycVerificationService {
     });
   }
 
-  /**
-   * The whole body - including the vendor call - runs under a transaction-scoped advisory
-   * lock keyed on (userId, tier), so two concurrent submits (a double-clicked "start
-   * verification", or a retried request) can never both reach the vendor: the second caller
-   * blocks until the first's transaction commits, then sees the first's row and returns it
-   * instead of minting a second vendor session. Scoping the lock (and the DB dedup check) to
-   * referenceId alone wouldn't do this - a vendor that mints a fresh session per call (eg
-   * Didit) gives each concurrent caller a DIFFERENT referenceId, so the
-   * (userId, referenceId, tier) unique constraint never collides. This must gate the vendor
-   * call itself, not just the insert, or the operator still ends up with two live vendor
-   * sessions even though only one row survives here.
-   */
   async submit(userId: User['id'], input: SubmitKycInput, meta?: ClientMeta) {
     const outcome = await this.drizzle.db.transaction((trx) =>
       withAdvisoryXactLock(trx, `kyc-submit:${userId}:${input.tier}`, async () => {
-        // Scoped to (userId, tier), NOT referenceId: a fresh Advanced resubmission gets a
-        // new vendor session/referenceId, so a referenceId-scoped lookup would find nothing
-        // and default previousStatus to 'not_started' even when a prior (rejected) tier
-        // history exists - corrupting the audit-log's before.kycStatus. latestVerification
-        // captures the true prior state across vendor sessions for this tier.
         const previous = await this.latestVerification(userId, input.tier, trx);
 
-        // An active, undecided session already exists - collapse onto it instead of
-        // minting a second one. NOT resubmission_requested: that status explicitly invites
-        // a fresh submission, so it must fall through to a real new vendor call below.
         if (previous && KYC_IN_PROGRESS_STATUSES.has(previous.status)) {
           logger.info(
             { userId, tier: input.tier, existingId: previous.id },
@@ -405,9 +364,6 @@ export class KycVerificationService {
                 trx,
               )
             : null;
-        // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-        // compliance.md): written to the outbox inside the transaction, so it can never be
-        // dropped by a crash between commit and publish.
         await this.emitUpdated(trx, {
           userId,
           tier: input.tier,
@@ -452,46 +408,6 @@ export class KycVerificationService {
     return { ...toDto(outcome.row), verificationUrl: outcome.verificationUrl };
   }
 
-  /**
-   * Idempotent vendor-decision apply (polling + webhook). No-op when the latest record
-   * already holds the mapped status. `reason`/`documentTypes`/`riskSignals` are only
-   * overwritten when the caller supplies them, and `decidedAt` is stamped only on an
-   * actual decision, so a bare status reconcile never blanks out an earlier one. Emits
-   * `compliance.kyc.high_risk_signal_detected` when the supplied `riskSignals` (never a
-   * preserved prior value) trip `warrantsHighRiskTag`.
-   *
-   * A vendor `opts.dateOfBirth` under the configured minimum age forces the decision to
-   * `rejected` with reason `underage` and emits `compliance.kyc.underage_detected`; an adult
-   * one that differs from the player's declared date of birth emits
-   * `compliance.kyc.dob_mismatch_detected`. Both only on a decision that changed a row. A
-   * date that is not an ISO date or datetime turns a vendor `approved` into
-   * `resubmission_requested`. A row rejected as `underage` takes no later vendor decision;
-   * only a staff override moves it.
-   *
-   * `opts.receivedAt` (when the caller has it - the `kyc-decision-sync` job path always
-   * does, stamped at webhook-arrival time in the router, BEFORE the job queue can
-   * reorder anything) is a monotonicity guard: a decision older than the one already on
-   * file for this referenceId is refused, not applied. The job queue does not honour
-   * `orderingKey` (see bullmq-job-queue.ts), so two decisions for the same reference can
-   * reach here out of arrival order after a retry; without this guard the LATER-arriving
-   * (but actually OLDER) decision would win and silently overwrite a newer, correct one.
-   * A caller with no `receivedAt` (eg a direct `reconcile` call with no job path behind
-   * it) skips the guard entirely - always applies, exactly as before.
-   *
-   * A vendor `approved` is downgraded to `resubmission_requested` when the checks this
-   * call is about to persist (`opts.checks`, falling back to the existing row's `checks`
-   * when the caller supplies none - the SAME value written below, so the gate can never
-   * evaluate a different set of checks than the one that ends up on the row) contain any
-   * non-`approved` entry.
-   *
-   * `opts.tier` scopes the decision to one tier's row when the adapter could attribute it
-   * (see `KycResult.tier`); when absent, the decision fans out to every row sharing this
-   * referenceId - the documented "shared vendor workflow" behavior. Either way, every row
-   * found for `referenceId` must belong to the same `userId` - a vendor reference is
-   * supposed to identify one player, and a collision (one vendor reference reused across
-   * players) must fail closed rather than let one player's decision write another's row.
-   */
-  // referenceId is the KYC vendor's own reference, not an internal Uuid - stays a plain string.
   async reconcile(
     referenceId: string,
     vendorStatus: KycVendorStatus,
@@ -588,9 +504,6 @@ export class KycVerificationService {
                 trx,
               )
             : null;
-        // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-        // compliance.md): written to the outbox inside the transaction, so it can never be
-        // dropped by a crash between commit and publish.
         await this.emitUpdated(trx, {
           userId: row.userId,
           tier: row.tier,
@@ -610,9 +523,6 @@ export class KycVerificationService {
         });
       }
 
-      // Emitted once per reconcile() call, not once per row: the signal describes the
-      // vendor SESSION (referenceId), not a tier - a shared-workflow decision touching
-      // both tiers is still exactly one real signal.
       const anyChanged = reconciled.some((outcome) => outcome.changed);
       const [primaryOutcome] = reconciled;
       const highRisk = opts.riskSignals && warrantsHighRiskTag(opts.riskSignals);
@@ -647,24 +557,6 @@ export class KycVerificationService {
     return primary ? toDto(primary.row) : null;
   }
 
-  /**
-   * `kyc-decision-sync` job handler, run off the webhook request path. Enriches the
-   * reconcile through `resolveDecision`/`resolveRiskSignals` when the bound adapter
-   * implements them, falling back to a status-only reconcile when it does not. Errors
-   * (notably `PlayerNotFoundError`) propagate so the job queue retries the decision.
-   * `receivedAt` is the webhook's
-   * arrival time (stamped by the router before enqueue, carried on the job payload) -
-   * passed through to `reconcile` as the monotonicity watermark so a job that runs
-   * out of arrival order (the driver ignores `orderingKey`) can't overwrite a newer
-   * decision with a stale one.
-   *
-   * `webhookTier` is whatever `parseWebhook` attributed the decision to, carried on the
-   * job payload. When `resolveDecision` ALSO reports a tier and it disagrees with
-   * `webhookTier`, the vendor's own signals are inconsistent - refuse the decision rather
-   * than guess. The resolved tier (webhook's, falling back to resolveDecision's) is what
-   * scopes `reconcile` to one row; absent both, `reconcile` keeps the shared-workflow
-   * fan-out.
-   */
   async syncDecision(
     referenceId: string,
     status: KycVendorStatus,
@@ -729,7 +621,6 @@ export class KycVerificationService {
     }
   }
 
-  // A reader without the lookup cannot tell, so it reports no mismatch.
   private async declaredDateOfBirthDiffers(
     userId: User['id'],
     verified: string,
@@ -756,10 +647,6 @@ export class KycVerificationService {
     };
   }
 
-  /**
-   * The player's KYC standing for an agent: the basic-tier status their profile holds and the
-   * current verification of each tier. Null when the player has no profile.
-   */
   async getKycStanding(userId: User['id']) {
     const [kycStatus, view] = await Promise.all([
       this.identityReader.getPlayerKycStatusByUserId(userId),
@@ -777,8 +664,6 @@ export class KycVerificationService {
     };
   }
 
-  // Names which of `rows`' currencies sumInPivot could not price, for the error log/report
-  // when a re-KYC evaluation has to be skipped - sumInPivot itself only says "some row failed".
   private async unpricedCurrencies(
     rows: readonly { currency: string; total: string }[],
     pivotCurrency: string,
@@ -793,18 +678,6 @@ export class KycVerificationService {
     return checked.filter((row) => !row.priced).map((row) => row.currency);
   }
 
-  /**
-   * Deposit-event hook: flips a currently-approved player to `resubmission_requested`
-   * once cumulative deposits cross a fresh per-currency threshold band. Idempotent twice
-   * over: skips unless presently approved, and the watermark stops a re-approved
-   * high-roller re-firing on every later deposit.
-   *
-   * A player can deposit in several currencies, so every completed deposit is priced into
-   * the platform's exchange-rate pivot currency before it is summed - filtering to the
-   * player's own currency instead (as this used to) reads $0 forever for a player who
-   * never deposits in it, and mismatches reverifyThresholds, which is keyed by pivot
-   * currency.
-   */
   async handleDeposit(userId: User['id']) {
     const [current] = await this.drizzle.db
       .select({ id: player.id, currency: player.currency, kycStatus: player.kycStatus })
@@ -814,21 +687,13 @@ export class KycVerificationService {
       return;
     }
 
-    // A failed read throws, so the deposit event is redelivered rather than the check skipped.
     const depositsByCurrency = await this.walletReader.getDepositsByCurrency(userId);
-    // Priced into the platform's exchange-rate pivot (not the player's own currency) so
-    // it lines up with reverifyThresholds, which is configured per pivot currency (e.g.
-    // { USD: '10000' }) - a threshold keyed by player.currency would only ever fire for
-    // players whose wallet currency happens to match the config key.
     const pivotCurrency = resolveExchangeRatePivot(this.platformConfig?.exchangeRate);
     const totalDeposits = await sumInPivot(
       depositsByCurrency,
       pivotCurrency,
       this.exchangeRateReader,
     );
-    // Never write a watermark from a guess: a fabricated total would sum, compare and get
-    // stored exactly like a real one, and no later deposit could tell the difference. Skip
-    // this evaluation and let the next deposit re-check once every currency prices again.
     if (totalDeposits === null) {
       const unpriced = await this.unpricedCurrencies(depositsByCurrency, pivotCurrency);
       const err = new Error(
@@ -888,9 +753,6 @@ export class KycVerificationService {
         },
         trx,
       );
-      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-      // compliance.md): written to the outbox inside the transaction, so it can never be
-      // dropped by a crash between commit and publish.
       await this.emitUpdated(trx, {
         userId,
         tier: 'basic',
@@ -910,13 +772,6 @@ export class KycVerificationService {
     });
   }
 
-  /**
-   * Shared transaction body for `requestResubmission`/`overrideStatus`: inserts the
-   * manual `kyc_verification` history row and calls `KYC_STATUS_WRITER.setStatus` in
-   * the SAME transaction so the locking and idempotency rules cannot diverge between
-   * the two call sites. Caller has already run the idempotency pre-check
-   * (`requirePlayerRowForUpdate` + a status compare) before calling this.
-   */
   private async applyManualDecision(
     trx: DrizzleTx,
     params: {
@@ -958,12 +813,6 @@ export class KycVerificationService {
     return { row: toDto(inserted), playerTransition };
   }
 
-  /**
-   * Admin-initiated: asks the player to resubmit documents (basic tier) or to complete enhanced
-   * verification (advanced tier). Idempotent on a repeat call while the player is already at
-   * `resubmission_requested` - no duplicate history row or `compliance.kyc.updated` emit.
-   * Refuses while the tier's latest verification is still open (pending/not_started).
-   */
   async requestResubmission(
     userId: User['id'],
     tier: KycTier,
@@ -987,12 +836,6 @@ export class KycVerificationService {
     }
   }
 
-  /**
-   * Agent-proposed: asks the player for advanced-tier (enhanced) verification through the same
-   * locked request as the admin route, and reports whether anything changed - a repeat is a
-   * no-op. The in-progress refusal re-runs under the lock because the proposal was approved
-   * after its precondition ran, and the player may have started a verification since.
-   */
   async requestEnhancedKyc({
     userId,
     reason,
@@ -1011,8 +854,6 @@ export class KycVerificationService {
     return { changed };
   }
 
-  // Under the player's submit lock for the tier, so a concurrent submit cannot slip a live
-  // session in under the manual row.
   private lockedResubmissionRequest(params: {
     userId: User['id'];
     tier: KycTier;
@@ -1046,8 +887,6 @@ export class KycVerificationService {
     if (currentStatus === 'resubmission_requested') {
       return { row: latest ? toDto(latest) : null, changed: false };
     }
-    // The tier's latest verification row, not player.kycStatus: a player with no basic
-    // verification yet sits at kycStatus not_started but has no session to collide with.
     if (latest && KYC_IN_PROGRESS_STATUSES.has(latest.status)) {
       throw new KycVerificationInProgressError();
     }
@@ -1060,9 +899,6 @@ export class KycVerificationService {
       referenceIdPrefix: 'manual-resubmit',
       decidedAt: null,
     });
-    // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-    // compliance.md): written to the outbox inside the transaction, so it can never be
-    // dropped by a crash between commit and publish.
     await this.emitUpdated(trx, {
       userId,
       tier,
@@ -1076,12 +912,6 @@ export class KycVerificationService {
     return { row: applied.row, changed: true };
   }
 
-  /**
-   * Admin-initiated: forces the player to an operator-chosen status, guarded by the
-   * router's `compliance:override-limit`. `resolveManualStatus` remaps an `approved`
-   * choice to `manually_overridden`; every other choice is written verbatim. Idempotent
-   * on a repeat call resolving to the status the player already holds.
-   */
   async overrideStatus(
     userId: User['id'],
     tier: KycTier,
@@ -1114,9 +944,6 @@ export class KycVerificationService {
         referenceIdPrefix: 'manual-override',
         decidedAt: isDecided(resolvedStatus) ? new Date() : null,
       });
-      // compliance.kyc.updated is the audit-visible status-change event (docs/standards/
-      // compliance.md): written to the outbox inside the transaction, so it can never be
-      // dropped by a crash between commit and publish.
       await this.emitUpdated(trx, {
         userId,
         tier,
@@ -1135,13 +962,6 @@ export class KycVerificationService {
     return outcome.row;
   }
 
-  /**
-   * Admin-initiated: approves every listed player through the same
-   * `overrideStatus('approved', ...)` path, so a bulk approval is recorded identically
-   * to a single one. Bounded fan-out with per-player error isolation - one failure is
-   * captured as a result row rather than aborting the batch, and the returned message
-   * is a fixed string, never the raw exception text.
-   */
   async bulkApprove(
     userIds: User['id'][],
     tier: KycTier,
@@ -1153,25 +973,12 @@ export class KycVerificationService {
         await this.overrideStatus(userId, tier, 'approved', reason, actorId);
         return { userId, success: true, error: null };
       } catch (err) {
-        // Fixed string on the wire, regardless of error type - never the raw exception
-        // text (it can carry the userId, eg PlayerNotFoundError, or a driver/constraint
-        // message). The distinction itself ("not found" vs some other failure) is
-        // already an existence oracle over an id an admin didn't otherwise confirm; the
-        // full error is logged server-side (with userId) for ops.
         logger.error({ err, userId }, 'bulk KYC approve failed for player');
         return { userId, success: false, error: 'Failed to approve KYC' };
       }
     });
   }
 
-  /**
-   * Registration-time hook (compliance/plugin.ts's `identity.user.registered` listener):
-   * auto-approves the basic tier for a player whose country - or the global KYC switch -
-   * exempts them, instead of leaving them on `pending`. Idempotent on the player's
-   * basic-tier history, not on `(countryCode, reason)`: any prior basic-tier row (a real
-   * submission, a manual decision, or an earlier exemption) means this is a no-op, since
-   * the resolver's decision can only be evaluated once, at registration.
-   */
   async applyExemption(
     userId: User['id'],
     params: { countryCode: string | null; reason: 'global_disabled' | 'country_exempt' },
@@ -1224,9 +1031,6 @@ export class KycVerificationService {
             source: 'exemption',
           },
         });
-        // The audit record above already covers this change for the regulator; the event
-        // still serves realtime/tag consumers, and auditRecorded keeps its subscriber from
-        // appending a duplicate audit row.
         await this.emitUpdated(trx, {
           userId,
           playerId: playerTransition?.playerId ?? current.id,

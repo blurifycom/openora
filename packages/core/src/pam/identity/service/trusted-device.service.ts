@@ -24,12 +24,6 @@ export type TrustedDeviceServiceDeps = {
   trustedDeviceDays: number;
 };
 
-/**
- * Server-side half of "trusted device". better-auth issues an opaque trust cookie that
- * nothing can enumerate or revoke; a device skips the second factor only when that
- * cookie AND an unrevoked row here are both present, which is what makes the 30-day
- * window listable, auditable, and revocable by the user or a Super Admin.
- */
 export class TrustedDeviceService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -43,9 +37,6 @@ export class TrustedDeviceService {
     this.trustedDeviceDays = trustedDeviceDays;
   }
 
-  // Read by `securityControlsFor` so a player's own copy - "trust this device for the
-  // next N days" - names the operator's actual configured window instead of a hardcoded
-  // guess that silently lies the moment `adminSecurityConfig.trustedDeviceDays` changes.
   getTrustedDeviceDays(): number {
     return this.trustedDeviceDays;
   }
@@ -165,15 +156,6 @@ export class TrustedDeviceService {
     return { success: true, userAgent: row.userAgent };
   }
 
-  /**
-   * Drops the trust granted to the device a compromised session was riding on, so the
-   * forced logout is followed by a full re-authentication instead of a silent skip.
-   */
-  /**
-   * `actorId` is absent when `AdminGuard` forces this itself (a fingerprint mismatch,
-   * not an admin or the device owner acting) - the audit trail attributes that case to
-   * the system rather than mislabeling it as a self-revoke.
-   */
   async revokeForDevice(
     userId: User['id'],
     userAgent: string | null,

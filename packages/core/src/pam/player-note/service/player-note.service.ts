@@ -74,11 +74,6 @@ export class PlayerNoteService {
     return found !== undefined;
   }
 
-  /**
-   * Adds the note an approved agent proposal carries, at most once per proposal. The note keeps
-   * the proposal id under a unique index, so a replay of the proposal, or a second execution
-   * racing the first, inserts nothing; another proposal with the same text adds its own note.
-   */
   async createForProposal({
     playerId,
     content,

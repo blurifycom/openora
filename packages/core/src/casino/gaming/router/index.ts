@@ -73,8 +73,6 @@ import {
   type CacheAdapter,
 } from '@openora/core/contracts';
 
-// Every non-GET admin route can change what the public catalog returns. The read-only
-// rule-preview POST is included too; it only costs a cache refill.
 const CATALOG_MUTATIONS: ReadonlySet<string> = new Set(
   Object.entries(gamingAdminContract)
     .filter(([, procedure]) => procedure['~orpc'].route.method !== 'GET')
@@ -118,8 +116,6 @@ export function createGamingRouter({
 
   const catalog = <T>(key: string, load: () => Promise<T>) => cachedCatalog(cache, key, load);
 
-  // Checked on the exact rule a write stores or an evaluation resolves, not one read
-  // earlier - see docs/modules/gaming.md.
   function ruleReportingAccess(context: OssContext): GameCategoryRuleAuthorizer {
     return async (rule) => {
       if (rules.exposesReporting(rule)) {
@@ -128,7 +124,6 @@ export function createGamingRouter({
     };
   }
 
-  // Geo rules are compliance data; require the same grant compliance's own geo-rule routes do.
   async function geoFilterAccess(context: OssContext, input: ListAdminGamesInput) {
     if (
       input.geoBlocked !== undefined ||

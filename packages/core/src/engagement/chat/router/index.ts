@@ -103,10 +103,6 @@ const SEND_MESSAGE_RATE_LIMIT = {
   onUnavailable: 'allow',
 } as const;
 
-// Reads work for anonymous viewers; when authenticated, the id drives per-viewer
-// block filtering (ABC-45 AC11). Sourced from server-verified `auth`, never a header.
-// A viewer whose session could not be looked up gets a 503, never an anonymous read
-// that drops their block filter or refuses them a private room they belong to.
 function resolveViewerId(context: OssContext) {
   throwIfSessionUnavailable(context);
   return context.auth?.userId;
@@ -159,7 +155,6 @@ export function createChatRouter({
       }
     });
 
-  // Private-room streams require membership; public-room and global streams are readable anonymously.
   const authorizeChannel = (input: { roomId?: ChatRoom['id'] | null }, context: OssContext) =>
     mapErrors(
       {
@@ -187,7 +182,6 @@ export function createChatRouter({
     );
   };
 
-  // Shaped to spread straight into a moderation command as its actor and request metadata.
   const assertChatModerator = async (context: OssContext) => {
     const { userId, ip, userAgent } = await adminGuard.assert(
       context,
@@ -317,8 +311,6 @@ export function createChatRouter({
       );
     }),
 
-    // Grant includes all rooms the player has access to (public + private memberships)
-    // so a client can subscribe to any accessible room without re-auth.
     getConnection: os.getConnection.handler(async ({ input, context }) => {
       context.resHeaders?.set('cache-control', 'no-store');
       const viewerId = resolveViewerId(context);
@@ -349,12 +341,12 @@ export function createChatRouter({
       openRoomStream(input, context, signal),
     ),
 
-    // oxlint-disable-next-line typescript/no-deprecated -- the deprecated lane stays served until clients move to streamRoom.
+    // oxlint-disable-next-line typescript/no-deprecated
     streamMessages: os.streamMessages.handler(async ({ input, signal, context }) =>
       messagesOf(await openRoomStream(input, context, signal)),
     ),
 
-    // oxlint-disable-next-line typescript/no-deprecated -- the deprecated lane stays served until clients move to streamRoom.
+    // oxlint-disable-next-line typescript/no-deprecated
     streamSignals: os.streamSignals.handler(async ({ input, signal, context }) => {
       const roomId = await authorizeChannel(input, context);
       return createEventStreamGenerator(

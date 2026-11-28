@@ -77,7 +77,6 @@ import { CommandMetadataSchema } from './chat-command.js';
 import { SystemEventMetadataSchema } from './chat-command-metadata.js';
 import { ChatContextRefSchema, EnsureChatContextRoomInputSchema } from './chat-context-room.js';
 
-// Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
 const lobbyLayoutAuditSnapshotSchema = LobbyLayoutSnapshotSchema;
 
@@ -108,7 +107,6 @@ const cmsBannerScheduleUpdatedEvent = cmsBannerScheduleEventBase.extend({
   before: z.object({ endsAt: TimestampSchema }),
 });
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
-// `auditRecorded` marks a change whose audit row the tag write appended in its own transaction.
 const tagPlayerEventBase = actorReasonBase
   .extend({
     playerId: UuidSchema,
@@ -132,7 +130,6 @@ const gameProviderSnapshotSchema = z.object({
   customLogoUrl: z.string().nullable().default(null),
   metadata: z.unknown().nullable(),
   isActive: z.boolean(),
-  // Older provider events predate auto-approve; replay them as off.
   autoApproveNewGames: z.boolean().default(false),
 });
 
@@ -141,7 +138,6 @@ const gameGeoRuleEventState = z.object({
   gameId: UuidSchema,
   countryCode: CountryCodeSchema,
   reason: NonEmptyReasonSchema,
-  // v1 events predate the column, when every rule was admin-written.
   source: GeoRuleSourceSchema.default(GEO_RULE_ADMIN_SOURCE),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -151,11 +147,6 @@ const providerGeoRuleEventState = gameGeoRuleEventState
   .omit({ gameId: true, source: true })
   .extend({ providerId: UuidSchema });
 
-// A category's full config snapshot, shared by gaming.category.created (spread at the
-// top level) and gaming.category.updated (before/after) - see the domainEventSchemas
-// entries below. Older events predate per-category sorting; the sort fields default so
-// they replay at the catalog's own defaults rather than failing to parse. The same
-// holds for the membership fields: an older event replays as a manual category.
 const gameCategorySnapshotSchema = z.object({
   slug: z.string(),
   name: z.string(),
@@ -171,7 +162,6 @@ const gameCategorySnapshotSchema = z.object({
   membershipRule: GameCategoryRuleSchema.nullable().default(null),
 });
 
-// Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
   userId: UuidSchema,
   amount: MoneyAmountSchema,
@@ -179,16 +169,12 @@ const walletTxnBase = z.object({
   transactionId: UuidSchema,
 });
 
-// Why a withdrawal already flipped to `processing` went back to the queue before reaching the PSP.
 export const WITHDRAWAL_REQUEUE_REASONS = [
   'withdrawal_hold',
   'withdrawal_lock',
   'withdrawal_pin_locked',
   'kyc_required',
-  // A control's port threw after the flip, so it could not be shown clear.
   'control_check_failed',
-  // Reconciliation found it approved past the cutoff with no provider recorded: no vendor was
-  // asked to pay it, so it goes back for a person to approve again.
   'never_dispatched',
 ] as const;
 export type WithdrawalRequeueReason = (typeof WITHDRAWAL_REQUEUE_REASONS)[number];
@@ -214,13 +200,7 @@ export const KycStatusUpdatedSchema = z.object({
   previousStatus: KycStatusSchema,
   reason: z.string().nullable(),
   source: KycStatusSourceSchema,
-  // The originating state transaction has already appended the matching audit record.
-  // Consumers still receive the event, while audit's event subscriber must not duplicate it.
   auditRecorded: z.literal(true).optional(),
-  // Forward-compatible (ADR-0016): every deployment binds RedisStreamsBroker (ADR-0030/
-  // 0032), so a durable backlog survives a restart. A pre-tiering (v4) payload in that
-  // backlog at rollout has no `tier` at all - everything WAS basic-only before tiering,
-  // so default it rather than let safeParse silently drop the event.
   tier: KycTierSchema.default('basic'),
 });
 
@@ -228,16 +208,11 @@ export const TWO_FACTOR_METHODS = ['totp', 'otp', 'backup_code', 'webauthn'] as 
 export const TwoFactorMethodSchema = z.enum(TWO_FACTOR_METHODS);
 export type TwoFactorMethod = z.infer<typeof TwoFactorMethodSchema>;
 
-// A session is only authenticated after a credential-bearing flow completes. This is
-// deliberately narrower than session refresh and distinct from 2FA enrolment, which
-// changes account configuration but does not create a new authenticated session.
 export const AUTHENTICATION_METHODS = [
   'password',
   'email_verification',
   'phone',
   'totp',
-  // A delivered second-factor code (email or SMS) completes a sign-in exactly as `totp`
-  // does; the withheld-login challenge is the same flow with a different transport.
   'otp',
   'backup_code',
 ] as const;
@@ -253,7 +228,6 @@ const sportsbookBetBase = z.object({
   providerTxId: SportsbookProviderIdSchema,
   currency: CurrencyTickerSchema,
   version: z.number().int().positive(),
-  // The bet's audit row is written in the step's own transaction.
   auditRecorded: z.literal(true).optional(),
 });
 
@@ -261,19 +235,11 @@ export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
-    // The country the registration IP resolved to (GEO_CHECK_COMMANDS), null when
-    // unresolved or no geo-ip port is bound. Drives the country-level KYC exemption
-    // listener - kept optional for backward-compat with a pre-tiering payload.
     countryCode: CountryCodeSchema.nullable().optional(),
-    // The consent the player actually gave, carried so the audit trail holds it too -
-    // the `player` row alone is current state, not a record of the act. Absent when the
-    // consent write was discarded because a player row already existed.
     termsVersion: z.string().optional(),
     acceptedTerms: z.literal(true).optional(),
     acceptedAge: z.literal(true).optional(),
   }),
-  // No `userId`: registration is unauthenticated, so the address is the only subject
-  // there is - the same shape `identity.user.login.failed` settled on below.
   'identity.user.registration.failed': authContextBase.extend({
     email: z.email(),
     username: UsernameSchema.optional(),
@@ -292,8 +258,6 @@ export const domainEventSchemas = {
     email: z.email(),
     reason: z.string().nullable().optional(),
     attemptsRemaining: z.number().int().optional(),
-    // Carried only by the country gate, which is the one refusal that turns on where the
-    // caller is rather than on what they sent.
     countryCode: CountryCodeSchema.nullable().optional(),
   }),
   'identity.user.logout': authContextBase.extend({
@@ -331,10 +295,7 @@ export const domainEventSchemas = {
   'identity.2fa.disabled': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
-    // The method the account was enrolled with, i.e. what was turned off.
     method: TwoFactorMethodSchema,
-    // The credential that authorised turning it off: the enrolled method's live code, or
-    // a recovery code when that method is what the player lost.
     stepUpMethod: TwoFactorMethodSchema,
   }),
   'identity.2fa.verified': authContextBase.extend({
@@ -349,21 +310,15 @@ export const domainEventSchemas = {
     method: TwoFactorMethodSchema,
     attemptsRemaining: z.number().int().nonnegative(),
   }),
-  // The account's recovery credentials were replaced; every previously issued code is
-  // dead from here on.
   'identity.2fa.backup_codes_regenerated': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
-    // The credential that authorised the rotation.
     stepUpMethod: TwoFactorMethodSchema,
   }),
-  // A Super Admin cleared someone else's second factor; the account is back to the
-  // unenrolled state and must set one up before it reaches any admin route again.
   'identity.2fa.reset': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     actorId: UuidSchema,
-    // Free-text justification the Super Admin gave when clearing the second factor.
     reason: z.string(),
   }),
   'identity.2fa.lockout.triggered': authContextBase.extend({
@@ -371,12 +326,9 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     lockoutUntil: TimestampSchema,
   }),
-  // An admin account reached an admin route without a second factor configured.
   'identity.2fa.enrollment_blocked': authContextBase.extend({
     userId: UuidSchema,
   }),
-  // A session was used from a device or network that no longer matches the one it
-  // was issued to; the session is revoked before this is emitted.
   'identity.session.fingerprint_mismatch': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -394,18 +346,12 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     deviceId: UuidSchema,
-    // Absent when the guard itself forces the revoke (fingerprint mismatch) rather
-    // than an admin or the device owner acting.
     actorId: UuidSchema.optional(),
   }),
   'identity.password.reset': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
-  // The player changed their own login password from Security settings (current
-  // password verified first). Distinct from `identity.password.reset` (the
-  // forgot-password OTP flow) and from `identity.sessions.revoked_all`, which the
-  // same action also emits.
   'identity.password.changed': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -414,25 +360,17 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
-  // The account's login email was replaced after the new address was confirmed by OTP.
-  // Carries both addresses for the audit trail.
   'identity.email.changed': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     previousEmail: z.email(),
     newEmail: z.email(),
-    // Stamped right after the swap returns; the audit row's own write time can trail it.
-    // Optional so a payload from before this field still parses.
     changedAt: TimestampSchema.optional(),
-    // The swap appended its audit row in its own transaction; absent on events published
-    // before that, which the audit subscriber still records.
     auditRecorded: z.literal(true).optional(),
   }),
   'identity.phone.verified': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
-    // Re-binding a different number is the same topic, so the audit record needs the
-    // state it replaced rather than assuming every verification starts from unverified.
     previousPhoneVerified: z.boolean(),
   }),
   'identity.security.login_withdrawal_alerts.updated': authContextBase.extend({
@@ -462,14 +400,11 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
-  // The wrong PINs that tripped the lock, not the PINs themselves.
   'identity.security.withdrawal_pin.locked': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     lockedUntil: TimestampSchema,
   }),
-  // The code itself never travels here - audit/event streams are broader-read than
-  // security.me, which is the only place the raw value is returned.
   'identity.security.anti_phishing_code.set': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -479,17 +414,8 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
-  // A user's play eligibility as committed, for the ledger's `ledger_play_eligibility`
-  // projection. Written to the outbox by every writer of an input, in its own transaction; the
-  // consumer keeps the highest `version`, since delivery order is not guaranteed.
   'identity.play_eligibility.changed': PlayEligibilitySnapshotSchema,
-  // A user's effective deposit and wager limits as committed, for the ledger's
-  // `ledger_user_limit` projection. Written to the outbox by every limit writer in its own
-  // transaction; the consumer keeps the highest `version` (ADR-0057).
   'compliance.rg_limits.changed': RgLimitsSnapshotSchema,
-  // An admin toggled a user's active status (the only user-lifecycle flow today;
-  // users are deactivated, never hard-deleted). userId = subject, actorId = the
-  // admin who acted (for a complete audit trail).
   'identity.user.deactivated': authContextBase.extend({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.user.reactivated': authContextBase.extend({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.session.revoked': authContextBase.extend({
@@ -502,13 +428,8 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     actorId: UuidSchema.optional(),
-    // Set when the acting session must survive (self-service password change): the
-    // streamSession handler skips the `revoked` push for this session id. The admin
-    // revoke-all path leaves it unset, so every session is kicked.
     exceptSessionId: UuidSchema.optional(),
   }),
-  // A sign-in refused for a deactivated account, after its credential was proven. Not a
-  // credential failure: it never counts toward the lockout. userId = the refused account.
   'identity.user.login_blocked': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -521,8 +442,6 @@ export const domainEventSchemas = {
     action: z.string(),
     role: z.string().optional(),
   }),
-  // An admin triggered a password-reset OTP send on a player's behalf (backoffice
-  // "send reset link" action). userId = subject player, actorId = the admin.
   'identity.password.admin_reset_requested': authContextBase.extend({
     userId: UuidSchema,
     email: z.email(),
@@ -530,43 +449,25 @@ export const domainEventSchemas = {
   }),
 
   'wallet.deposit.completed': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
-  // An on-chain deposit landed but the deposit hold policy kept it off the balance; the funds
-  // wait for an operator to release or refund them.
   'wallet.deposit.held': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
   'wallet.withdrawal.completed': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
-  // A player requested a withdrawal; funds are held (balance debited) and the
-  // request enters the back-office approval queue as `pending`.
   'wallet.withdrawal.requested': walletTxnBase
     .extend({ playerId: UuidSchema.nullable() })
     .extend(authContextBase.shape),
-  // A payments admin approved a pending withdrawal; it moves to `processing` and
-  // is sent to the PSP/custody rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
     .extend({ playerId: UuidSchema.nullable(), adminId: UuidSchema })
     .extend(authContextBase.shape),
-  // A payments admin rejected a pending withdrawal; held funds are returned to the
-  // player balance. `adminId` is the acting reviewer; `reason` is mandatory.
   'wallet.withdrawal.rejected': walletTxnBase
     .extend({ playerId: UuidSchema.nullable(), adminId: UuidSchema, reason: z.string() })
     .extend(authContextBase.shape),
-  // An approved withdrawal failed at the PSP/custody rail; the held funds were
-  // returned to the player balance and the transaction moved to `failed`. `adminId` is
-  // null when no reviewer was involved: an auto-approved payout, or a later webhook rejection.
   'wallet.withdrawal.failed': walletTxnBase.extend({
     playerId: UuidSchema.nullable(),
     adminId: UuidSchema.nullable(),
   }),
-  // A hold, `withdrawal_lock`, PIN lockout or KYC requirement landed after the approval flip, so the
-  // withdrawal went back to the status it was approved from before reaching the PSP. No money moved; it waits for a decision again.
   'wallet.withdrawal.requeued': walletTxnBase.extend({
     playerId: UuidSchema.nullable(),
     reason: z.enum(WITHDRAWAL_REQUEUE_REASONS),
   }),
-  // A super admin credited or debited a balance directly, outside the deposit and
-  // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
-  // a correction is not a deposit, and reporting it as one would overstate deposits and
-  // GGR. Subscribers that track balance movement must handle it or they see a balance
-  // change with no event behind it.
   'wallet.manual_adjustment.created': walletTxnBase
     .extend({
       playerId: UuidSchema.nullable(),
@@ -575,26 +476,16 @@ export const domainEventSchemas = {
       reason: z.string(),
     })
     .extend(authContextBase.shape),
-  // Any WALLET_COMMANDS debit/credit that actually moved a balance - gaming bet/win, chat
-  // gift/rain/donation, and any future cross-module mover through the same port. WalletService's
-  // own operations keep their existing dedicated topics above; this is the one topic for
-  // everything that moves money through WALLET_COMMANDS instead.
   'wallet.balance.changed': walletTxnBase.extend({
     playerId: UuidSchema.nullable(),
     type: WalletTransactionTypeSchema,
     direction: z.enum(['credit', 'debit']),
   }),
-  // A reconciliation run's open-findings count exceeded the operator's configured
-  // threshold. System-driven (no player/admin actor) - the resource is the run itself,
-  // never a finding's payload (an address or tx hash must never reach the audit log
-  // through this event - see docs/standards/audit.md).
   'wallet.reconciliation.alert': z.object({
     runId: UuidSchema,
     openFindings: z.number().int().nonnegative(),
     threshold: z.number().int().nonnegative(),
-    /** The run's checks that failed, when any did. */
     failedChecks: z.array(z.string()).optional(),
-    /** Owner re-publishes the run's repair cap pushed to the next cycle, when any were. */
     projectionRepairsDeferred: z.number().int().nonnegative().optional(),
   }),
 
@@ -611,13 +502,10 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
-  // Sportsbook ledger steps, emitted once the step's own transaction committed. The bet
-  // transaction row and the wallet ledger rows it wrote are the step's atomic record.
   'sportsbook.bet.placed': sportsbookBetBase.extend({
     stake: MoneyAmountSchema,
     promotion: SportsbookPromotionSchema.optional(),
   }),
-  // `legs` is set when the confirm carried the accepted terms.
   'sportsbook.bet.accepted': sportsbookBetBase.extend({
     potentialPayout: MoneyAmountSchema,
     legs: z.array(SportsbookBetLegSchema).optional(),
@@ -632,7 +520,6 @@ export const domainEventSchemas = {
     payout: MoneyAmountSchema,
     promotionAmount: MoneyAmountSchema.optional(),
   }),
-  // `shortfall` is what the reopen could not take back and recorded as debt.
   'sportsbook.bet.reopened': sportsbookBetBase.extend({
     collected: MoneyAmountSchema,
     shortfall: MoneyAmountSchema,
@@ -644,7 +531,6 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
     auditRecorded: z.literal(true).optional(),
   }),
-  // `actorId` is null when a ledger step changed the debt (a reopen or an offset).
   'sportsbook.debt.changed': z.object({
     debtId: UuidSchema,
     userId: UuidSchema,
@@ -662,7 +548,6 @@ export const domainEventSchemas = {
     before: lobbyLayoutAuditSnapshotSchema,
     after: lobbyLayoutAuditSnapshotSchema,
   }),
-  // Backoffice game-catalog management (actorId = acting admin UUID).
   'gaming.provider.created': authContextBase.extend(gameProviderSnapshotSchema.shape).extend({
     providerId: UuidSchema,
     actorId: UuidSchema,
@@ -684,16 +569,6 @@ export const domainEventSchemas = {
     before: gameCategorySnapshotSchema,
     after: gameCategorySnapshotSchema,
   }),
-  // A backoffice manual reorder of a category's games. `before`/`after` are the full
-  // ordered game-id lists (manual position order), so a search recovers exactly what
-  // moved. The rank job re-materializes `rank` from the new positions after commit.
-  // Dragging any game switches the category to manual sort - sortKeyBefore/After record
-  // that transition (docs/modules/gaming.md). Older reordered events predate the switch; default
-  // both to 'manual' rather than fail to parse (every pre-pinning category was already
-  // manual-only, so this replays the truth for them). sortDirectionBefore/After and
-  // sortParamsBefore/After record the reorder's implicit reset of those fields to their
-  // manual-sort defaults - an event that predates them defaults to null/{} (v2's own
-  // implicit truth for every reorder).
   'gaming.category.games_reordered': authContextBase.extend({
     categoryId: UuidSchema,
     actorId: UuidSchema,
@@ -706,55 +581,34 @@ export const domainEventSchemas = {
     sortParamsBefore: GameSortParamsSchema.default({}),
     sortParamsAfter: GameSortParamsSchema.default({}),
   }),
-  // A backoffice replace-all write of a category's pinned slots. before/after are the
-  // full pinned-slot lists, ordered by position, so a search recovers exactly what moved.
   'gaming.category.pins_updated': authContextBase.extend({
     categoryId: UuidSchema,
     actorId: UuidSchema,
     before: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
     after: z.array(z.object({ gameId: UuidSchema, position: z.number().int().nonnegative() })),
   }),
-  // One evaluation of a rule-mode category that changed its membership, or that an admin
-  // asked for. actorId is the admin for an on-demand or mode-switch run and the system
-  // actor (zero UUID) for an event-driven or scheduled one.
   'gaming.category.membership_evaluated': authContextBase.extend({
     categoryId: UuidSchema,
     actorId: UuidSchema,
     trigger: GameCategoryMembershipTriggerSchema,
     matchedCount: z.number().int().nonnegative(),
-    // Rows kept but handed from 'manual' to 'rule' ownership on the first evaluation.
     relabeledCount: z.number().int().nonnegative().default(0),
     addedGameIds: z.array(UuidSchema),
     removedGameIds: z.array(UuidSchema),
   }),
-  // An evaluation an admin asked for (on demand, or after a create or update) that failed
-  // and changed no games. reason is the module's own message, as stored in
-  // membershipLastError, never a rule definition's raw error.
   'gaming.category.membership_evaluation.failed': authContextBase.extend({
     categoryId: UuidSchema,
     actorId: UuidSchema,
     reason: z.string().max(500),
   }),
-  // New catalogue rows. Core has no game-insert path of its own: whatever imports games
-  // (an aggregator sync overlay, a seed) reports them through GAMING_COMMANDS so
-  // rule-mode categories pick them up without waiting for the membership sweep.
   'gaming.games.created': z.object({
-    // Matches GAMES_CREATED_EVENT_BATCH in the gaming module contract, which batches to it.
     gameIds: z.array(UuidSchema).min(1).max(1000),
   }),
-  // Existing catalogue rows an importer rewrote outside the admin update. tagIds and
-  // providerIds are what the games were linked to before, so rules naming a tag or provider
-  // the games left re-evaluate too. Each array matches GAMES_CHANGED_EVENT_BATCH.
   'gaming.games.changed': z.object({
     gameIds: z.array(UuidSchema).max(1000),
     tagIds: z.array(UuidSchema).max(1000),
     providerIds: z.array(UuidSchema).max(1000),
   }),
-  // The catalogue facts a round needs, its wagering inputs included, as committed, for the
-  // ledger side's `ledger_game` projection. Written to the outbox in the transaction that read
-  // them; `version` is the game row's ledger_version, drawn from a sequence, so a consumer keeps
-  // the highest one and ignores the rest. Not `gaming.games.changed`, which feeds the category
-  // triggers.
   'gaming.ledger_game.projected': z.object({
     games: z
       .array(
@@ -762,7 +616,6 @@ export const domainEventSchemas = {
           gameId: UuidSchema,
           providerId: UuidSchema,
           gameType: z.enum(GAME_TYPES),
-          // Optional so an event a previous release wrote still parses; absent reads as null.
           wagerProduct: WagerProductSchema.nullable().optional(),
           rtp: z.string().refine(isWagerRtp, 'decimal fraction in [0, 1]').nullable().optional(),
           version: z.number().int().nonnegative(),
@@ -799,11 +652,9 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
-      // Older game-update events predate the custom thumbnail; replay them as unset.
       customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
-      // Older game-update events predate game tags; replay them as an empty tag set.
       tagIds: z.array(UuidSchema).default([]),
       metadata: z.unknown().nullable(),
     }),
@@ -813,11 +664,9 @@ export const domainEventSchemas = {
       providerId: UuidSchema,
       aggregator: z.string(),
       thumbnailUrl: z.string().nullable(),
-      // Older game-update events predate the custom thumbnail; replay them as unset.
       customThumbnailUrl: z.string().nullable().default(null),
       isActive: z.boolean(),
       categoryIds: z.array(UuidSchema),
-      // Older game-update events predate game tags; replay them as an empty tag set.
       tagIds: z.array(UuidSchema).default([]),
       metadata: z.unknown().nullable(),
     }),
@@ -829,10 +678,6 @@ export const domainEventSchemas = {
       isActive: z.boolean(),
       changedGameIds: z.array(UuidSchema),
       changedProviderIds: z.array(UuidSchema),
-      // The categories the flip actually dirtied, resolved once inside the same
-      // transaction that marked them - lets the fast-path rank-trigger reuse it instead
-      // of resolving the same lookup again after commit. Absent on an event queued
-      // before this field existed; the handler falls back to its own lookup then.
       affectedCategoryIds: z.array(UuidSchema).optional(),
     }),
     gameBulkEventBase.extend({
@@ -846,18 +691,13 @@ export const domainEventSchemas = {
       addedLinks: GameAddedCategoryLinksSchema,
     }),
   ]),
-  // An admin's review decision on pending games. An enable by id that approves a pending or
-  // declined game emits it too; bulkOperationId then matches that write's bulk_updated event.
   'gaming.games.reviewed': authContextBase.extend({
     actorId: UuidSchema,
     decision: GameReviewDecisionSchema,
-    // Every game in one event left the same status; an enable can approve both kinds at once.
     previousStatus: GameReviewStatusSchema.extract(['pending', 'declined']),
     gameIds: z.array(UuidSchema).min(1),
     bulkOperationId: UuidSchema.optional(),
   }),
-  // Emitted by an importer, once, when it puts games live under their provider's
-  // auto-approve flag.
   'gaming.games.auto_approved': z.object({
     providerId: UuidSchema,
     gameIds: z.array(UuidSchema).min(1).max(1000),
@@ -868,9 +708,6 @@ export const domainEventSchemas = {
     after: z.object({ isUnavailable: z.boolean() }),
   }),
 
-  // A currency swap filled: the player's `fromCurrency` balance was debited and
-  // `toCurrency` credited, as two ledger legs. `toAmount` is what the vendor actually
-  // filled, never the quoted number.
   'wallet.swap.completed': z.object({
     userId: UuidSchema,
     transactionId: UuidSchema,
@@ -880,8 +717,6 @@ export const domainEventSchemas = {
     toAmount: MoneyAmountSchema,
   }),
 
-  // Turnover requirement (ADR-0065), both written to the outbox in the transaction that changed
-  // it. `required`/`progress` are the values before a clear, and the met values on `met`.
   'wallet.turnover.cleared': z.object({
     userId: UuidSchema,
     clearedBy: UuidSchema,
@@ -896,11 +731,6 @@ export const domainEventSchemas = {
     progress: MoneyAmountSchema,
   }),
 
-  // Promo. These are notification/analytics fan-out only: money and counters move through the
-  // BONUS_GRANTS, BONUS_WAGERING and WAGER_TRACKING command ports, never through an event.
-  // Payout announcements (`promo.bonus.granted`, `promo.race.won`, `promo.rank-challenge.won`)
-  // are written to the outbox in the transaction that pays them; the rest are informational and
-  // emitted after commit.
   'promo.bonus.granted': z.object({
     userId: UuidSchema,
     grantId: UuidSchema,
@@ -911,7 +741,6 @@ export const domainEventSchemas = {
     offerId: UuidSchema.nullable(),
     rankBonusKind: z.enum(['daily', 'weekly', 'monthly']).optional(),
   }),
-  // A pending grant took its free slot and is now playable; its expiry restarted from now.
   'promo.bonus.activated': z.object({
     userId: UuidSchema,
     grantId: UuidSchema,
@@ -919,8 +748,6 @@ export const domainEventSchemas = {
     source: BonusGrantSourceSchema,
     expiresAt: TimestampSchema,
   }),
-  // Wagering requirement met. The lock is released; what happens to the balance is the
-  // conversion step, which emits nothing of its own.
   'promo.bonus.completed': z.object({
     userId: UuidSchema,
     grantId: UuidSchema,
@@ -933,7 +760,6 @@ export const domainEventSchemas = {
     currency: CurrencyTickerSchema,
     forfeitedAmount: MoneyAmountSchema,
     reason: BonusForfeitReasonSchema,
-    // The admin who forfeited it; null when a rule or the player did.
     actorId: UuidSchema.nullable(),
   }),
   'promo.bonus.expired': z.object({
@@ -944,24 +770,16 @@ export const domainEventSchemas = {
   }),
   'promo.streak.milestone.reached': z.object({
     userId: UuidSchema,
-    // Consecutive qualifying days that triggered the milestone.
     day: z.number().int().positive(),
-    // The fixed reward's amount captured at unlock, in `currency`. Absent on an event from before
-    // the amount was carried.
     amount: MoneyAmountSchema.optional(),
     currency: CurrencyTickerSchema.optional(),
-    // Absent when the milestone's reward is not a bonus grant.
     grantId: UuidSchema.nullable(),
   }),
-  // Unclaimed rakeback has reached the claim minimum; `amount` is its total in `currency`, the
-  // operator's reference currency. Emitted at most once a day per player.
   'promo.rakeback.claimable': z.object({
     userId: UuidSchema,
     amount: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
   }),
-  // A claim-mode daily, weekly or monthly rank reward is waiting for the player. Written to the
-  // outbox in the payout run's transaction that created it; `amount` is in `currency`.
   'promo.rank.reward.claimable': z.object({
     userId: UuidSchema,
     rewardId: UuidSchema,
@@ -970,8 +788,6 @@ export const domainEventSchemas = {
     currency: CurrencyTickerSchema,
     amount: MoneyAmountSchema,
   }),
-  // A rank reward reached the real balance: claimed by the player, or `auto_paid` on
-  // self-exclusion or account closure. Written to the outbox in the transaction that credited it.
   'promo.rank.reward.claimed': z.object({
     userId: UuidSchema,
     rewardId: UuidSchema,
@@ -996,13 +812,10 @@ export const domainEventSchemas = {
     dailyBonusPercent: ContributionPercentSchema.nullable().optional(),
     weeklyBonusPercent: ContributionPercentSchema.nullable().optional(),
     monthlyBonusPercent: ContributionPercentSchema.nullable().optional(),
-    // Under `margin` the bonuses above are caps on a percent of the house edge, not flat amounts.
     periodicBasis: z.enum(RANK_PERIODIC_BASES).optional(),
   }),
-  // Standings frozen and prizes granted. Emitted once, after the settlement transaction.
   'promo.race.settled': z.object({
     raceId: UuidSchema,
-    // Winners in finishing order; a player who placed outside the prize scale is not listed.
     winners: z.array(
       z.object({
         userId: UuidSchema,
@@ -1013,9 +826,6 @@ export const domainEventSchemas = {
     ),
     currency: CurrencyTickerSchema,
   }),
-  // One winner's own prize, written to the outbox per player in the settlement transaction and
-  // published once it commits - the shape the in-app/email notification maps 1:1 (see
-  // engagement/notifications/plugin.ts).
   'promo.race.won': z.object({
     userId: UuidSchema,
     raceId: UuidSchema,
@@ -1024,9 +834,6 @@ export const domainEventSchemas = {
     amount: MoneyAmountSchema,
     currency: CurrencyTickerSchema,
   }),
-  // One winner's own Rank Challenge tier, written to the outbox per player in the settlement
-  // transaction and published once it commits - the shape the in-app/email notification maps
-  // 1:1, mirroring promo.race.won.
   'promo.rank-challenge.won': z.object({
     userId: UuidSchema,
     tierId: UuidSchema,
@@ -1039,14 +846,10 @@ export const domainEventSchemas = {
 
   'chat.message.sent': z.object({
     messageId: UuidSchema,
-    // null for global-chat messages (no room); a room id otherwise.
     roomId: UuidSchema.nullable(),
     userId: UuidSchema,
   }),
 
-  // A system card written by a service that does not run chat, on the transaction that moved
-  // the money it reports. Chat applies it to its own table: the id keys the card, and `version`
-  // (CHAT_SYSTEM_MESSAGE_VERSION) wins over a lower one, so redelivery and reordering are safe.
   'chat.system_message.upserted': z.object({
     messageId: UuidSchema,
     roomId: UuidSchema.nullable(),
@@ -1056,11 +859,6 @@ export const domainEventSchemas = {
     version: z.number().int().positive(),
   }),
 
-  // A context room write a service that does not run chat issued on its own transaction
-  // (OutboxChatContextRoomCommands). Chat applies it keyed on the caller's ids: ensure on the
-  // `ref` (the room takes `roomId`), a post on `messageId`, so a redelivery changes nothing.
-  // Commands for one ref are not applied in issue order: replicas consume concurrently and a
-  // failed one is redelivered later. A command for a ref chat has no room for yet is redelivered.
   'chat.context_room.command_issued': z.discriminatedUnion('op', [
     EnsureChatContextRoomInputSchema.extend({ op: z.literal('ensure'), roomId: UuidSchema }),
     z.object({ op: z.literal('close'), ref: ChatContextRefSchema }),
@@ -1072,8 +870,6 @@ export const domainEventSchemas = {
     }),
   ]),
 
-  // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
-  // actorPlayerId = the blocker/ignorer; playerId = the blocked/ignored subject (resourceId).
   'chat.user.blocked': authContextBase.extend({
     blockerId: UuidSchema,
     actorPlayerId: UuidSchema.nullable(),
@@ -1099,7 +895,6 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
-  // Admin room CRUD (actorId = acting admin UUID).
   'chat.room.created': authContextBase.extend({
     roomId: UuidSchema,
     name: z.string(),
@@ -1119,7 +914,6 @@ export const domainEventSchemas = {
     after: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
   }),
 
-  // Private room lifecycle: creation and member membership changes.
   'chat.private_room.created': authContextBase.extend({
     roomId: UuidSchema,
     creatorId: UuidSchema,
@@ -1132,7 +926,6 @@ export const domainEventSchemas = {
     before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
     after: z.object({ deletedAt: z.string() }),
   }),
-  // `auditRecorded` marks a context room join whose audit row the membership write appended.
   'chat.room.member.joined': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
@@ -1140,8 +933,6 @@ export const domainEventSchemas = {
     adminId: UuidSchema.optional(),
     auditRecorded: z.literal(true).optional(),
   }),
-  // A room owner or moderator invited a player into a private room. `playerId` is the
-  // inviter's; the accept and decline payloads carry the invitee's.
   'chat.room.invite.sent': authContextBase.extend({
     inviteId: UuidSchema,
     roomId: UuidSchema,
@@ -1151,7 +942,6 @@ export const domainEventSchemas = {
     roomName: z.string(),
     playerId: UuidSchema.nullable(),
   }),
-  // An invite to a player who may not receive it is stored but never delivered.
   'chat.room.invite.withheld': authContextBase.extend({
     inviteId: UuidSchema,
     roomId: UuidSchema,
@@ -1173,7 +963,6 @@ export const domainEventSchemas = {
     inviteeId: UuidSchema,
     playerId: UuidSchema.nullable(),
   }),
-  // A pending invite lapsed or was voided; `actorId` is absent when the expiry sweep did it.
   'chat.room.invite.expired': authContextBase.extend({
     inviteId: UuidSchema,
     roomId: UuidSchema,
@@ -1198,11 +987,6 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     removedBy: UuidSchema,
   }),
-  // A room owner granted or revoked the moderator role. `role` is the member's new role and
-  // `previousRole` the one it replaced - a permission change is only auditable with both.
-  // `owner` never appears in either - ownership transfer is a separate flow. `playerId` is the
-  // acting owner's, null when no player record backs them; `changedBy` always carries the raw
-  // acting user id so the actor survives that case.
   'chat.room.member.role-changed': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
@@ -1255,15 +1039,10 @@ export const domainEventSchemas = {
     actorId: UuidSchema.optional(),
   }),
 
-  // A country rule refused a request. `countryCode` is null when the address resolved to
-  // no country and the fail-closed branch denied it, which is a different operational
-  // fact from a named blocked country and has to stay distinguishable in the audit trail.
   'compliance.geo.access_blocked': authContextBase.extend({
     countryCode: CountryCodeSchema.nullable(),
     reason: z.string(),
   }),
-  // A blacklisted country was let through because the operator redirects it to a mirror.
-  // The access itself is allowed, so it is recorded separately from a block.
   'compliance.geo.access_redirected': authContextBase.extend({
     countryCode: CountryCodeSchema,
     redirectUrl: z.string(),
@@ -1295,7 +1074,6 @@ export const domainEventSchemas = {
     operation: z.enum(['restrict', 'unrestrict']),
     countryCode: CountryCodeSchema,
     reason: NonEmptyReasonSchema,
-    // Games whose rule the call added (restrict) or removed (unrestrict).
     changedGameIds: z.array(UuidSchema),
   }),
 
@@ -1330,13 +1108,6 @@ export const domainEventSchemas = {
     limitId: UuidSchema,
   }),
 
-  // Responsible-Gambling admin actions. `userId` = the subject player, `actorId` =
-  // the acting admin (the envelope carries no caller, so it is explicit for the audit
-  // trail). login_blocked is system-driven (no actor) and a failure outcome.
-  // amount/minutes are polymorphic by `type` (see compliance/contract/limits.ts):
-  // money-type limits carry amount (minutes null), the session-type limit
-  // carries minutes (amount null). previous* mirrors the prior row's value, null
-  // when this is the first limit of that (type, period).
   'rg.limit.set': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -1349,8 +1120,6 @@ export const domainEventSchemas = {
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
     currency: CurrencyTickerSchema.nullable(),
-    // The prior row's own currency; null for a session limit, no prior limit, or an
-    // event written before this field.
     previousCurrency: CurrencyTickerSchema.nullable().default(null),
     initiatedBy: RgInitiatorSchema,
     reason: z.string().nullable(),
@@ -1379,8 +1148,6 @@ export const domainEventSchemas = {
       initiatedBy: RgInitiatorSchema,
     })
     .extend(authContextBase.shape),
-  // durationMonths is the admin's chosen term, null when permanent - the regulatory
-  // export reads the decision as made rather than re-deriving it from expiresAt.
   'rg.self_exclusion.activated': actorReasonBase
     .extend({
       userId: UuidSchema,
@@ -1414,29 +1181,20 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
-  // A player's KYC status changed. userId = subject player; actorId = the admin who
-  // acted, or null for system-driven changes (vendor decision, webhook, threshold
-  // re-KYC). before/after status records the transition for the audit log.
   'compliance.kyc.updated': KycStatusUpdatedSchema,
 
-  // A player submitted KYC documents; a verification record was created and sent to
-  // the provider. userId = the submitting player; referenceId = the provider reference.
   'compliance.kyc.submitted': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     referenceId: z.string(),
     provider: z.string(),
-    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
     tier: KycTierSchema.default('basic'),
   }),
 
-  // A threshold-triggered re-KYC flipped a verified player to resubmission_requested.
-  // System-driven (no admin actor); reason records the metric that crossed.
   'compliance.kyc.reverify_required': z.object({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     reason: z.string(),
-    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
     tier: KycTierSchema.default('basic'),
   }),
 
@@ -1448,12 +1206,9 @@ export const domainEventSchemas = {
     dataCenterIpDetected: z.boolean(),
     duplicateDeviceDetected: z.boolean(),
     highRiskCountryDetected: z.boolean(),
-    // Forward-compatible (ADR-0016): see KycStatusUpdatedSchema's tier field comment.
     tier: KycTierSchema.default('basic'),
   }),
 
-  // The verified document puts the player under the configured minimum age; the decision
-  // is forced to rejected. Carries no date of birth.
   'compliance.kyc.underage_detected': z.object({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -1461,8 +1216,6 @@ export const domainEventSchemas = {
     tier: KycTierSchema,
   }),
 
-  // The verified document's date of birth differs from the one the player declared, or the
-  // player declared none. Carries no date of birth.
   'compliance.kyc.dob_mismatch_detected': z.object({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
@@ -1504,8 +1257,6 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
   }),
 
-  // Emitted after an admin invitation is redeemed: the invitee's account (`userId`)
-  // exists and already holds `roleId`.
   'iam.invitation.accepted': authContextBase.extend({
     email: z.email(),
     roleId: UuidSchema,
@@ -1513,10 +1264,6 @@ export const domainEventSchemas = {
     userId: UuidSchema,
   }),
 
-  // Backoffice RBAC mutations. The envelope does NOT carry the
-  // caller, so every payload carries an explicit `actorId` (the admin who acted)
-  // for the audit trail. `before`/`after` carry the level matrix for permission
-  // changes so the audit log records the transition.
   'iam.role.created': iamRoleEventBase.extend({
     name: z.string(),
   }),
@@ -1531,25 +1278,15 @@ export const domainEventSchemas = {
   'iam.role.assigned': iamRoleEventBase.extend({ userId: UuidSchema }),
   'iam.role.revoked': iamRoleEventBase.extend({ userId: UuidSchema }),
 
-  // Emitted after an admin creates or deletes a tag catalog definition (the tag
-  // itself, not a player assignment - see tag.player.assigned/removed for that).
   'tag.created': z.object({ key: TagKeySchema, isSticky: z.boolean(), actorId: UuidSchema }),
   'tag.deleted': z.object({ key: TagKeySchema, actorId: UuidSchema }),
-  // Emitted after any tag is assigned to or removed from a player (both automated and manual).
-  // actorId is the user performing the action (SYSTEM_ACTOR_ID for automated ops).
   'tag.player.assigned': tagPlayerEventBase,
   'tag.player.removed': tagPlayerEventBase,
-  // The tag module screened a requested withdrawal: any `withdrawal_review` tag it called for
-  // committed in the same transaction. The wallet auto-approves only after this verdict, so a
-  // withdrawal it never arrives for stays in the manual queue (ADR-0059). `reviewRequired` is this
-  // withdrawal's own amount against the review threshold; optional only so a verdict from a
-  // producer older than the field still parses, and the wallet reads its absence as true.
   'tag.withdrawal.screened': z.object({
     userId: UuidSchema,
     transactionId: UuidSchema,
     reviewRequired: z.boolean().optional(),
   }),
-  // Emitted after an admin creates or updates a tag rule configuration.
   'tag.rule.upserted': authContextBase.extend({
     tagKey: TagKeySchema,
     actorId: UuidSchema,
@@ -1559,7 +1296,6 @@ export const domainEventSchemas = {
   'chat.user.mentioned': z.object({
     mentionedUserId: UuidSchema,
     byUserId: UuidSchema,
-    // Optional: events queued before this field existed still deliver.
     byUsername: z.string().min(1).optional(),
     roomId: UuidSchema.nullable(),
     messageId: z.string(),
@@ -1632,65 +1368,36 @@ export const domainEventSchemas = {
     addresseeId: UuidSchema,
   }),
 
-  // A player opened the support chat for the first time and is now linked to a vendor
-  // customer. Written with the link, so the first support-context sync survives a queue outage.
   'support_chat.customer.linked': z.object({ userId: UuidSchema, playerId: UuidSchema }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;
 export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof domainEventSchemas)[K]>;
 
-// Bump an entry only when its payload shape changes in a non-additive way, in the SAME commit
-// that edits the schema above. Events not listed default to version 1.
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
-  // v6: source adds `exemption` and auditRecorded identifies a transition whose audit row
-  // was atomically appended by the originating state transaction.
   'compliance.kyc.updated': 6,
   'compliance.kyc.submitted': 2,
   'compliance.kyc.reverify_required': 2,
   'compliance.kyc.high_risk_signal_detected': 2,
-  // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
-  // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
-  // v2: optional exceptSessionId added - the self-service password-change path sets it
-  // so the acting session survives; the admin revoke-all path leaves it unset.
   'identity.sessions.revoked_all': 2,
-  // v2: `method` records which factor was used, required by the audit trail.
   'identity.2fa.enabled': 2,
-  // v3: stepUpMethod records whether a live code or a recovery code authorised it.
   'identity.2fa.disabled': 3,
-  // v2: stepUpMethod records the credential that authorised the rotation.
   'identity.2fa.backup_codes_regenerated': 2,
-  // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,
   'wallet.withdrawal.requested': 2,
   'wallet.withdrawal.approved': 2,
   'wallet.withdrawal.rejected': 2,
-  // v3: adminId is nullable - null marks a system-driven failure (auto-approved payout
-  // or provider-webhook rejection), which the audit writer records as actorType 'system'.
   'wallet.withdrawal.failed': 3,
   'wallet.manual_adjustment.created': 2,
-  // v2: type no longer includes 'tip'.
   'wallet.balance.changed': 2,
-  // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
-  // pair (money limit vs session-time limit), never a JS number.
-  // v5: currency of a money limit, null for a session limit.
   'rg.limit.set': 5,
   'rg.cooling_off.activated': 2,
-  // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
-  // v3: durationMonths added - the chosen term, explicit for the regulatory export.
   'rg.self_exclusion.activated': 4,
-  // v2: sortKeyBefore/sortKeyAfter added - a reorder now also switches the category to
-  // manual sort (docs/modules/gaming.md).
-  // v3: sortDirectionBefore/After and sortParamsBefore/After added - a reorder also
-  // resets those two fields, which v2 silently dropped from the audit trail.
   'gaming.category.games_reordered': 3,
-  // v2: actorId is nullable - null marks a rule a background sync wrote or removed, named
-  // by the state's new `source`; auditRecorded marks one whose audit row already exists.
   'compliance.game-geo-rule.upserted': 2,
   'compliance.game-geo-rule.deleted': 2,
-  // v2: actorId is nullable - null marks a system suspension (an under-age KYC result).
   'player.status.changed': 2,
 };
 
@@ -1700,7 +1407,6 @@ export function getEventVersion(event: string): number {
 
 export const DOMAIN_EVENT_CATALOG = Object.keys(domainEventSchemas) as DomainEventName[];
 
-/** Returns every cross-module topic and its current schema version for broker provisioning and producer/consumer agreement checks. */
 export function eventCatalog(): ReadonlyArray<{ topic: DomainEventName; version: number }> {
   return DOMAIN_EVENT_CATALOG.map((topic) => ({
     topic,

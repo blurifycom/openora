@@ -105,11 +105,6 @@ const toResult = (row: PromoRankPeriodicReward): RankPeriodicRewardClaimResult =
   amount: row.amount,
 });
 
-/**
- * Pays the claim-mode daily, weekly and monthly rewards `RankPayoutService` leaves, one row at a
- * time, to the real balance with no wagering. The row lock serialises two claims of one reward;
- * the loser replays when it carried the same idempotency key and is refused otherwise.
- */
 export class RankRewardClaimService {
   constructor(private readonly deps: RankRewardClaimDeps) {}
 
@@ -163,11 +158,6 @@ export class RankRewardClaimService {
     }
   }
 
-  /**
-   * Pays every reward a player left unclaimed once they can no longer claim it themselves - a
-   * self-exclusion or a closed account. Pays nothing when the player is no longer due, and
-   * nothing twice: a second run finds no claimable row.
-   */
   async autoPay(userId: Uuid): Promise<Claimed[]> {
     return this.deps.drizzle.db.transaction(async (tx) => {
       if (
@@ -330,7 +320,6 @@ export class RankRewardClaimService {
     }
     const claimed = outcome === 'claimed';
     await this.deps.audit.recordInTransaction(tx, {
-      // No player profile: keep the user id so a player entry always has an actor.
       actorId: claimed
         ? ((await this.deps.identity.getPlayerIdByUserId(row.userId, tx)) ?? row.userId)
         : null,

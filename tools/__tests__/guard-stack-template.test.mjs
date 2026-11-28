@@ -1,5 +1,3 @@
-// The consumer guard-stack hook sends a PR that builds on a feature branch through `gh stack`:
-// a plain `gh pr create|edit --base <feature branch>` is denied, a shared base passes.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';

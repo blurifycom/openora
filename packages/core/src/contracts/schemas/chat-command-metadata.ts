@@ -17,9 +17,6 @@ export const GiftCommandMetadataSchema = z.object({
   senderUsername: z.string(),
   amount: MoneyAmountSchema,
   currency: z.string(),
-  // Optional for compatibility with gift messages persisted before claim state
-  // was included in command metadata. New gift messages always populate these.
-  // `expired`: the gift was refunded to its sender and can no longer be claimed.
   status: z.enum(['available', 'claimed', 'expired']).optional(),
   claimedBy: UuidSchema.nullable().optional(),
   claimedByUsername: z.string().nullable().optional(),
@@ -89,7 +86,6 @@ export const SYSTEM_EVENT_CODE_MAX_LENGTH = 64;
 export const SYSTEM_EVENT_PARAM_VALUE_MAX_LENGTH = 500;
 export const SYSTEM_EVENT_PARAMS_MAX_BYTES = 4096;
 
-// A server-authored event a client renders from `code` and `params`; money params are decimal strings.
 export const SystemEventMetadataSchema = z.object({
   command: z.literal('system_event'),
   code: z.string().min(1).max(SYSTEM_EVENT_CODE_MAX_LENGTH),

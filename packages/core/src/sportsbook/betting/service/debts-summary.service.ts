@@ -9,11 +9,6 @@ import {
 import { sportsbookPlayerDebt } from '../schema/index.js';
 import { holdActiveSql } from './debt.service.js';
 
-/**
- * sportsbook.debts: what players owe the sportsbook now, per currency, and the largest open debts.
- * A reader over DRIZZLE alone: the debt service needs the wallet's and identity's ports, and the
- * kernel builds every tool's handler when it starts.
- */
 export class SportsbookDebtsSummaryService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -35,7 +30,6 @@ export class SportsbookDebtsSummaryService {
         collected: debt.collected,
         openSince: debt.createdAt,
         withdrawalsHeld: holdActiveSql.as('withdrawals_held'),
-        // The debt id breaks ties, so equal amounts always rank in the same order.
         rank: sql<number>`row_number() over (partition by ${debt.currency} order by ${debt.outstanding} desc, ${debt.id})`.as(
           'rank',
         ),

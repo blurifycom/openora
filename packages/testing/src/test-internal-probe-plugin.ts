@@ -8,7 +8,6 @@ import {
 
 const internal = os.$context<InternalContext>();
 
-/** Internal routes that report how a signed call reached them, for the internal API suites. */
 export default {
   id: 'testing-internal-probe',
   register(ctx) {
@@ -19,7 +18,6 @@ export default {
           caller: context.internalCaller,
           cookieSeen: context.request.headers['cookie'] !== undefined,
         })),
-        // A handler that wrongly asks for an admin: the signed call must not lend it a session.
         asAdmin: internal
           .route({ method: 'GET', path: '/probe/as-admin' })
           .handler(async ({ context }) => {

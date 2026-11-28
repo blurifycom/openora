@@ -1,6 +1,3 @@
-// Applies this module's own migration set against its own tracking table, so it
-// never collides with sibling modules that share the database. SQL ships in the
-// tarball ('files') and loads via an import.meta.url-relative path. See ADR-0020/0027.
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient } from 'pg';
@@ -8,11 +5,6 @@ import { runMigrations, withMigrationAdvisoryLock } from '@openora/core/server/m
 import { CHAIN_SPLIT_MARK, CHAIN_SPLIT_SQL } from './schema/index.js';
 import { AUDIT_MIGRATION_LOCK } from './service/audit-split.service.js';
 
-// Every UPDATE, DELETE and TRUNCATE on audit_log raises, whatever the role. ENABLE ALWAYS keeps the
-// triggers firing under `session_replication_role = replica`, which skips ordinary triggers, so
-// only DDL gets past them: the owner can still disable or drop one, which is why the app must not
-// run as the owner (ADR-0055). The function keeps its
-// audit_log name from before it guarded the outbox tables too.
 const DENY_MUTATION_FN_SQL = `CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger
    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
    BEGIN
@@ -32,30 +24,6 @@ const APPEND_ONLY_SQL = [
   `ALTER TABLE audit_log ENABLE ALWAYS TRIGGER audit_log_no_truncate`,
 ];
 
-// The outbox holds records that are not in the chain yet, so losing a row loses an audit record.
-// No UPDATE or TRUNCATE; a DELETE only of a row whose content is kept elsewhere: the same entry
-// moved to audit_outbox_rejected under this outbox id, or chained in audit_log under its event id
-// with every field the shipper copies equal. Matching the id alone would let a forged row with the
-// same id stand in for the real one. The rejected table is append-only like audit_log. Both outbox
-// tables come from the engine migration set, which runs before this one.
-//
-// Every function pins its search_path, so a schema or operator a role puts earlier on its own path
-// cannot stand in for the audit tables or the comparisons the guards make.
-//
-// audit_outbox_entry_chained compares an entry as the shipper writes it: snapshots as jsonb, a
-// JSON null or a missing snapshot as SQL NULL, createdAt to the millisecond a JS Date keeps. The
-// shipper calls it too, after appending, so a row it would not be allowed to delete moves aside.
-//
-// With the chain in a database of its own, the outbox's database cannot see audit_log, so the
-// guard there takes a delete only from the shipper role (AUDIT_SHIPPER_DATABASE_URL), and only
-// while that session holds the shipper lock, which the shipper takes before it reads a batch and
-// keeps until it has deleted the batch, after its append committed in the chain's database. The
-// lock alone proves nothing, as any role may take an advisory lock; the session's own role is
-// what the guard trusts, the shipper role by exact name and not any member of it, so it refuses
-// the tables' owner too. Only the shipper role holds DELETE on the outbox and INSERT on the
-// rejected table, and migrate refuses it while a member inherits it or may SET it. Weaker than
-// the content check still: a shipper whose append failed unseen could delete what never reached
-// the chain.
 const CHAIN_MATCH_SQL = `CREATE OR REPLACE FUNCTION audit_outbox_entry_chained(chained_event_id uuid, entry jsonb)
    RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, public AS $$
      SELECT EXISTS (
@@ -76,14 +44,11 @@ const CHAIN_MATCH_SQL = `CREATE OR REPLACE FUNCTION audit_outbox_entry_chained(c
    $$`;
 
 const CHAINED_HERE = `audit_outbox_entry_chained(OLD.event_id, OLD.entry)`;
-// The key the shipper locks (audit-shipper.service.ts), as pg_locks shows a bigint advisory key.
 const SHIPPER_HOLDS_LOCK = `EXISTS (
        SELECT 1 FROM pg_locks
         WHERE locktype = 'advisory' AND granted AND pid = pg_backend_pid() AND objsubid = 1
           AND ((classid::bigint << 32) | objid::bigint) = hashtext('audit_shipper')::bigint)`;
 
-// `deleter`, when given, is checked before anything else: a session that fails it may not delete
-// even a row that has shipped.
 const outboxGuardSql = (shipped: string, deleter?: string) => [
   `CREATE OR REPLACE FUNCTION audit_outbox_deny_unshipped_delete() RETURNS trigger
    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
@@ -129,11 +94,6 @@ const outboxGuardSql = (shipped: string, deleter?: string) => [
      ENABLE ALWAYS TRIGGER audit_outbox_rejected_no_truncate`,
 ];
 
-// One row per seq, per event and per predecessor: a second writer that slipped past the chain
-// lock, or a batch shipped twice, fails its insert instead of forking the chain. prev_hash counts
-// NULL as a value, so the chain has one head. Built CONCURRENTLY, like the email indexes below.
-// A chain that is already forked cannot take the prev_hash index: migrate stops and names the
-// first fork, and the chain has to be verified and repaired by hand before migrating again.
 const CHAIN_UNIQUE_SQL = [
   `DO $$
    DECLARE
@@ -168,12 +128,6 @@ const CHAIN_UNIQUE_SQL = [
      NULLS NOT DISTINCT`,
 ];
 
-// The emails an email change names, matched case-insensitively by the support-history lookup,
-// partial so the rest of the log does not grow them. Built CONCURRENTLY so a populated audit_log
-// keeps taking inserts, those inside business transactions included, while they build. That
-// cannot run inside a transaction, as every schema migration does, so they live here and not in
-// the schema. An interrupted build leaves an INVALID index that IF NOT EXISTS then skips: drop it
-// and migrate again to rebuild it.
 const EMAIL_CHANGE_INDEX_SQL = [
   `CREATE INDEX CONCURRENTLY IF NOT EXISTS audit_log_before_email_idx ON audit_log
      (lower(before->>'email')) WHERE action = 'identity.email.changed'`,
@@ -187,8 +141,6 @@ const MIGRATIONS = {
   migrationsSchema: 'drizzle',
 };
 
-// What the writer role may do in the chain's database: connect, read the chain and append to it.
-// No UPDATE, DELETE or TRUNCATE privilege on top of the triggers, and no CREATE anywhere.
 const writerGrantsSql = (role: LoginRole) => {
   const database = identifier(role.database, 'AUDIT_DATABASE_URL database');
   return [
@@ -201,11 +153,6 @@ const writerGrantsSql = (role: LoginRole) => {
   ];
 };
 
-// What the shipper role may do in the main database: read the outbox, delete what it shipped, and
-// move aside what the chain cannot take. It alone keeps DELETE on the outbox and INSERT on the
-// rejected table: they are revoked from PUBLIC and from every other role, the tables' owner
-// included (a superuser keeps them whatever its grants). It reads the main database's own audit_log,
-// when one is left from before the split, to refuse to start a chain while that one still holds rows.
 const shipperGrantsSql = (role: LoginRole) => [
   `GRANT USAGE ON SCHEMA public TO ${role.quoted}`,
   `GRANT SELECT, DELETE ON audit_outbox TO ${role.quoted}`,
@@ -237,11 +184,6 @@ const shipperGrantsSql = (role: LoginRole) => [
    END $$`,
 ];
 
-// The writer role must not reach the main database, and PUBLIC holds CONNECT on every database
-// by default, so PUBLIC loses it there, on the first split migrate only: a later run must not undo
-// what an operator revoked since. Every role that owns or holds a grant on a table in its public
-// schema, the app's own among them, keeps it by name. A role added later that only connects
-// (monitoring, backup) needs its own GRANT CONNECT.
 const MAIN_CONNECT_SQL = `DO $$
    DECLARE holder text;
    BEGIN
@@ -256,7 +198,6 @@ const MAIN_CONNECT_SQL = `DO $$
      EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database());
    END $$`;
 
-// On every run: the writer never connects to the main database, the shipper always may.
 const mainConnectByRoleSql = (writer: LoginRole, shipper: LoginRole) => `DO $$
    BEGIN
      EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM ${writer.quoted}', current_database());
@@ -268,9 +209,6 @@ const MARK_SPLIT_SQL = `COMMENT ON FUNCTION audit_outbox_deny_unshipped_delete()
 const SPLIT_MAIN_MESSAGE =
   'the audit chain of this database lives in a database of its own: migrate with auditUrl (AUDIT_DATABASE_URL) and shipperUrl (AUDIT_SHIPPER_DATABASE_URL)';
 
-// Single-database migrate's refusal, run under the migration lock that split migrate marks the
-// database under and before any pending migration file, so a split that lands while this run
-// waits is seen before anything commits.
 const REFUSE_SPLIT_MAIN_SQL = `DO $$
    BEGIN
      IF (${CHAIN_SPLIT_SQL}) THEN
@@ -278,11 +216,8 @@ const REFUSE_SPLIT_MAIN_SQL = `DO $$
      END IF;
    END $$`;
 
-// Per audit role. Each replica opens up to AUDIT_DATABASE_POOL_MAX connections as each role, so
-// replicas x AUDIT_DATABASE_POOL_MAX must stay within it.
 const ROLE_CONNECTION_LIMIT = 20;
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
-// What CREATE DATABASE raises when a concurrent migrate created it first.
 const ALREADY_EXISTS = new Set(['42P04', '23505']);
 
 const ROLE_STATE_SQL = `SELECT r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication
@@ -296,9 +231,6 @@ const ROLE_STATE_SQL = `SELECT r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR
                                   OR (to_jsonb(m)->>'set_option')::boolean, true)) AS shared
      FROM pg_roles r WHERE r.rolname = $1`;
 
-// An owner may disable the append-only triggers, alter the guards or grant itself back what
-// migrate revoked, so an audit role owns nothing: no database anywhere, and no schema, table,
-// sequence, view or function in the database this runs in.
 const ROLE_OWNS_SQL = `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datdba = r.oid)
           OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner = r.oid)
           OR EXISTS (SELECT 1 FROM pg_class WHERE relowner = r.oid)
@@ -326,13 +258,6 @@ function loginRole(url: string, env: string): LoginRole {
   return { name, quoted: identifier(name, `${env} user`), password, database: databaseOf(url) };
 }
 
-/**
- * Creates `role` as a login with no attribute that reaches past its grants, or takes the existing
- * one when it has none either, belongs to no other role and has no member that inherits it or
- * may SET it, then sets its password and connection limit. ALTER does not restate the attributes:
- * an admin that is not a superuser, as on a managed Postgres, may not name SUPERUSER, CREATEDB,
- * REPLICATION or BYPASSRLS even to turn them off.
- */
 async function ensureLoginRole(client: PoolClient, role: LoginRole): Promise<void> {
   await client.query(`DO $$ BEGIN
        CREATE ROLE ${role.quoted} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
@@ -391,12 +316,6 @@ async function isSplit(client: Pool | PoolClient): Promise<boolean> {
   return rows[0]?.split ?? false;
 }
 
-/**
- * The SCRAM-SHA-256 verifier Postgres stores for `password`, so ALTER ROLE never carries the
- * password itself. The verifier still reaches a log that records DDL (`log_statement = ddl` or
- * `all`), and it is enough to try passwords against offline, so keep such logs as secret as the
- * password.
- */
 function scramVerifier(password: string): string {
   const iterations = 4096;
   const salt = randomBytes(16);
@@ -414,34 +333,11 @@ export function withDatabase(url: string, database: string): string {
 }
 
 export type AuditMigrateTarget = {
-  /** Owner connection to the main database; defaults to DATABASE_ADMIN_URL ?? DATABASE_URL. */
   adminUrl?: string;
-  /**
-   * The chain's own database as the app reaches it (AUDIT_DATABASE_URL): the database to create,
-   * and the login role and password to set up for it. Omitted, the chain stays in the main one.
-   */
   auditUrl?: string;
-  /**
-   * The main database as the shipper reaches it (AUDIT_SHIPPER_DATABASE_URL): the login role and
-   * password to set up as the one role that may delete shipped rows from the outbox. Required with
-   * `auditUrl`.
-   */
   shipperUrl?: string;
 };
 
-/**
- * Apply the audit module migrations (idempotent: drizzle skips already-recorded ones). A string is
- * the admin url of a deployment whose chain shares the main database. Refuses a main database
- * whose chain has moved to its own: migrating it as one database would put the content guard back
- * on an outbox that ships elsewhere.
- *
- * With `auditUrl`, the chain gets a database of its own: created when missing, with the url's role
- * as its only other login, which may connect, read the chain and append to it. With `shipperUrl`,
- * the main database gets a login that alone may delete shipped rows from the outbox, and the guard
- * that needs no audit_log beside it. Both roles' passwords and connection limits are set on every
- * run, so rotating a secret is a migrate away. Runs under the audit migration lock on the main
- * database, so concurrent migrates of one deployment take turns.
- */
 export async function migrate(target?: string | AuditMigrateTarget): Promise<void> {
   const { adminUrl, auditUrl, shipperUrl } =
     typeof target === 'string' ? { adminUrl: target } : (target ?? {});
@@ -502,7 +398,6 @@ export async function migrate(target?: string | AuditMigrateTarget): Promise<voi
           }
         });
       }
-      // Before any ALTER, so a refused role keeps its password and connection limit.
       await refuseOwners(client, [writer, shipper]);
       const auditAdmin = new Pool({ connectionString: withDatabase(mainUrl, writer.database) });
       try {

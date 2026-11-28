@@ -6,7 +6,6 @@ export const UsernameBlockedError = createDomainError<[]>(
   { reason: 'prohibited_language', field: 'username' },
 );
 
-/** Handles that read as staff or the platform itself. Operators add their own via `reservedUsernames`. */
 const BUILT_IN_RESERVED_USERNAMES = [
   'admin',
   'admins',
@@ -37,11 +36,6 @@ const BUILT_IN_RESERVED_USERNAMES = [
   'bot',
 ] as const;
 
-/**
- * Words only: separators and digits split the handle, so `support_1` reads as `support`.
- * The profanity list matches whole words and counts `_` and digits as word characters,
- * so without this `big_ass_1` would pass.
- */
 function toWords(value: string) {
   return value
     .normalize('NFKD')
@@ -52,7 +46,6 @@ function toWords(value: string) {
     .join(' ');
 }
 
-/** A reserved entry matches as a whole word run, so `mod` blocks `mod_7` but not `modest`. */
 export function isReserved(words: string, operatorReserved: readonly string[]) {
   const padded = ` ${words} `;
   return [...BUILT_IN_RESERVED_USERNAMES, ...operatorReserved]
@@ -65,7 +58,6 @@ export function isUsernameAllowed(username: string, operatorReserved: readonly s
   return !hasProfanity(words) && !isReserved(words, operatorReserved);
 }
 
-/** One gate for every path that sets a handle: sign-up and rename. */
 export function assertUsernameAllowed(username: string, operatorReserved?: readonly string[]) {
   if (!isUsernameAllowed(username, operatorReserved)) {
     throw new UsernameBlockedError();

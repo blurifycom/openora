@@ -1,6 +1,3 @@
-// Consumers must import from here rather than `drizzle-orm` directly to share the same
-// physical copy; a second copy causes drizzle's protected-member classes to fail nominal
-// type checks against DrizzleService.db.
 export * from 'drizzle-orm/pg-core';
 export {
   eq,

@@ -9,10 +9,6 @@ const HEX_PREFIX = /^[0-9a-f]+$/;
 const toUuid = (hex: string) =>
   `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 
-/**
- * An id prefix as the uuid range it covers, so the lookup rides the primary key instead of
- * casting every row's id to text. Null when the input cannot be the start of a uuid.
- */
 export function uuidPrefixRange(search: string): { from: string; to: string } | null {
   const hex = search.toLowerCase().replaceAll('-', '');
   if (!HEX_PREFIX.test(hex) || hex.length > UUID_HEX_LENGTH) {
@@ -24,7 +20,6 @@ export function uuidPrefixRange(search: string): { from: string; to: string } | 
   };
 }
 
-// Every branch is index-backed: the primary key, provider_ref_idx and tx_hash_idx.
 function searchCondition(search: string) {
   const idRange = uuidPrefixRange(search);
   return or(
@@ -34,7 +29,6 @@ function searchCondition(search: string) {
   );
 }
 
-// See ADR-0017/0025.
 export class DrizzleAdminWalletReporting implements AdminWalletReporting {
   constructor(private readonly drizzle: DrizzleService) {}
 

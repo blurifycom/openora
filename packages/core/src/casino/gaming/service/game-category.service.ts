@@ -46,8 +46,6 @@ export const GameCategoryRuleRequiredError = createDomainError<[]>(
   () => 'A category in rule mode needs a membershipRule',
 );
 
-// What this service needs of GameCategoryMembershipService. Declared here rather than
-// imported: that service imports this file's errors, and the two must not form a cycle.
 export type CategoryMembershipEvaluator = {
   evaluate(args: {
     categoryId: string;
@@ -57,8 +55,6 @@ export type CategoryMembershipEvaluator = {
   }): Promise<unknown>;
 };
 
-// A caller's permission on the rules a write stores and evaluates; each is checked on the
-// exact rule applied, never on one read before a racing change replaced it.
 type RuleAuthorization = { authorizeRule?: GameCategoryRuleAuthorizer };
 export const GameCategorySlugTakenError = makeConflictError(
   'GameCategorySlugTakenError',
@@ -125,9 +121,6 @@ export class GameCategoryService {
     private readonly membership: CategoryMembershipEvaluator,
   ) {}
 
-  // Locks a category row FOR UPDATE inside the caller's transaction, so a concurrent
-  // PATCH/reorder/pin write serializes rather than racing - shared by every write path
-  // below that needs the current row before deciding what changed.
   private async lockCategoryRow(tx: DrizzleTx, id: string) {
     return findOneOrThrow(
       await tx.select().from(gameCategory).where(eq(gameCategory.id, id)).limit(1).for('update'),
@@ -269,10 +262,6 @@ export class GameCategoryService {
     return toCategoryDetail(record);
   }
 
-  // Runs after the config commit, not inside it - see "Lock order" in docs/modules/gaming.md.
-  // A failure here is logged, not thrown: the config write is already committed and
-  // audited, and the membership sweep retries. A refused `authorizeRule` means a racing
-  // write replaced the rule, so this evaluates its own.
   private async evaluateAfterWrite(
     id: string,
     actor: CatalogActor,
@@ -327,9 +316,6 @@ export class GameCategoryService {
     throw new GameCategoryUpdateContendedError();
   }
 
-  // Runs before the update transaction opens, never inside it - see "Lock order" in
-  // docs/modules/gaming.md. Returns the checked rule next to its normalized form so the
-  // transaction can confirm under the lock that it is still the rule in play.
   private async normalizeMembershipPatch(
     id: string,
     {
@@ -379,8 +365,6 @@ export class GameCategoryService {
   }) {
     return this.drizzle.db
       .transaction(async (tx) => {
-        // The row lock serializes concurrent PATCHes, so the audited `before` is the
-        // state this write replaced, never a snapshot another request already changed.
         const existing = await this.lockCategoryRow(tx, id);
         if (scalarPatch.slug !== undefined && scalarPatch.slug !== existing.slug) {
           const [clash] = await tx
@@ -403,14 +387,9 @@ export class GameCategoryService {
         if (nextMode === 'rule' && !candidateRule) {
           throw new GameCategoryRuleRequiredError();
         }
-        // Also on a bare switch to rule mode: the stored rule may name a provider, a tag
-        // or a rule kind removed since it was saved, and evaluating it blind would empty
-        // the category.
         const needsCheck =
           candidateRule !== null &&
           (membershipRule !== undefined || (modeChanged && nextMode === 'rule'));
-        // Confirms under the lock that the rule checked before this transaction is
-        // still the one in play - see "Lock order" in docs/modules/gaming.md.
         if (needsCheck && !(normalized && isDeepStrictEqual(normalized.input, candidateRule))) {
           return 'stale' as const;
         }
@@ -429,7 +408,6 @@ export class GameCategoryService {
           };
         }
         if (modeChanged && nextMode === 'manual') {
-          // The games stay; from here on they are an admin's to add and remove.
           await tx
             .update(gameCategoryGame)
             .set({ source: 'manual' })
@@ -524,8 +502,6 @@ export class GameCategoryService {
         .innerJoin(game, eq(gameCategoryGame.gameId, game.id))
         .innerJoin(gameProvider, eq(game.providerId, gameProvider.id))
         .where(where)
-        // Effective order (categoryGameOrder, single owner with the public read path),
-        // not the operator's own manual `position` - see docs/modules/gaming.md.
         .orderBy(...categoryGameOrder())
         .limit(limit)
         .offset(pageToOffset(page, limit)),
@@ -542,16 +518,9 @@ export class GameCategoryService {
     userAgent,
   }: ReorderCategoryGamesInput & CatalogActor) {
     const outcome = await this.drizzle.db.transaction(async (tx) => {
-      // The row lock serializes a concurrent reorder/PATCH/pins write on this category -
-      // last-write-wins, not optimistic concurrency (docs/modules/gaming.md).
       const category = await this.lockCategoryRow(tx, id);
-      // Dragging any game always ends the category in manual sort - see docs/modules/gaming.md - so
-      // 'manual' must be bound in the catalog regardless of the category's current key.
       this.sorts.requireDefinition('manual');
 
-      // The full pre-drag effective order (categoryGameOrder semantics: rank, name, id)
-      // - the same order every reader uses - so `before` below is the complete list the
-      // write actually rewrote, not just the subset that already had a manual position.
       const memberRows = await tx
         .select({ gameId: gameCategoryGame.gameId })
         .from(gameCategoryGame)
@@ -579,16 +548,8 @@ export class GameCategoryService {
         `);
       }
       const listedIds = new Set(gameIds);
-      // memberIds iterates in the same effective order as memberRows (Set preserves
-      // insertion order), so this is already the pre-drag order minus the dragged ids -
-      // exactly the tail `after` needs below.
       const unlistedIds = [...memberIds].filter((gameId) => !listedIds.has(gameId));
       if (unlistedIds.length > 0) {
-        // Seeds every member the drag didn't touch from the category's pre-drag
-        // effective order (rank), never null - keeps its visible position stable
-        // across the switch to manual. Same NULLS-LAST ordering as categoryGameOrder()
-        // (shared/game-catalog.ts) - inlined here in raw SQL rather than shared, since
-        // this query also needs the row id and the != ALL exclusion. See docs/modules/gaming.md.
         await tx.execute(sql`
           WITH unlisted AS (
             SELECT gcg.id, gcg.position AS current_position,
@@ -653,8 +614,6 @@ export class GameCategoryService {
     userAgent,
   }: UpdateCategoryPinsInput & CatalogActor) {
     const outcome = await this.drizzle.db.transaction(async (tx) => {
-      // The row lock serializes a concurrent pins/reorder/PATCH write on this category -
-      // last-write-wins, not optimistic concurrency (docs/modules/gaming.md).
       await this.lockCategoryRow(tx, id);
 
       const memberRows = await tx
@@ -677,10 +636,6 @@ export class GameCategoryService {
         .sort((a, b) => a.pinnedPosition - b.pinnedPosition)
         .map((row) => ({ gameId: row.gameId, position: row.pinnedPosition }));
 
-      // Clears every currently-pinned row first (never the whole category - at most
-      // GAME_CATEGORY_PINS_MAX rows): writing the new slots directly could momentarily
-      // collide with another game's still-current slot on the partial unique index (a
-      // same-request swap in particular) - see docs/modules/gaming.md.
       await tx
         .update(gameCategoryGame)
         .set({ pinnedPosition: null })

@@ -7,9 +7,7 @@ export const OTP_EXPIRES_IN_SEC = 3600;
 export const ThemeSchema = z.enum(THEMES);
 export type Theme = z.infer<typeof ThemeSchema>;
 
-// BCP 47 upper bound - the longest real-world tags stay well under this.
 export const LanguageSchema = z.string().max(35);
-/** A well-formed BCP 47 tag; `LanguageSchema` alone only bounds the length. */
 export const LanguageTagSchema = LanguageSchema.regex(
   /^[a-zA-Z]{2,8}(?:-(?:[a-zA-Z0-9]{2,8}|[a-zA-Z0-9](?=-)))*$/,
 );
@@ -63,11 +61,6 @@ export const PhoneLoginErrorReasonSchema = z.enum(PHONE_LOGIN_ERROR_REASONS);
 export const PHONE_LOGIN_OTP_INVALID_REASONS = ['expired', 'wrong_code'] as const;
 export const PhoneLoginOtpInvalidReasonSchema = z.enum(PHONE_LOGIN_OTP_INVALID_REASONS);
 
-/**
- * Why a registration attempt produced no account. `email_already_registered` is the odd
- * one out: the caller is deliberately told the attempt succeeded, because saying otherwise
- * is an account-enumeration oracle. The audit trail records what actually happened.
- */
 export const REGISTRATION_FAILURE_REASONS = [
   'registration_disabled',
   'rate_limited',
@@ -96,18 +89,6 @@ export const MemberSchema = z.object({
   createdAt: TimestampSchema,
 });
 
-/**
- * The rule for every password the platform *sets* (register, reset, and the new
- * password on change): minimum 12 characters, the platform password policy.
- * Upper-bounded to better-auth's own
- * `maxPasswordLength` default (128), which it enforces itself but only after the fact -
- * on sign-up that surfaces as a generic "Registration is unavailable", and on reset it
- * burns a valid one-time code before rejecting. Bounding it here fails the caller with
- * the real reason instead.
- *
- * Sign-in deliberately does NOT use this: capping the input cannot help (no longer
- * password was ever storable) and would only narrow an existing contract.
- */
 export const PASSWORD_MAX_LENGTH = 128;
 export const PasswordSchema = z.string().min(12).max(PASSWORD_MAX_LENGTH);
 
@@ -116,11 +97,6 @@ const credentialsBase = z.object({
   password: z.string().min(8),
 });
 
-/**
- * Which surface a sign-in is for. `staff` is the backoffice, `player` the casino. Optional so
- * existing callers keep working; when set, an account of the other kind is refused after its
- * credential proves out, so no session is issued for a surface the account does not belong to.
- */
 export const LoginAudienceSchema = z.enum(['staff', 'player']);
 
 export const LoginInputSchema = credentialsBase.extend({
@@ -137,7 +113,6 @@ export const LoginSecurityStateSchema = z.object({
 export const ACQUISITION_MAX_PARAMS = 10;
 
 const AcquisitionParamKeySchema = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
-// Postgres rejects NUL and lone surrogates in jsonb.
 const AcquisitionParamValueSchema = z
   .string()
   .max(256)
@@ -159,13 +134,6 @@ const AcquisitionParamsSchema = z
   )
   .refine((params) => Object.keys(params).length > 0);
 
-/**
- * The marketing parameters a visitor arrived with (an affiliate tag, a referral code, UTM
- * values), as the client captured them. Stored verbatim and never interpreted by the
- * platform: which parameter means what is the operator's decision. Client-supplied, so
- * nothing here is evidence of anything on its own. An invalid entry, a parameter past
- * the cap, or an invalid landing context is dropped on its own, keeping the rest.
- */
 export const RegistrationAcquisitionSchema = z.object({
   params: AcquisitionParamsSchema,
   firstSeenAt: z.iso.datetime({ offset: true }).optional().catch(undefined),
@@ -195,10 +163,6 @@ export const UsernameAvailabilityOutputSchema = z.object({ available: z.boolean(
 
 export const RegistrationPolicySchema = z.object({ minPlayerAge: z.number().int() });
 
-// How the account receives its second factor. All three share one enrolment - the
-// secret and backup codes better-auth mints on enable - and differ only in delivery:
-// `app` reads a TOTP off the shared secret, `email` and `sms` have a one-time code
-// pushed to the registered address. The account holds exactly one at a time.
 export const TWO_FACTOR_DELIVERY_METHODS = ['app', 'email', 'sms'] as const;
 export const TwoFactorDeliveryMethodSchema = z.enum(TWO_FACTOR_DELIVERY_METHODS);
 
@@ -208,33 +172,17 @@ export const Enable2faInputSchema = z.object({
 });
 
 export const Enable2faResultSchema = z.object({
-  // Only the authenticator method has a URI to render as a QR code; `email` and `sms`
-  // get their code pushed instead, so there is nothing for the client to display.
   totpUri: z.string().min(1).optional(),
   backupCodes: z.array(z.string()),
-  // Where an `email`/`sms` code was sent, masked for display (p***@example.com).
   maskedDestination: z.string().min(1).optional(),
 });
 
-// The credentials that clear a challenge. A backup code is single-use and spends
-// itself, which is what makes it the recovery path off a lost authenticator; `otp`
-// is the pushed code the `email` and `sms` methods deliver.
 export const TwoFactorChallengeMethodSchema = z.enum(['totp', 'backup_code', 'otp']);
 
-// A live second-factor code, six digits: a TOTP for the `app` method, a pushed
-// one-time code for `email`/`sms`. Used as the fresh factor a step-up action has to
-// clear on top of the account password.
 export const TotpStepUpCodeSchema = z.string().length(6);
 
-// Which credential answers a step-up. `live` is the enrolled method's current code,
-// and which endpoint can spend it is resolved from the account rather than chosen by
-// the caller. `backup_code` is one of the standing recovery codes.
 export const StepUpMethodSchema = z.enum(['live', 'backup_code']);
 
-// better-auth mints a recovery code as ten letters and digits split by a hyphen after
-// the fifth, and matches the stored string exactly - every miss counting toward the 2FA
-// lockout. A code typed without the hyphen is put back into that shape rather than being
-// let through to fail.
 export function normalizeBackupCode(code: string): string {
   const trimmed = code.trim();
   return /^[A-Za-z0-9]{10}$/.test(trimmed) ? `${trimmed.slice(0, 5)}-${trimmed.slice(5)}` : trimmed;
@@ -246,28 +194,17 @@ export const BackupCodeSchema = z
   .regex(/^[A-Za-z0-9]{5}-?[A-Za-z0-9]{5}$/)
   .transform(normalizeBackupCode);
 
-// Either credential, whichever the caller presents: six digits for a live code, ten
-// characters split by a hyphen for a backup code.
 export const SecondFactorCodeSchema = z.string().min(6).max(11);
 
 export const Verify2faInputSchema = z.object({
   code: SecondFactorCodeSchema,
   method: TwoFactorChallengeMethodSchema.default('totp'),
-  // Suppresses the second factor on this browser until the trust window lapses.
-  // Honoured only for `method: 'totp'` - a spent recovery code buys a session, not
-  // a 30-day bypass - and only while the operator allows a non-zero window.
   trustDevice: z.boolean().default(false),
   timezone: TimezoneSchema.optional(),
 });
 
 export const RegenerateBackupCodesInputSchema = z.object({
   password: z.string().min(8),
-  // A fresh authenticator code: rotating the standing recovery credentials is a step-up
-  // action, not something a stolen session plus a reused password can do. A backup code
-  // is deliberately not accepted: with the password and two leaked codes, one would buy
-  // a session and the other a fresh set that silently voids the owner's remaining codes.
-  // A player who lost the enrolled method recovers through `disable2fa` instead, which
-  // tears down every session and bypass with it.
   code: TotpStepUpCodeSchema,
 });
 
@@ -280,34 +217,18 @@ export const BackupCodesResultSchema = z.object({
   backupCodes: z.array(z.string()),
 });
 
-// Pushes a one-time code to the account's registered address. Serves both the
-// "Resend code" action during enrolment and the send leg of an `email`/`sms`
-// challenge at login, so it answers from a live session or a pending challenge alike.
 export const SendTwoFactorOtpResultSchema = z.object({
   maskedDestination: z.string().min(1),
 });
 
-// What the Security page renders: whether a second factor is active, which one, and
-// the addresses a code could go to - masked, because this is read from the session
-// rather than re-proved, so it must not hand back a full address or phone number.
 export const TwoFactorStatusSchema = z.object({
   enabled: z.boolean(),
   method: TwoFactorDeliveryMethodSchema.nullable(),
   maskedEmail: z.string().min(1),
-  // Null when the account has no verified phone - the `sms` method is unavailable then.
   maskedPhone: z.string().min(1).nullable(),
-  // How much of the recovery set is left, so the account can be told to rotate before
-  // it runs out. Null when no second factor is set up, or when the operator stores the
-  // codes in a form this process cannot read back.
   backupCodesRemaining: z.number().int().nonnegative().nullable(),
 });
 
-// Disabling the second factor tears down every standing bypass with it, so it takes a
-// fresh second factor on top of the password - the same bar as a Super Admin reset, just
-// self-served. A backup code clears it too, which is what makes losing the enrolled
-// method recoverable without one. Typed by `method` so the code's shape is checked before
-// anything is verified: a backup code sent without `method: 'backup_code'` is a 400, not
-// a TOTP check that spends a lockout strike. `live` stays the default for older callers.
 export const Disable2faInputSchema = z.union([
   z.object({
     password: z.string().min(8),
@@ -321,14 +242,10 @@ export const Disable2faInputSchema = z.union([
   }),
 ]);
 
-// How long a session may sit idle before it is cut. Every account has a window - there
-// is deliberately no "off": the longest option already coincides with better-auth's
-// absolute 30-day expiry, which this setting does not touch.
 export const AUTO_LOGOUT_DURATIONS = ['15m', '1h', '24h', '7d', '30d'] as const;
 export const AutoLogoutDurationSchema = z.enum(AUTO_LOGOUT_DURATIONS);
 export type AutoLogoutDuration = z.infer<typeof AutoLogoutDurationSchema>;
 
-// The window behind each option, in minutes.
 export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number> = {
   '15m': 15,
   '1h': 60,
@@ -337,8 +254,6 @@ export const AUTO_LOGOUT_MINUTES: Record<AutoLogoutDuration, number> = {
   '30d': 30 * 24 * 60,
 };
 
-// Backoffice staff sessions end after this long without activity. Fixed, not per-user: staff
-// cannot set the player auto-logout preference, so there is nothing for them to configure.
 export const ADMIN_IDLE_MINUTES = 30;
 
 export const SecurityControlsSchema = z.object({
@@ -350,17 +265,8 @@ export const SecurityControlsSchema = z.object({
   loginWithdrawalAlertsEnabled: z.boolean(),
   withdrawalPinSet: z.boolean(),
   autoLogoutDuration: AutoLogoutDurationSchema,
-  // When set, a trusted device buys nothing: the second factor is asked for on every
-  // login regardless of how recently this browser cleared one.
   requireTwoFactorOnLogin: z.boolean(),
-  // The operator-configured trust window (`adminSecurityConfig.trustedDeviceDays`), so a
-  // client's "trust this device for N days" copy names the real value instead of a
-  // hardcoded guess that goes stale the moment an operator changes it. Zero means
-  // trusting a device is disabled platform-wide.
   trustedDeviceDays: z.number().int().nonnegative(),
-  // Raw value, not a boolean - this code authorizes nothing (unlike the withdrawal PIN), it's
-  // a recognition signal readable only by the authenticated player it belongs to, same gate as
-  // the rest of this schema.
   antiPhishingCode: z.string().nullable(),
 });
 
@@ -370,14 +276,10 @@ export const SetAutoLogoutInputSchema = z.object({ duration: AutoLogoutDurationS
 
 export const SetRequireTwoFactorOnLoginInputSchema = z.object({ enabled: z.boolean() });
 
-// Non-empty after trimming incidental leading/trailing whitespace (eg from copy-paste),
-// case-sensitive, and capped to keep every delivered email bounded - no reauth, set/overwrite only.
 export const SetAntiPhishingCodeInputSchema = z.object({ code: z.string().trim().min(1).max(255) });
 
 export const WithdrawalPinSchema = z.string().regex(/^[0-9]{4}$/);
 
-// Set and Change share this one shape - Change asks for a fresh password/TOTP the same
-// as Set, never the current PIN (matches the product's identical Set/Change UX).
 export const SetWithdrawalPinInputSchema = z
   .object({
     pin: WithdrawalPinSchema,
@@ -390,8 +292,6 @@ export const SetWithdrawalPinInputSchema = z
     path: ['confirmPin'],
   });
 
-// Removing the PIN asks for the same fresh proof as setting it: without it a stolen session
-// could drop the PIN and then withdraw.
 export const RemoveWithdrawalPinInputSchema = z.object({
   currentPassword: z.string().min(8),
   totpCode: TotpStepUpCodeSchema.optional(),
@@ -435,8 +335,6 @@ export const ResendEmailVerificationInputSchema = z.object({
 export const VerifyEmailInputSchema = z.object({
   email: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
-  // Carried here too: `autoSignInAfterVerification` mints the first session on this route,
-  // and verification may come from a different device than sign-up.
   timezone: TimezoneSchema.optional(),
 });
 
@@ -456,15 +354,12 @@ export const ChangePasswordInputSchema = z.object({
   newPassword: PasswordSchema,
 });
 
-// Step 1: request a change. The OTP is mailed to `newEmail`; `currentPassword`/`totpCode`
-// feed `assertFreshReauthentication` - a live session alone must not be enough.
 export const RequestEmailChangeInputSchema = z.object({
   newEmail: z.email(),
   currentPassword: z.string().min(8),
   totpCode: TotpStepUpCodeSchema.optional(),
 });
 
-// Step 2: confirm with the code that was mailed to `newEmail`.
 export const ConfirmEmailChangeInputSchema = z.object({
   newEmail: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
@@ -472,10 +367,6 @@ export const ConfirmEmailChangeInputSchema = z.object({
 
 export const IdentitySuccessSchema = z.object({ success: z.literal(true) });
 
-// The caller may have asked to trust this device and not gotten it: a backup code, an
-// account requiring 2FA on every login, or a challenge that never resolved to a session
-// all suppress the grant while the challenge itself still succeeds. `trustGranted` is
-// the one field client copy promising "you won't be asked again" can trust.
 export const Verify2faOutputSchema = IdentitySuccessSchema.extend({
   trustGranted: z.boolean(),
 });

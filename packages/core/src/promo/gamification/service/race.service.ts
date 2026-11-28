@@ -24,7 +24,6 @@ import { roundReversal } from '../shared/round-reversal.js';
 
 export const RaceNotFoundError = makeNotFoundError('Race');
 
-// Counted when the bet settles, through recordSettledWager, so a reserve never climbs a race.
 const SETTLED_PRODUCT = 'sportsbook';
 
 const ROUND_KEY = [
@@ -37,7 +36,6 @@ const ROUND_KEY = [
 
 type OpenRace = { id: string; currency: string; eligibleProducts: readonly string[] };
 
-// Race-id order, the order reverseWager locks standings in.
 const openRaceRows = (tx: DrizzleTx, at: Date) =>
   tx
     .select({
@@ -54,21 +52,10 @@ const countsProduct = (product: string) => (race: OpenRace) =>
 
 const INCOGNITO = 'Incognito';
 
-/**
- * The server-side source of truth for a masked leaderboard username, so a client's own copy of
- * this rule (if it has one) never disagrees with what the payload already carries - a leaderboard
- * response reflects masking itself rather than leaving it to be applied client-side. A fixed
- * suffix, so the mask never tells how long the hidden part is.
- */
 export function maskUsername(name: string): string {
   return `${name.slice(0, Math.min(3, name.length - 1))}****`;
 }
 
-/**
- * Standings order, shared by the board and the payout so the player shown in a place is the one
- * paid for it. Ties go to whoever's total last moved earliest - who reached it first - and then
- * to the user id, so even an exact tie on both has one answer.
- */
 export const RACE_STANDING_ORDER = [
   desc(promoRaceWager.wagered),
   asc(promoRaceWager.updatedAt),
@@ -77,15 +64,6 @@ export const RACE_STANDING_ORDER = [
 
 const LEADERBOARD_CAP = 100;
 
-/**
- * The wager-challenge / leaderboard-race engine: a fourth `WAGER_TRACKING` consumer alongside
- * `RankService`, `RakebackService` and `StreakService`, plus the player-facing reads the race
- * page renders from.
- *
- * Own-money only, the same rule `RakebackService` applies: `args.realAmount` already excludes
- * whatever part of a stake a bonus grant covered, so wagering a bonus never climbs a race whose
- * prize is real cash.
- */
 export class RaceService implements WagerTrackingCommands {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -128,11 +106,6 @@ export class RaceService implements WagerTrackingCommands {
     return [];
   }
 
-  /**
-   * Counts a sportsbook stake once, in the races open when the bet first settled other than void.
-   * A round already standing in a race was counted there, so a re-settle after a reopen adds
-   * nothing; a round a void took back to zero counts again.
-   */
   async recordSettledWager(
     tx: DrizzleTx,
     args: SettledWagerArgs,
@@ -140,7 +113,6 @@ export class RaceService implements WagerTrackingCommands {
     if (moneyCompare(args.realAmount, '0') <= 0) {
       return [];
     }
-    // Skips a race its payout is closing right now, so a closed race never changes.
     const open = await openRaceRows(tx, args.qualifiedAt).for('key share', { skipLocked: true });
     for (const race of open.filter(countsProduct(args.context.product))) {
       const [counted] = await tx
@@ -197,8 +169,6 @@ export class RaceService implements WagerTrackingCommands {
     }
     const amount = await this.rates.convert(args.realAmount, args.currency, race.currency, tx);
     if (amount === null) {
-      // ponytail: a wager with no rate is not counted toward the race; revisit if this shows
-      // up in logs the way the equivalent rank-side skip would.
       this.logger.warn(
         { userId: args.userId, raceId: race.id, from: args.currency, to: race.currency },
         'race wager skipped - no exchange rate',
@@ -225,17 +195,10 @@ export class RaceService implements WagerTrackingCommands {
       });
   }
 
-  // A void reaches reverseWager too when the bonus engine is loaded; the second call finds no stake left.
   async reverseSettledWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     await this.reverseWager(tx, args);
   }
 
-  /**
-   * Takes a rolled-back stake back out of every race the round counted in and that has not closed
-   * yet - a closed race's standings are frozen and already paid. Each race takes back its own
-   * share of the reversed stake, independently: one round counts in full in every race it was
-   * eligible for, so it is reversed in full in each of them too.
-   */
   async reverseWager(tx: DrizzleTx, args: WagerReversalArgs): Promise<void> {
     const rounds = await tx
       .select({
@@ -299,8 +262,6 @@ export class RaceService implements WagerTrackingCommands {
     }
     const race = toRace(row);
 
-    // One capped query, ranked by wagered desc - a page size of 100 is enough for a paid/ranked
-    // leaderboard; add real pagination if a race ever needs more than that (ponytail).
     const [ranked, [counted]] = await Promise.all([
       this.drizzle.db
         .select({
@@ -311,7 +272,6 @@ export class RaceService implements WagerTrackingCommands {
         .where(eq(promoRaceWager.raceId, raceId))
         .orderBy(...RACE_STANDING_ORDER)
         .limit(LEADERBOARD_CAP),
-      // Served by the (raceId, ...) indexes alone; one row per player per race.
       this.drizzle.db
         .select({ n: count() })
         .from(promoRaceWager)

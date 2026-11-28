@@ -4,7 +4,6 @@ import type {
   RealtimeConnectionGrant,
 } from '@openora/core/contracts';
 
-/** First-party SSE grant; the session cookie authorizes the stream itself. */
 export class SseClientAuthorizer implements RealtimeClientAuthorizer {
   constructor(private readonly streamPath = '/chat/stream') {}
 

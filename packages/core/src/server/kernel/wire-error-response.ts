@@ -4,11 +4,6 @@ const WIRE_BODY = Symbol.for('openora.wireErrorResponse.body');
 
 export type WireErrorBody = Readonly<Record<string, unknown>> | readonly unknown[];
 
-/**
- * An error a route throws to answer with `status` and `body` sent as JSON, instead of oRPC's error
- * envelope: for a protocol the caller already speaks, such as a vendor callback. A 5xx one is
- * reported only through its `cause`; without one, the route that chose it owns its reporting.
- */
 export function wireErrorResponse(
   status: number,
   body: WireErrorBody,

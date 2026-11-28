@@ -16,14 +16,6 @@ import {
 
 const logger = createLogger('wallet-finding');
 
-/**
- * Sentinel `runId` for a finding produced OUTSIDE any reconciliation job cycle: the live
- * webhook path (`WalletService.creditDepositByAddress`) hits an unattributable deposit in
- * real time rather than on a poll, and an admin resolving a finding acts on their own
- * clock. `runId` is NOT NULL on the table, so this fixed zero-uuid documents "no job run
- * owns this row", mirroring the audit plugin's SYSTEM_ACTOR sentinel for "no admin acted
- * here".
- */
 export const OUT_OF_CYCLE_RUN_ID = '00000000-0000-0000-0000-000000000000';
 
 export type ReconciliationFindingInput = {
@@ -37,25 +29,11 @@ export type ReconciliationFindingInput = {
   tag?: string | null;
   txHash?: string | null;
   sourceAddress?: string | null;
-  /**
-   * The dedup key: a partial unique index on (kind, providerName, externalId) makes a duplicate
-   * insert for the same underlying vendor event or job re-run a silent no-op. Pass a
-   * stable stand-in (eg the source row's own id) when no vendor externalId exists, so
-   * a finding with no natural external reference still dedupes across re-runs.
-   */
   externalId?: string | null;
   transactionId?: string | null;
   detail?: string | null;
 };
 
-/**
- * The single write path for a reconciliation finding - never a raw `insert` scattered
- * across WalletService and ReconciliationService (both import this, neither imports the
- * other, so there is no cycle). A finding is a report, never a credit instruction (see
- * the schema's own comment): this never touches a balance or a transaction row, only
- * records that something needs a human look. True when it filed a new finding, false when the
- * report was already on file.
- */
 export async function recordReconciliationFinding(
   db: DrizzleDb | DrizzleTx,
   input: ReconciliationFindingInput,
@@ -70,7 +48,6 @@ export async function recordReconciliationFinding(
   return row !== undefined;
 }
 
-/** As `recordReconciliationFinding`, with the audit row committed in the caller's transaction. */
 export async function recordReconciliationFindingInTransaction(
   txn: DrizzleTx,
   input: ReconciliationFindingInput,
@@ -83,11 +60,6 @@ export async function recordReconciliationFindingInTransaction(
   return row !== undefined;
 }
 
-/**
- * Files a batch of non-deposit findings in one insert and audits only the ones it filed, in the
- * caller's transaction: a report already on file stays silent, and none lands unaudited. Returns
- * the inputs it filed.
- */
 export async function recordReconciliationFindingsInTransaction(
   txn: DrizzleTx,
   inputs: readonly ReconciliationFindingInput[],
@@ -120,11 +92,6 @@ export async function recordReconciliationFindingsInTransaction(
   return recorded;
 }
 
-/**
- * A poll that could not read a deposit's amount files `missing_deposit` with no amount, which
- * takes the deposit's only slot in the unique index. The first readable report completes that
- * row instead of being dropped by the conflict, or by `SAME_DEPOSIT_KIND` for a webhook.
- */
 async function fillUnreadableFinding(
   db: DrizzleDb | DrizzleTx,
   input: ReconciliationFindingInput,
@@ -203,7 +170,6 @@ function findingRecordedAudit(
   };
 }
 
-/** Findings about on-chain money that reached custody for a player (or should have). */
 export const DEPOSIT_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind> = new Set([
   'missing_deposit',
   'unattributed_deposit',
@@ -213,7 +179,6 @@ export const DEPOSIT_FINDING_KINDS: ReadonlySet<WalletReconciliationFindingKind>
   'below_minimum_deposit',
 ]);
 
-/** Whether an admin already refunded this vendor deposit on chain, from any finding. */
 export async function isRefundedDeposit(
   db: DrizzleDb | DrizzleTx,
   providerName: WalletRefundedDeposit['providerName'],
@@ -231,11 +196,6 @@ export async function isRefundedDeposit(
   return row !== undefined;
 }
 
-/**
- * Serializes every move of one vendor deposit's money (a webhook credit, an admin credit,
- * release or refund) for the rest of the transaction. Without it a refund and a credit of the
- * same deposit, each checking the other's absence first, could both commit and pay it twice.
- */
 export async function lockVendorDeposit(
   txn: DrizzleTx,
   providerName: WalletRefundedDeposit['providerName'],
@@ -272,8 +232,6 @@ async function hasFinding(
 }
 
 async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFindingInput) {
-  // A refunded deposit is settled: a redelivery or re-poll of it must not reopen it as a
-  // finding of another kind an admin could refund or credit a second time.
   if (
     DEPOSIT_FINDING_KINDS.has(input.kind) &&
     input.externalId &&
@@ -285,9 +243,6 @@ async function insertFinding(db: DrizzleDb | DrizzleTx, input: ReconciliationFin
     );
     return undefined;
   }
-  // A deposit to an address we never issued is both unattributable (webhook) and missing
-  // from the ledger (poll). Whichever files first owns it, open or resolved - a second one
-  // would double the alert count, and reopen a deposit an admin already dismissed.
   const sameDepositKind = SAME_DEPOSIT_KIND[input.kind];
   if (
     sameDepositKind &&
@@ -322,24 +277,6 @@ export function findingValues(input: ReconciliationFindingInput) {
   };
 }
 
-/**
- * The deposit gate asked about money that has ALREADY reached the player: an on-chain
- * deposit a webhook credited, or one an admin credited by hand to resolve a finding.
- * Neither can be refused the way a PSP charge is (`docs/standards/compliance.md`: an
- * on-chain deposit is credited and flagged, never refused), so a breach becomes an
- * `rg_limit_breach` finding the caller files rather than an error.
- *
- * `attempted` is the part of the move the gate has NOT counted yet: `0` once the deposit
- * row is committed, because the gate already reads it out of the player's window, and the
- * credited amount for a `manual_credit`, which no deposit window counts.
- *
- * Returns `null` - never throws, never refuses - when the port is unbound, the limit is
- * intact, or the gate itself fails: the money moved before this ran, so a failure here is
- * a missed report, not a stuck deposit. `db` is a bare handle, not a transaction, for
- * that same reason; note that this makes the gate's own `pg_advisory_xact_lock` release
- * at statement end, which is harmless for a report and would NOT be for an enforcing
- * caller.
- */
 export async function rgDecisionForLandedCredit(
   db: DrizzleDb,
   rgLimits: RgLimitsPort | undefined,

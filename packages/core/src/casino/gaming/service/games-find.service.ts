@@ -12,7 +12,6 @@ import { game, gameCategory, gameCategoryGame, gameProvider } from '../schema/in
 
 type GameCategoryRef = GamesFind['games'][number]['categories'][number];
 
-/** The game catalog as an agent reads it: games and categories by id, for the back office to link. */
 export class GamesFindService {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -101,7 +100,6 @@ export class GamesFindService {
     };
   }
 
-  /** The first categories of each game, in lobby order. */
   private async categoriesOf(gameIds: readonly string[]): Promise<Map<string, GameCategoryRef[]>> {
     if (gameIds.length === 0) {
       return new Map();

@@ -59,7 +59,6 @@ const NotificationDispatchJobSchema = z.object({
   event: z.string(),
   input: QueuedNotificationInputSchema,
   email: MailTemplateSchema.nullish(),
-  // Backlog jobs produced before security alerts existed omit this field.
   securityAlert: z.boolean().default(false),
 });
 
@@ -74,12 +73,9 @@ type NotificationMapEntry = {
   parse: (payload: unknown) => unknown;
   buildNotification: (data: unknown) => CreateNotificationInput;
   buildEmail: (data: unknown, occurredAt: string) => MailTemplate | null;
-  // Opt-in security alert: the mail is preference-gated and its enqueue errors reach the worker.
   securityAlert: boolean;
 };
 
-// Drops null/undefined values (eg a nullable roomId) so `data` and `params` only ever carry
-// fields the source event actually had a value for; an all-null payload becomes `null`.
 export function compactData(
   fields: Record<string, string | null | undefined>,
 ): Record<string, string> | null {
@@ -91,9 +87,6 @@ export function compactData(
 
 type ParamKeys<T extends NotificationType> = (typeof NOTIFICATION_PARAM_KEYS)[T];
 
-// Every required key of the type and any of its optional ones - a key outside the type's set is a
-// compile error, so the map below cannot drift from NOTIFICATION_PARAM_KEYS. A type with no keys
-// takes `Record<string, never>`: an empty `{}` target would skip the excess-key check.
 type NotificationParamsOf<T extends NotificationType> = [
   ParamKeys<T>['required'][number] | ParamKeys<T>['optional'][number],
 ] extends [never]
@@ -101,8 +94,6 @@ type NotificationParamsOf<T extends NotificationType> = [
   : Record<ParamKeys<T>['required'][number], string> &
       Partial<Record<ParamKeys<T>['optional'][number], string | null>>;
 
-// The previous release's dispatch worker still requires these strings on a queued job; they are
-// stripped on read here. ponytail: remove together with the title/body columns.
 const LEGACY_DISPATCH_TEXT = { title: '', body: '' } as const;
 
 function notification<T extends NotificationType>(input: {
@@ -119,9 +110,6 @@ function notification<T extends NotificationType>(input: {
   };
 }
 
-// A plain array literal would widen every entry's `event` to DomainEventName and lose the
-// payload type tied to it; this generic keeps K bound per entry so buildNotification stays
-// checked against that one event's actual payload shape.
 function mapEvent<K extends DomainEventName>(
   event: K,
   buildNotification: (payload: DomainEventPayload<K>) => CreateNotificationInput,
@@ -299,7 +287,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
     },
   ),
 
-  // The admin's `reason` is internal: it is never copied into what the player sees.
   mapEvent('wallet.manual_adjustment.created', (p) =>
     notification({
       userId: p.userId,
@@ -325,8 +312,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
         data: { grantId: p.grantId },
       }),
     {
-      // A gift, rain or donation comes from another player and is already announced where it
-      // happened; a rain fans out to a whole room, so a mail per recipient would be noise.
       email: (p) =>
         p.source === 'gift' || p.source === 'rain' || p.source === 'donation'
           ? null
@@ -500,7 +485,6 @@ export const notificationEventMap: NotificationMapEntry[] = [
     }),
   ),
 
-  // Pre-existing types: in-app only, unchanged from before the declarative-map refactor.
   mapEvent('social.friend_request.sent', (p) =>
     notification({
       userId: p.addresseeId,
@@ -515,14 +499,10 @@ export const notificationEventMap: NotificationMapEntry[] = [
       userId: p.requesterId,
       type: 'social.friend_request.accepted',
       params: { accepterUsername: p.accepterUsername },
-      // accepterId, not requesterId: the recipient of THIS notification is the
-      // requester, so the linkable "other party" is whoever just accepted.
       data: { accepterId: p.accepterId },
     }),
   ),
 
-  // In-app only: no `email` option passed to mapEvent, same as every other
-  // no-mail entry above (the old boolean `{ sendEmail: false }` shape no longer exists).
   mapEvent('chat.room.ownership.transferred', (p) =>
     notification({
       userId: p.newOwnerId,
@@ -543,13 +523,11 @@ export function buildKycResubmissionNotification(payload: {
     ...notification({
       userId: payload.userId,
       type: 'kyc.resubmission_requested',
-      // An advanced request's reason is internal: dropped here too, whatever the job carries.
       params: {
         reason: payload.tier === 'advanced' ? null : payload.reason || null,
         tier: payload.tier,
       },
     }),
-    // The notification's unique eventId makes a redelivered job a no-op insert.
     eventId: payload.eventId ?? null,
   };
 }
@@ -567,7 +545,6 @@ export function buildChatRoomScheduledForDeletionNotification(payload: {
   });
 }
 
-// The admin's `reason` is internal: it is never copied into what the player sees.
 export function buildRgLimitAdminUpdatedNotification(
   p: DomainEventPayload<'rg.limit.set'>,
 ): CreateNotificationInput {
@@ -604,8 +581,6 @@ export default {
     },
   ],
   register(ctx) {
-    // Subscriptions are wired before router factories run (boot order), so these refs are
-    // null at registration but set from the router factory before any real event arrives.
     let svcRef: NotificationsService | null = null;
     let mailDispatchRef: MailDispatchPort | null = null;
     let identityReaderRef: IdentityReader | null = null;
@@ -635,9 +610,6 @@ export default {
       }
     };
 
-    // Security alerts are explicitly opt-in and require a currently verified email.
-    // Unlike the ordinary notification mail helper above, enqueue errors are surfaced to the
-    // queue worker so they use its retry/dead-letter policy.
     const dispatchSecurityAlertMail = async (
       userId: string,
       template: MailTemplate,
@@ -670,8 +642,6 @@ export default {
       }
     };
 
-    // Event handlers await their work and throw when the module isn't wired: a failure leaves
-    // the event pending, so the broker redelivers it instead of marking it handled (ADR-0045).
     const requireService = (): NotificationsService => {
       if (!svcRef) {
         throw new Error('notifications service not constructed');
@@ -685,12 +655,6 @@ export default {
       return jobQueueRef;
     };
 
-    // The one place every `create()` call ends up on the realtime channel from - this
-    // module's own dispatch jobs below, and an overlay's own `NotificationsService` instance
-    // over a consumer-specific event `domainEventSchemas` has no entry for, since both share
-    // this event bus and `create()` always emits this topic. Re-reads the row rather than
-    // carrying it on the event: the event is `{ notificationId, userId }` only, the same shape
-    // every other consumer of this topic (the audit log) already treats as the full payload.
     ctx.events.on('notifications.created', async (payload) => {
       const parsed = domainEventSchemas['notifications.created'].safeParse(payload);
       if (!parsed.success) {
@@ -721,7 +685,6 @@ export default {
               eventId: envelope.eventId,
             },
             email: entry.buildEmail(data, envelope.occurredAt),
-            // An opted-in entry's email is preference-gated; every other entry always mails.
             securityAlert: entry.securityAlert,
           },
           {
@@ -732,9 +695,6 @@ export default {
       });
     }
 
-    // The welcome mail is the first thing a consumer may put a sign-up bonus in, and it goes
-    // out on verification - before the login gate has refused an RG-blocked account or the
-    // geo gate a blocked country. Whatever cannot be confirmed reads as ineligible.
     const isEligibleForPromotions = async (userId: string, ip: string | null | undefined) => {
       if (!playEligibilityRef) {
         return false;
@@ -788,9 +748,6 @@ export default {
         );
         return;
       }
-      // Skip the job entirely for the normal opt-out case. Delivery checks the same
-      // current state again, so a preference or email change between here and the
-      // worker cannot result in a stale-address email.
       if (!(await identityReaderRef.canReceiveLoginWithdrawalAlerts?.(parsed.data.userId))) {
         return;
       }
@@ -804,15 +761,11 @@ export default {
       );
     });
 
-    // Non-null `reason` marks an admin override (ADR-0037); player-initiated
-    // limit changes always emit `reason: null`.
     ctx.events.on('rg.limit.set', async (payload, envelope) => {
       const parsed = domainEventSchemas['rg.limit.set'].safeParse(payload);
       if (!parsed.success || parsed.data.reason === null) {
         return;
       }
-      // In-app only: `RgService.setPlayerLimit` already sends the `rgLimitUpdated` mail on this write.
-      // The event id dedups the row when a redelivery re-runs this handler.
       await requireService().create({
         ...buildRgLimitAdminUpdatedNotification(parsed.data),
         ...(envelope ? { eventId: envelope.eventId } : {}),
@@ -844,8 +797,6 @@ export default {
                 roomName: p.roomName,
               }),
             },
-            // In-app only: `email` is nullish on NotificationDispatchJobSchema, so
-            // omitting it is the current equivalent of the old `sendEmail: false`.
           },
           {
             idempotencyKey: `notifications-dispatch:${eventId}:${userId}`,
@@ -875,7 +826,6 @@ export default {
         KYC_RESUBMISSION_NOTIFY_QUEUE,
         {
           userId: p.userId,
-          // An advanced request's reason is internal (source of funds, agent text): never shown to the player.
           reason: p.tier === 'advanced' ? null : p.reason,
           tier: p.tier,
           eventId: envelope.eventId,
@@ -894,13 +844,10 @@ export default {
         if (!svcRef) {
           return;
         }
-        // A null result is a retry after a prior attempt stored the in-app row; the mail still
-        // goes out, deduped by its eventId-keyed idempotency key.
         await svcRef.create(buildKycResubmissionNotification(payload));
         if (!payload.eventId || !mailDispatchRef) {
           return;
         }
-        // The regulatory notice: an enqueue failure throws so this job's retry policy covers it.
         await mailDispatchRef.toUser({
           userId: payload.userId,
           template: {
@@ -945,8 +892,6 @@ export default {
         }
         const record = await svcRef.createFromQueuedJob(payload.input);
         if (!record) {
-          // A prior attempt may have already persisted the in-app notification. Continue so a
-          // retried security alert can still be delivered through this job's retry policy.
           if (payload.securityAlert && payload.email && payload.input.eventId) {
             await dispatchSecurityAlertMail(
               payload.input.userId,
@@ -1016,8 +961,6 @@ export default {
         platformConfig?.notifications?.retention?.days ?? DEFAULT_NOTIFICATIONS_RETENTION_DAYS;
       const purgeCron =
         platformConfig?.notifications?.retention?.cron ?? DEFAULT_NOTIFICATIONS_RETENTION_CRON;
-      // Off-peak, one hour after tag's daily-evaluation (0 2 * * *), so the in-process
-      // driver doesn't run both sweeps at once in dev/test.
       if (options?.mounted !== false) {
         void jobQueueRef
           .schedule(

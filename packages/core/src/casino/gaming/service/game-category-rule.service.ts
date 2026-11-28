@@ -28,8 +28,6 @@ export const GameCategoryRuleInvalidError = createDomainError<[message: string]>
   'GameCategoryRuleInvalidError',
   (message) => message,
 );
-// A definition's resolve or validate threw - a database timeout, an overlay's upstream
-// down. Unlike an invalid rule, a retry may succeed.
 export const GameCategoryRuleUnavailableError = createDomainError<[message: string]>(
   'GameCategoryRuleUnavailableError',
   (message) => message,
@@ -54,25 +52,14 @@ export class GameSearchRuleTooBroadError extends Error {
 
 type MatchCap = { max: number; tooBroad: (matchedCount: number) => Error };
 
-/**
- * A caller's permission check on one rule, run by a write or an evaluation on the exact
- * rule it goes on to store or resolve, so a racing change cannot slip an unchecked rule
- * past it. Throws to refuse.
- */
 export type GameCategoryRuleAuthorizer = (rule: GameCategoryRule) => Promise<void>;
 
-/** An error that means the rule itself does not resolve - retrying cannot fix it. */
 export function isUnresolvableRuleError(err: unknown): err is Error {
   return (
     err instanceof GameCategoryRuleInvalidError || err instanceof GameCategoryRuleTooBroadError
   );
 }
 
-/**
- * True when any clause's definition says `change` could alter what it matches. A clause
- * whose key is unbound, whose params no longer parse, or whose definition declares no
- * `isAffectedBy` never triggers - the periodic sweep covers it.
- */
 export function isRuleAffectedBy(
   catalog: GameCategoryRuleCatalog,
   rule: GameCategoryRule,
@@ -88,22 +75,12 @@ export function isRuleAffectedBy(
   });
 }
 
-/**
- * Runs rules against GAME_CATEGORY_RULE_CATALOG. Read-only: it answers which games a rule
- * matches and whether a rule may be saved; GameCategoryMembershipService writes the result.
- */
 export class GameCategoryRuleService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly ruleCatalog: GameCategoryRuleCatalog,
   ) {}
 
-  /**
-   * The games `rule` matches now, in the order its last clause returned them. The first
-   * clause sees the whole catalogue (`candidateIds: null`), each later one only what the
-   * clause before it left. A definition's result is de-duplicated, stripped of malformed
-   * ids and cut down to its candidates, and the match cap applies after every clause.
-   */
   resolveGameIds(rule: GameCategoryRule, now: Date = new Date()): Promise<string[]> {
     return this.runPipeline(rule, now, {
       max: GAME_CATEGORY_RULE_MATCH_MAX,
@@ -111,7 +88,6 @@ export class GameCategoryRuleService {
     });
   }
 
-  /** As `resolveGameIds`, for filtering the admin game list: capped at ADMIN_GAME_RULE_MATCH_MAX. */
   resolveSearchGameIds(rule: GameCategoryRule, now: Date = new Date()): Promise<string[]> {
     return this.runPipeline(rule, now, {
       max: ADMIN_GAME_RULE_MATCH_MAX,
@@ -132,16 +108,12 @@ export class GameCategoryRuleService {
           `${definition.key}: the rule could not be resolved`,
         );
       }
-      // Anything but an array is a broken definition, not an empty match: treating it as
-      // one would empty the category.
       if (!Array.isArray(resolved)) {
         throw new GameCategoryRuleInvalidError(
           `${definition.key}: the rule returned no list of game ids`,
         );
       }
       const allowed: ReadonlySet<string> | null = candidateIds ? new Set(candidateIds) : null;
-      // Lowercased as Postgres returns them, or an uppercase id would match no game row
-      // and its game would be dropped from the category.
       const ids = resolved
         .filter((id): id is string => UuidSchema.safeParse(id).success)
         .map((id) => id.toLowerCase());
@@ -156,11 +128,6 @@ export class GameCategoryRuleService {
     return candidateIds ?? [];
   }
 
-  /**
-   * Checks `rule` for saving and returns it as it will be stored: every key bound, every
-   * params object parsed by its definition and still plain JSON, every `validate` passed.
-   * Resolution and the match cap belong to evaluation after the configuration commits.
-   */
   async normalizeRule(rule: GameCategoryRule): Promise<GameCategoryRule> {
     const normalized: GameCategoryRule = [];
     for (const clause of rule) {
@@ -169,7 +136,6 @@ export class GameCategoryRuleService {
       if (issue) {
         throw new GameCategoryRuleInvalidError(`${clause.key}: ${issue}`);
       }
-      // A paramsSchema may transform, eg a string into a Date, which jsonb cannot hold.
       const stored = GameCategoryRuleClauseSchema.safeParse({ key: clause.key, params });
       if (!stored.success) {
         throw new GameCategoryRuleInvalidError(`${clause.key}: params must be plain JSON`);
@@ -212,7 +178,6 @@ export class GameCategoryRuleService {
     return isRuleAffectedBy(this.ruleCatalog, rule, change);
   }
 
-  /** Whether previewing `rule` shows reporting data; an unbound key counts as no. */
   exposesReporting(rule: GameCategoryRule): boolean {
     return rule.some((clause) => this.ruleCatalog.get(clause.key)?.exposesReporting === true);
   }
@@ -239,8 +204,6 @@ export class GameCategoryRuleService {
     return { definition, params: parsed.data };
   }
 
-  // A throwing `validate` could not check the rule, like a throwing `resolve`: the save
-  // fails and may be retried, while a returned issue means the rule itself is invalid.
   private async runValidate(ruleKey: string, validate: () => Promise<string | null> | undefined) {
     try {
       return await validate();

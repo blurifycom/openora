@@ -2,11 +2,6 @@ import { eq } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../wallet/schema/index.js';
 import type { TestDb } from './real-infra.js';
 
-/**
- * Inserts a completed deposit for a user, creating the wallet row when the test
- * has not made one yet. Enough to give the RG limit gate and the monitoring
- * evaluator prior spend to read.
- */
 export async function seedCompletedDeposit(
   db: TestDb,
   userId: string,

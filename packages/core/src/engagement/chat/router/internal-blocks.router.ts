@@ -5,11 +5,6 @@ import {
   type ChatBlockReader,
 } from '@openora/core/contracts';
 
-/**
- * The internal API behind `CHAT_BLOCK_READER`, for a service that does not load chat. Only the
- * services named in `callers` (`CHAT_BLOCK_READER_CALLERS`) may read; any other signed caller is
- * refused. `reader` must be chat's own, never a remote one.
- */
 export function createInternalBlocksRouter(reader: ChatBlockReader, callers: ReadonlySet<string>) {
   const procedure = internalProcedureFor(callers, 'This service may not read chat blocks');
   return {

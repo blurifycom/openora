@@ -9,12 +9,6 @@ const ReKycSnapshotSchema = PlayerSchema.pick({
 
 export type ReKycPlayerSnapshot = z.infer<typeof ReKycSnapshotSchema>;
 
-/**
- * Replaceable strategy deciding when a verified player must re-verify. The default fires
- * once per per-currency threshold band, high-water-marked on the last fire so a
- * re-verified high-roller is not re-triggered on every later deposit. Swapping to a
- * rolling-window or wager metric is a binding change, not a service rewrite.
- */
 export type ReKycTrigger = {
   requiresReverify(
     player: ReKycPlayerSnapshot,

@@ -1,10 +1,3 @@
-// Run from the repo root (`test:mutation` does the cd) so the sandbox holds both test tiers.
-//
-// Stryker only writes its incremental file when a run finishes, so a run that outgrows the job's
-// time limit loses everything and starts over from the previous run's baseline next week. At about 7 mutants a minute after a
-// 30 minute initial run, one job fits about 2200 mutants, so each shard stays under that. A file
-// that grows past it gets split here, by line range when it is one file. `.github/workflows/mutation.yml`
-// runs one job per shard and lists these names.
 const WALLET_SERVICE = 'wallet/service/wallet.service.ts';
 const WALLET_RAILS = [
   'wallet/service/reconciliation.service.ts',
@@ -20,7 +13,6 @@ const AUDIT_PLUGIN = 'audit/plugin.ts';
 const IDENTITY_SERVICE = 'pam/identity/service/identity.service.ts';
 
 const SHARDS = {
-  // Split between two methods: a mutant that spans the boundary is in neither range.
   'wallet-service-a': [`${WALLET_SERVICE}:1-2295`],
   'wallet-service-b': [`${WALLET_SERVICE}:2296-99999`],
   'wallet-rails': WALLET_RAILS,
@@ -53,8 +45,6 @@ export default {
   thresholds: { high: 80, low: 65, break: 55 },
   vitest: {
     configFile: 'packages/core/vitest.mutation.config.ts',
-    // Plugins load through `import(path)`, which vitest's related-files graph cannot see, so
-    // with this on a mutant in plugin code runs zero tests and is reported as survived.
     related: false,
     pool: 'forks',
   },
@@ -72,7 +62,6 @@ export default {
     '!packages/core/src/**/drizzle.config.ts',
     '!packages/core/src/**/*.{test,spec}.ts',
   ],
-  // Static mutants run every test: 19% of the mutants took 98% of the estimated time.
   ignoreStatic: true,
   reporters: ['html', 'json', 'clear-text', 'progress'],
   htmlReporter: { fileName: `${reports}/mutation.html` },
@@ -81,7 +70,6 @@ export default {
   incrementalFile: `${reports}/stryker-incremental.json`,
   coverageAnalysis: 'perTest',
   plugins: ['@stryker-mutator/vitest-runner', '@stryker-mutator/typescript-checker'],
-  // `packages/testing/src/redis.ts` has two Redis slices for this tier.
   concurrency: 2,
   timeoutMS: 60000,
   dryRunTimeoutMinutes: 90,

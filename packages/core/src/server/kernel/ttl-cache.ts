@@ -1,18 +1,9 @@
 export type TtlCacheOptions = {
   ttlMs: number;
-  /** Past this many live entries the oldest is dropped, so a read it served is only asked again. */
   maxEntries: number;
   now?: () => number;
 };
 
-/**
- * A small per-process cache: entries expire after `ttlMs`, the oldest goes first past
- * `maxEntries`, and calls in flight for a key are shared so a burst of parallel reads makes one
- * call. For a process that reads another service and can live with an answer a few seconds old;
- * move it to the shared CACHE port when replicas need one view.
- *
- * `V` is what is kept, `P` what a call in flight resolves to (a batched call answers many keys).
- */
 export class TtlCache<V, P = V> {
   private readonly entries = new Map<string, { value: V; expiresAt: number }>();
   private readonly inFlight = new Map<string, Promise<P>>();
@@ -65,12 +56,10 @@ export class TtlCache<V, P = V> {
     return this.entries.size;
   }
 
-  /** The call in flight for `key`, to join instead of starting another. */
   pending(key: string): Promise<P> | undefined {
     return this.inFlight.get(key);
   }
 
-  /** Registers `call` as the one in flight for `keys` until it settles. */
   track(keys: readonly string[], call: Promise<P>): void {
     for (const key of keys) {
       this.inFlight.set(key, call);
@@ -85,7 +74,6 @@ export class TtlCache<V, P = V> {
     call.then(settle, settle);
   }
 
-  /** Forgets every call in flight: the next read starts its own, so it cannot join a stale one. */
   clearPending(): void {
     this.inFlight.clear();
   }

@@ -37,7 +37,6 @@ function byCurrency(rows: readonly MoneyByCurrency[]): Map<string, string> {
   return new Map(rows.map((row) => [row.currency, row.total]));
 }
 
-/** One row per currency of a financial summary, rails folded together. */
 function totalsPerCurrency(summary: FinancialSummary): FinancialCurrencyTotals[] {
   const deposits = sumByCurrency(summary.deposits);
   const withdrawals = sumByCurrency(summary.withdrawals);
@@ -108,10 +107,6 @@ export class FinancialAnalyticsService {
     };
   }
 
-  /**
-   * Deposits and withdrawals per bucket, type, status and currency, over whole UTC days. A row
-   * holds the transactions created in its bucket under the status they hold now.
-   */
   async paymentsFlow(
     { dateFrom, dateTo, types, statuses, currency, granularity }: PaymentsFlowInput,
     now = new Date(),

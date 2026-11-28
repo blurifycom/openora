@@ -223,9 +223,6 @@ export class ChatMuteService {
       .where(
         and(
           isNull(chatMute.liftedAt),
-          // Mirrors listBans and the three assertCanSend checks: expiry is a read-time
-          // predicate, so a listing that omits it reports a player as muted after the
-          // duration has run out - while chat itself already lets them post.
           or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, new Date())),
           userIds ? inArray(chatMute.userId, userIds) : undefined,
         ),

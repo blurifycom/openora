@@ -3,8 +3,6 @@ import type { Account, AccountReader, ClientMeta, Uuid } from '@openora/core/con
 
 const logger = createLogger('chat-access-refusal');
 
-// A chat-level refusal never reaches a shared guard, so it owes the audit log AdminGuard's signal.
-// The refusal is recorded even when the caller's account cannot be read, just without its role.
 export async function emitAccessRefused(
   accounts: AccountReader,
   events: EventBus,

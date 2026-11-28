@@ -4,9 +4,6 @@ import type { ControlPort, Plugin } from './define-plugin.js';
 import { portName, validateEntries, type PluginEntry } from './load-plugins.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
-// `identity:no-routes` loads the module for its ports only: it mounts none of its routers and
-// consumes nothing, leaving its events, jobs and schedules to a service that selects it
-// (ADR-0050). It is for a module a selected module needs.
 const NO_ROUTES_FLAG = 'no-routes';
 
 export type ServiceManifestEntry = { id: string; noRoutes: boolean };
@@ -74,25 +71,16 @@ export function applyServiceManifest(
     .map((e) => (flags.get(e.id) ? { ...e, noRoutes: true } : e));
 }
 
-/** A control the host process holds a manifest boot to, beside its plugins' `controlPorts`. */
 export type HostControl<C extends TokenCatalog> = ControlPort<C> & {
-  /** What runs without the port, as the boot error names it. */
   owner: string;
 };
 
-/** What a SERVICE_MANIFEST boot is checked against. */
 export type ServiceManifestCheck<C extends TokenCatalog> = {
-  /** The whole plugin list: the manifest's modules and every one it leaves out. */
   entries: readonly PluginEntry[];
   manifest: readonly ServiceManifestEntry[];
   readPlugin: (entry: PluginEntry) => Promise<Plugin<C>>;
   hostControls: readonly HostControl<C>[];
-  /** Whether the process has bound the port so far. */
   isBound: (port: C[keyof C]) => boolean;
-  /**
-   * The plugins this process has registered. What they bound is in its container, which
-   * `isBound` reads, so the boot error does not register them a second time.
-   */
   registered?: ReadonlySet<string>;
 };
 
@@ -118,12 +106,6 @@ function findingLine(finding: Finding) {
   }
 }
 
-/**
- * The modules that bind each of `ports`, in plugin-list order. Each plugin registers into a
- * container of its own, so a later binding hides no earlier one. A plugin whose registration
- * throws - a module this process does not load may lack its configuration - counts with what it
- * bound before the throw, and is listed in `failed` with the error.
- */
 async function portBinders<C extends TokenCatalog>(
   plugins: readonly Plugin<C>[],
   ports: readonly C[keyof C][],
@@ -146,12 +128,6 @@ async function portBinders<C extends TokenCatalog>(
   return { binders, failed };
 }
 
-/**
- * Everything the manifest leaves out. From the selected modules it follows each `dependsOn`,
- * the module that binds each required port nothing bound, and the module behind each unbound
- * control the plugin list has - the host's controls included - then does the same for every
- * module that adds, until nothing new is needed. `added` is what to append to the manifest.
- */
 function shortfall<C extends TokenCatalog>(
   check: ServiceManifestCheck<C>,
   plugins: ReadonlyMap<string, Plugin<C>>,
@@ -211,7 +187,6 @@ function shortfall<C extends TokenCatalog>(
   const portsRead = new Set<string>();
   let hostRead = false;
   for (;;) {
-    // A Set's iterator also visits what is added while it runs, so this closes over dependsOn.
     for (const id of loaded) {
       if (dependenciesRead.has(id)) {
         continue;
@@ -248,11 +223,6 @@ function shortfall<C extends TokenCatalog>(
   }
 }
 
-/**
- * The one error a manifest boot fails with: every module the manifest leaves out and why, and a
- * manifest line that adds them all, so one edit fixes it. Reads every plugin in the list and
- * registers each one the process has not, on its own, to learn which module binds which port.
- */
 async function shortfallError<C extends TokenCatalog>(check: ServiceManifestCheck<C>) {
   const plugins = new Map<string, Plugin<C>>();
   for (const entry of check.entries) {
@@ -268,8 +238,6 @@ async function shortfallError<C extends TokenCatalog>(check: ServiceManifestChec
   const unregistered = [...plugins.values()].filter(({ id }) => !check.registered?.has(id));
   const { binders, failed } = await portBinders(unregistered, ports);
   const { findings, added } = shortfall(check, plugins, binders);
-  // As the operator wrote it, flags included, so the suggested line keeps them. What it adds is
-  // required only: selecting it here would consume its events in this service too (ADR-0050).
   const manifest = check.manifest
     .map((m) => (m.noRoutes ? `${m.id}:${NO_ROUTES_FLAG}` : m.id))
     .join(',');
@@ -291,11 +259,6 @@ async function shortfallError<C extends TokenCatalog>(check: ServiceManifestChec
   );
 }
 
-/**
- * The entries a manifest boot loads: the manifest's modules plus every infra overlay. A
- * manifest that leaves out a module they depend on fails before anything registers, with the
- * error `assertServiceComplete` gives. Only the selected entries are read on the way to success.
- */
 export async function selectServiceEntries<C extends TokenCatalog>(check: ServiceManifestCheck<C>) {
   validateEntries(check.entries);
   const selected = applyServiceManifest([...check.entries], check.manifest);
@@ -309,15 +272,6 @@ export async function selectServiceEntries<C extends TokenCatalog>(check: Servic
   return selected;
 }
 
-/**
- * Fails a manifest boot, once its modules registered and the composition root bound its own
- * ports, while a selected module's required port is unbound, or a control - a selected module's
- * `controlPorts` entry or one of the host's - is unbound and the plugin list has the module
- * that binds it. That module then runs in another process of the same install, which enforces
- * the control, so this one would let through what that one refuses. A list without the module
- * has the control nowhere, and the boot goes on as a full one would. The error names everything
- * the manifest leaves out, with a manifest line that boots.
- */
 export async function assertServiceComplete<C extends TokenCatalog>(
   check: ServiceManifestCheck<C>,
 ) {

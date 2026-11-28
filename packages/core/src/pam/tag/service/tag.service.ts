@@ -36,10 +36,6 @@ import { mapDbError } from '@openora/core/common/errors';
 import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
 import type { PlayerTagAssignMetadata } from '../contract/player-tag-assign-metadata.js';
 
-// AssignPlayerTagInput is the admin wire-contract type (free-text assignReason only -
-// admins never supply structured metadata). This is the internal superset used by
-// TagService's assign methods so event-driven callers (TagEvaluationService) can attach
-// typed breach detail without widening the public admin contract.
 type AssignPlayerTagArgs = AssignPlayerTagInput & {
   assignMetadata?: PlayerTagAssignMetadata | null;
 };
@@ -48,8 +44,6 @@ export function pgErrorCode(e: unknown): string | undefined {
   if (e instanceof DatabaseError) {
     return e.code;
   }
-  // drizzle-orm wraps every driver-thrown error in DrizzleQueryError, exposing the
-  // real pg DatabaseError only via `.cause`.
   if (e instanceof Error && e.cause instanceof DatabaseError) {
     return e.cause.code;
   }
@@ -59,14 +53,10 @@ export function pgErrorCode(e: unknown): string | undefined {
 export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
 export const TagAssignmentNotFoundError = makeNotFoundError('Tag Assignment');
-// Distinct from TagAlreadyInUseError above (a player already holding this tag active) -
-// this is the tag CATALOG key colliding on create.
 export const TagKeyConflictError = makeConflictError(
   'TagKeyConflictError',
   'Tag key already exists',
 );
-// A tag can't be deleted while a playerTag/tagRule row still references it
-// (onDelete: 'restrict' in the schema).
 export const TagInUseError = makeConflictError(
   'TagInUseError',
   'Tag is still referenced by a player tag or tag rule and cannot be deleted',
@@ -81,8 +71,6 @@ export const PlayerNotEligibleForTagError = makeConflictError(
   'Player is not eligible for this tag',
 );
 
-// vip is marketing treatment: a self-excluded, RG-restricted, suspended or closed player never
-// gets it. Player status alone misses an RG self-exclusion, which leaves the status 'active'.
 const VIP_ELIGIBLE_STATUSES: ReadonlySet<PlayerStatus> = new Set(['active', 'dormant']);
 
 export type TagAssignmentRefusal =
@@ -103,11 +91,6 @@ export function resolveRemovalReason(reason: string | undefined, isSticky: boole
   return normalized || DEFAULT_MANUAL_REMOVAL_REASON;
 }
 
-// "First evidence wins per breach dimension, but a dimension that was never recorded gets
-// filled in the moment it's observed." Never overwrites an already-populated dimension with
-// fresher numbers - once a dimension has ever been recorded, the resweep treats it as sticky.
-// Returns the SAME `existing` reference when nothing new was merged in, so the caller can
-// detect a no-op write via reference equality.
 export function mergeAssignMetadata(
   existing: PlayerTagAssignMetadata | null,
   incoming: PlayerTagAssignMetadata | null | undefined,
@@ -129,7 +112,6 @@ export function mergeAssignMetadata(
 
 type TagPlayerChange = DomainEventPayload<'tag.player.assigned'>;
 
-// The same row the audit plugin's tag.player.* subscriber would write for this change.
 export function tagChangeAuditEntry(
   action: 'tag.player.assigned' | 'tag.player.removed',
   change: TagPlayerChange,
@@ -154,11 +136,6 @@ export class TagService implements PlayerTags {
     private readonly audit: AuditWritePort,
   ) {}
 
-  /**
-   * Appends the audit row for a tag change inside the transaction that makes it, so a tag such
-   * as withdrawal_lock never takes effect without its audit record. The event published after
-   * commit carries auditRecorded, which stops the audit subscriber writing the row twice.
-   */
   private async _recordTagChange(
     trx: DrizzleTx,
     action: 'tag.player.assigned' | 'tag.player.removed',
@@ -168,7 +145,6 @@ export class TagService implements PlayerTags {
     return { ...change, auditRecorded: true as const };
   }
 
-  // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
   public async getActiveTagKeys(userIds: readonly string[], tx?: DrizzleTx) {
     const result = new Map<string, TagKey[]>();
     if (userIds.length === 0) {
@@ -188,14 +164,6 @@ export class TagService implements PlayerTags {
     return result;
   }
 
-  /**
-   * Active holders of tagKey, by auth `userId` and `player.id`, each with the
-   * assignMetadata recorded at assignment time. Internal to this module - used only by
-   * TagEvaluationService's daily sweeps: the high_risk resweep gates removal on WHICH breach
-   * condition originally fired (an amount breach, or a null/legacy row, must never be
-   * auto-cleared), and the recent_depositor sweep removes by player id. Deliberately not
-   * exposed on the PLAYER_TAGS port since no other module needs "list holders of tag X" today.
-   */
   public async listActiveHoldersByTagKey(
     tagKey: TagKey,
   ): Promise<
@@ -237,9 +205,6 @@ export class TagService implements PlayerTags {
   public async deleteTag(args: DeleteTagInput, actorId: User['id']) {
     try {
       const db = this.drizzle.db;
-      // .returning() is the only signal a genuine delete happened - without it a
-      // no-op delete of a missing key would still fall through and emit tag.deleted,
-      // which the audit module records as a real deletion that never occurred.
       const deleted = await db.delete(tag).where(eq(tag.key, args.key)).returning();
       if (deleted.length === 0) {
         throw new TagNotFoundError(args.key);
@@ -309,29 +274,14 @@ export class TagService implements PlayerTags {
     return rows.map(toTag);
   }
 
-  // Core idempotent assign, shared by assignPlayerTag and screenWithdrawal. Does NOT emit -
-  // callers decide how, each on its own transaction.
-  //
-  // Returns a status instead of throwing for the "already active" case: throwing here
-  // would roll back the merge UPDATE below along with the whole transaction when this
-  // runs inside assignPlayerTag's own db.transaction(...). Returning lets that
-  // transaction commit the metadata enrichment first; the public methods translate
-  // 'already_active' into TagAlreadyInUseError only after the transaction has resolved.
   private async _assignPlayerTagOnTx(
     trx: DrizzleTx,
     args: AssignPlayerTagArgs,
   ): Promise<{ status: 'created'; row: PlayerTagWithTag } | { status: 'already_active' }> {
     const { tagKey, ...restArgs } = args;
     const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
-    // Fast/friendly pre-check only - the real guard is the partial unique index
-    // (player_tag_active_key) backing the onConflictDoNothing below. Without it, two
-    // concurrent calls (or the same at-least-once event redelivered) can both pass
-    // this SELECT before either commits, creating duplicate active rows.
     const [existing] = await this._findActiveAssignment(trx, foundTag.id, args.playerId);
     if (existing) {
-      // A later event can reveal a breach dimension absent from the original assignment;
-      // without merging it in, the resweep would act on stale metadata and could wrongly
-      // clear a still-risky player.
       const merged = mergeAssignMetadata(existing.assignMetadata, args.assignMetadata);
       if (merged !== existing.assignMetadata) {
         await trx
@@ -341,9 +291,6 @@ export class TagService implements PlayerTags {
       }
       return { status: 'already_active' };
     }
-    // The loser of a genuine race hits the unique index here instead: its insert is a
-    // no-op (empty returning()), so it also reports 'already_active' - tryAssignTag
-    // already treats the resulting TagAlreadyInUseError as an idempotent no-op.
     const [created] = await trx
       .insert(playerTag)
       .values({ ...restArgs, tagId: foundTag.id })
@@ -364,7 +311,6 @@ export class TagService implements PlayerTags {
       const outcome = await db.transaction(async (trx) => {
         const assigned = await this._assignPlayerTagOnTx(trx, args);
         if (assigned.status === 'already_active') {
-          // Returned, not thrown, so a metadata merge on the active row still commits.
           return assigned;
         }
         const event = await this._recordTagChange(trx, 'tag.player.assigned', {
@@ -387,14 +333,6 @@ export class TagService implements PlayerTags {
     }
   }
 
-  /**
-   * Records that a requested withdrawal was screened: the withdrawal_review tag when `review` asks
-   * for it, then the `tag.withdrawal.screened` verdict, in one transaction. The wallet
-   * auto-approves only on that verdict, so it can never read the player's tags before a review
-   * tag due for this withdrawal has committed. The verdict says whether this withdrawal needed a
-   * review, so a tag cleared before the wallet reads it cannot let it through. True when the
-   * review tag was newly assigned.
-   */
   public async screenWithdrawal({
     userId,
     transactionId,
@@ -480,28 +418,12 @@ export class TagService implements PlayerTags {
     }
   }
 
-  /**
-   * Atomically replaces a player's active assignment of tagKey - the same-key value
-   * swap the mutable `level` tag needs. Both halves run on ONE transaction: a missing
-   * active row makes the removal a silent no-op (unlike removePlayerTag), and a
-   * failure in the assign half rolls the removal back too, so the swap can never
-   * commit half-way and strand the player with no active row. Under a genuine
-   * concurrent replace for the same (tag, player), the loser serializes on the row
-   * lock + the player_tag_active_key unique index and throws TagAlreadyInUseError
-   * with NOTHING committed. Appends the audit rows on the same transaction and emits
-   * tag.player.removed (only when a row was actually removed) and tag.player.assigned
-   * after the commit.
-   */
   public async replacePlayerTag(args: ReplacePlayerTagInput) {
     try {
       const db = this.drizzle.db;
       const { removalReason, ...assignArgs } = args;
       const [activeAtStart] = await this._activeAssignmentByKey(db, args.playerId, args.tagKey);
       const result = await db.transaction(async (trx) => {
-        // Serialize replacements for the same player before inspecting/removing the
-        // current assignment. The partial unique index protects the insert, but without
-        // this lock a second transaction can wait for the first to commit, observe its
-        // newly-created active row, remove it, and complete a second successful swap.
         await trx
           .select({ id: player.id })
           .from(player)
@@ -522,8 +444,6 @@ export class TagService implements PlayerTags {
 
         let removed = false;
         try {
-          // App-level throw from findOneOrThrow, not a failed SQL statement, so
-          // catching it here does not abort the surrounding Postgres transaction.
           await this._removePlayerTagOnTx(trx, {
             playerId: args.playerId,
             tagKey: args.tagKey,
@@ -539,11 +459,6 @@ export class TagService implements PlayerTags {
         }
         const assigned = await this._assignPlayerTagOnTx(trx, assignArgs);
         if (assigned.status === 'already_active') {
-          // Unlike assignPlayerTag/screenWithdrawal (where a lost race is an
-          // idempotent no-op that must still let a metadata merge commit), a lost
-          // race HERE must roll back the whole swap, including the removal above -
-          // see the class doc: nothing may commit half-way. Throwing inside this
-          // db.transaction callback is exactly how that rollback happens.
           throw new TagAlreadyInUseError();
         }
         const actorId = args.assignActorUserId ?? SYSTEM_ACTOR_ID;
@@ -643,15 +558,6 @@ export class TagService implements PlayerTags {
     return null;
   }
 
-  /**
-   * Assigns tagKey for an approved agent proposal. Eligibility is re-checked because the
-   * proposal may have waited days for approval. The share lock on the player row stops a player
-   * status change from landing between that check and the insert; the responsible-gambling block
-   * and the self_excluded tag are read without a lock their writers take, so a block committed
-   * in that window is not caught - acceptable while vip drives no money movement. An active
-   * assignment - this proposal's own, on a replay - reports 'already_active' before eligibility
-   * is looked at.
-   */
   public async assignPlayerTagForProposal(args: AssignPlayerTagArgs) {
     try {
       const outcome = await this.drizzle.db.transaction(async (trx) => {

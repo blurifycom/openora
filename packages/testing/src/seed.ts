@@ -21,21 +21,10 @@ import { user, session, account, verification } from '@openora/core/pam/schema/i
 export { EXAMPLE_RANK_LADDER };
 
 export type SeedMinimalOptions = {
-  /** Keep small for fast tests. */
   playerCount?: number;
   admin?: { email: string; password: string; name: string };
 };
 
-/**
- * Seed a small, deterministic fixture: IAM reference roles + a demo fixture
- * (admin + a few players + wallets + games) for tests.
- *
- * better-auth's drizzle adapter resolves models from the db's relational schema
- * (`db._.fullSchema`), so we build a schema-aware connection just for auth -
- * passing the tables via the adapter's `schema` option instead would trigger
- * strict admin-plugin field checks (eg `banned`). The plain container db is used
- * for the direct table inserts (players, wallets, ...).
- */
 export async function seedMinimal(
   container: Container<CoreTokenCatalog>,
   options: SeedMinimalOptions = {},
@@ -51,8 +40,6 @@ export async function seedMinimal(
     schema: { user, session, account, verification },
     casing: 'snake_case',
   });
-  // Library boundary: this seed-local drizzle instance carries a different schema generic
-  // than core's DrizzleDb alias. Sanctioned cast, see conventions.
   const auth = createAuth({ db: authDb as unknown as DrizzleDb });
 
   try {
@@ -70,11 +57,8 @@ export async function seedMinimal(
         name: 'Platform Admin',
       },
     });
-    // After the demo games exist: the round ledger only plays games it has projected.
     await backfillLedgerGames(drizzleSvc.db);
-    // After the demo users exist: the ledger refuses a stake from a user it has not projected.
     await backfillPlayEligibility(drizzleSvc.db, ledgerPlayEligibilityProjection(drizzleSvc.db));
-    // After any seeded limit: the ledger does not enforce a limit it has not projected.
     await backfillRgLimits(drizzleSvc.db, ledgerRgLimits(drizzleSvc.db));
     return result;
   } finally {

@@ -1,5 +1,3 @@
-// Same harness style as oxlint-module-shape-plugin.test.mjs - calls create(context)
-// directly, no oxlint binary. Run: node --test tools/__tests__/oxlint-boundaries-plugin.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import plugin from '../lint/oxlint-boundaries-plugin.mjs';
@@ -14,7 +12,6 @@ function lint(ruleName, filename, run) {
   return reports;
 }
 
-// Real oxlint filenames are absolute
 const CORE = '/repo/packages/core/src';
 
 function importNode(source) {
@@ -66,7 +63,6 @@ test('no-module-contract-to-runtime allows zod + core contracts, and ignores the
     );
     assert.deepEqual(ok, [], spec);
   }
-  // the engine contracts/ zone is out of scope (covered by no-contracts-to-runtime instead)
   const engine = plugin.rules['no-module-contract-to-runtime'].create({
     filename: `${CORE}/contracts/schemas/wallet.ts`,
   });

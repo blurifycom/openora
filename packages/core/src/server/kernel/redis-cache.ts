@@ -3,11 +3,6 @@ import type { RedisClient } from './redis-client.js';
 
 const PREFIX = 'cache:';
 
-// Distributed reference cache, bound when REDIS_URL is set. Values are JSON so any
-// serializable shape round-trips. The `isReady` guards fast-path a miss/no-op when
-// the socket is reconnecting so a request never blocks on Redis; command errors are
-// NOT swallowed here - the cached()/invalidate() helpers already try/catch so a
-// cache fault degrades to a load, never a failed request.
 export class RedisCache implements CacheAdapter {
   constructor(private readonly client: RedisClient) {}
 

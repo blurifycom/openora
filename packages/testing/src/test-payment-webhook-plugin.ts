@@ -11,29 +11,19 @@ const TEST_PAYMENT_WEBHOOK_KEY = 'test-payment-webhook-key';
 
 export const TEST_PAYMENT_SIGNATURE_HEADER = 'x-test-payment-signature';
 
-/** The signature header value the fake vendor would send for `rawBody`. */
 export const signTestPaymentWebhook = (rawBody: string) =>
   createHmac('sha256', TEST_PAYMENT_WEBHOOK_KEY).update(rawBody).digest('hex');
 
-// On the process, not the module: the app loads this file as a separate module instance from
-// the test that steers it.
 const TRANSACTIONS_STORE = Symbol.for('openora.testing.payment-transactions');
 const holder = globalThis as typeof globalThis & {
   [TRANSACTIONS_STORE]?: { events: PaymentWebhookEvent[] };
 };
 const transactions = (holder[TRANSACTIONS_STORE] ??= { events: [] });
 
-/** What the fake vendor answers `listTransactions` with from now on. Default none. */
 export const setTestPaymentTransactions = (events: PaymentWebhookEvent[]) => {
   transactions.events = events;
 };
 
-/**
- * Binds a fake address-based payment vendor to the default provider: a webhook body is the
- * normalized event itself, signed with `signTestPaymentWebhook`, `listTransactions` answers what
- * `setTestPaymentTransactions` set, and a player's address repeats across the networks of one
- * currency, as on an account chain. Opt-in only - pass it in `config.plugins`.
- */
 export default {
   id: 'testing-payment-webhook',
   dependsOn: ['wallet'],

@@ -139,9 +139,6 @@ export class MailService {
     });
   }
 
-  // The eligibility a welcome mail was queued with can go stale while the job waits or
-  // retries: a player who self-excludes in that window must not be shown the promotion.
-  // Only ever narrows - a queued `false` stays `false`, and an unanswerable check reads false.
   private async withCurrentEligibility(job: MailSendJob): Promise<MailTemplate> {
     const { template, recipient } = job;
     if (template.key !== 'welcome' || template.data.promotionsEligible !== true) {
@@ -201,8 +198,6 @@ export class MailService {
     await this.onDeliveryExhausted(decrypted, error, attempt);
   }
 
-  // `after` carries no free text - error.name, not error.message: a provider bounce
-  // routinely embeds the recipient address, and audit_log is append-only.
   private async recordRegulatoryOutcome(
     action: 'mail.regulatory_delivery.sent' | 'mail.regulatory_delivery.failed',
     job: MailSendJob,
@@ -241,7 +236,6 @@ export class MailService {
     antiPhishingCode: string | null;
   } | null> {
     if (job.recipient.kind === 'address') {
-      // Pre-account emails (admin invitation, brand-new signup verification) correctly
       return {
         email: job.recipient.email,
         locale: job.recipient.locale ?? DEFAULT_LOCALE,

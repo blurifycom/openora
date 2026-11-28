@@ -1,8 +1,3 @@
-/**
- * Social command port: chat's blockUser() dissolves any active friendship on the
- * caller's own tx, so the dissolve is atomic with the block. ADR-0017. The caller
- * resolves `blockerPlayerId` before opening that tx, so the port reads nothing under it.
- */
 import { createToken, type Token } from './token.js';
 import type { DomainEventPayload } from '../schemas/events.js';
 

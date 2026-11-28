@@ -1,7 +1,5 @@
 const { readdirSync } = require('node:fs');
 
-// Derive scopes from the workspace layout so the list never drifts.
-// Meta scopes that map to no directory are listed explicitly below.
 const dirsIn = (rel) => {
   try {
     return readdirSync(`${__dirname}/${rel}`, { withFileTypes: true })
@@ -12,8 +10,6 @@ const dirsIn = (rel) => {
   }
 };
 
-// Per-module layer dirs (clean-architecture) are not scopes - exclude them so only
-// real sub-modules (eg engagement/chat -> `chat`, server/db -> `db`) surface.
 const layerDirs = new Set([
   '__tests__',
   'adapters',
@@ -30,7 +26,6 @@ const layerDirs = new Set([
   'service',
 ]);
 
-// Sub-module dirs one level below `rel/*` (eg packages/core/src/engagement/chat -> `chat`).
 const nestedDirsIn = (rel) =>
   dirsIn(rel).flatMap((top) => dirsIn(`${rel}/${top}`).filter((sub) => !layerDirs.has(sub)));
 

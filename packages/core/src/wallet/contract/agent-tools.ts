@@ -26,8 +26,6 @@ import {
 
 export const OPEN_WITHDRAWALS_LIMIT = 20;
 
-// A withdrawal still waiting on a decision: the queue summary counts and totals only these, and
-// an admin may approve or reject only these.
 export const QUEUED_WITHDRAWAL_STATUSES = [
   'pending',
   'on_hold',
@@ -53,7 +51,6 @@ export const WalletActivityOutputSchema = z.object({
     z.object({
       currency: CurrencyTickerSchema,
       balance: MoneyAmountSchema,
-      // As on the player's balance read: what live bonuses hold back, and the rest (ADR-0064).
       locked: MoneyAmountSchema.optional(),
       free: MoneyAmountSchema.optional(),
       bonusLocked: MoneyAmountSchema.optional(),
@@ -267,7 +264,6 @@ export const TRANSACTIONS_FIND_SORT_FIELDS = ['createdAt', 'amount'] as const;
 export const TransactionsFindSortBySchema = z.enum(TRANSACTIONS_FIND_SORT_FIELDS);
 export type TransactionsFindSortBy = z.infer<typeof TransactionsFindSortBySchema>;
 
-/** transactions.find's days: `to` defaults to the day of `now`, `from` to 30 days ending on it. */
 export function resolveTransactionsFindRange(
   { from, to }: { from?: string; to?: string },
   now = new Date(),
@@ -362,7 +358,6 @@ export const holdWithdrawalAction = defineActionType({
   schemaVersion: 1,
   iam: { resource: 'withdrawal', action: 'hold' },
   reversible: true,
-  // Each withdrawal is held on its own: a pending hold on one does not cover another.
   distinctBy: 'withdrawalId',
   payloadSchema: HoldWithdrawalPayloadSchema,
   errors: ['player_not_found', 'withdrawal_not_found', 'withdrawal_not_pending'],

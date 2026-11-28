@@ -5,11 +5,6 @@ import { promoGrant, promoGrantEntry, type PromoGrant } from '../schema/index.js
 
 const ZERO = '0';
 
-/**
- * What a completing grant is allowed to turn into real money. Absent multiplier means uncapped;
- * otherwise the ceiling is that multiple of what was originally granted, truncating, so the cap
- * is never rounded in the player's favour.
- */
 export function capConversion(
   balance: string,
   grantedAmount: string,
@@ -22,20 +17,11 @@ export function capConversion(
   return moneyCompare(balance, ceiling) < 0 ? balance : ceiling;
 }
 
-/**
- * Moves a grant the caller holds locked from a status in `from` (default `active`) to
- * `completed`: C leaves the grant as the amount the caller credits to the real balance, A and B
- * are released. Null when the grant has left those statuses, so a second completion of the same
- * grant writes nothing.
- */
 export async function completeGrant(
   tx: DrizzleTx,
   grant: PromoGrant,
   { from = ['active'] }: { from?: readonly PromoGrant['status'][] } = {},
 ): Promise<BonusCompletion | null> {
-  // The cap bites here, at the single point where bonus funds become real money, rather than
-  // on every win along the way: what the terms limit is the payout, and winnings that are
-  // still bonus can still be lost back. Anything above it dies with the grant.
   const convertedAmount = capConversion(
     grant.bonusBalance,
     grant.grantedAmount,
@@ -65,8 +51,6 @@ export async function completeGrant(
     bonusAmount: `-${convertedAmount}`,
     balanceAfter: capped,
   });
-  // What the cap took has to leave the ledger too, or a grant's entries stop summing to the
-  // balance they explain and the surplus looks like money still owed to the player.
   if (moneyCompare(capped, ZERO) > 0) {
     await tx.insert(promoGrantEntry).values({
       grantId: grant.id,

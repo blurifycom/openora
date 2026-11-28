@@ -1,9 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-// Lookups over the platform's TypeScript source for the two steps agents otherwise run by hand
-// on almost every task: grep an identifier, then print the lines around its definition.
-
 export type SourceFile = { path: string; text: string };
 export type Usage = { path: string; line: number; text: string };
 export type SymbolHit = { path: string; line: number; body: string[] };
@@ -13,9 +10,6 @@ const isTest = (path: string) => /__tests__\/|\.(test|spec)\.tsx?$/.test(path);
 const COMMENT_LINE = /^\s*(?:\/\/|\/?\*)/;
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// The catalog sits at the root of a platform checkout (`docs/catalog.json`), or in the MCP
-// package's `docs/` inside one when a consumer links the checkout. A consumer on the npm
-// package has no source to read.
 export function findCoreSourceRoot(catalogPath: string): string | null {
   let dir = dirname(realpathSync(catalogPath));
   for (let hop = 0; hop < 4; hop++) {
@@ -44,7 +38,6 @@ export function readSourceTree(root: string): SourceFile[] {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-// `wallet` matches `wallet/...`; `bonus` and `promo/bonus` match `promo/bonus/...`.
 const inModule = (path: string, module: string) =>
   path.startsWith(`${module}/`) || path.includes(`/${module}/`);
 
@@ -72,8 +65,6 @@ export function findUsages(
   return usages;
 }
 
-// `withdraw`, `WalletService.withdraw`, `WithdrawInputSchema`, `WalletCommands`: each matching
-// declaration with its body, up to the closing bracket (or the `;` of a one-liner).
 export function findSymbol(
   files: SourceFile[],
   name: string,
@@ -88,7 +79,6 @@ export function findSymbol(
   const m = escapeRegExp(member);
   const declaration = new RegExp(
     [
-      // Top-level forms start at column 0, so a `type X,` line in an import list is not one.
       `^(?:export\\s+)?(?:default\\s+)?(?:declare\\s+)?(?:abstract\\s+)?(?:async\\s+)?(?:function\\*?|const|let|type|interface|class|enum)\\s+${m}\\b`,
       `^\\s+(?:(?:public|private|protected|static|readonly|override|async|get)\\s+)*${m}\\??\\s*(?:<[^>]*>)?\\s*\\(`,
       `^\\s+(?:readonly\\s+)?${m}\\??\\s*[:=]\\s*(?:async\\s*)?(?:<[^>]*>)?\\(`,
@@ -128,9 +118,6 @@ export function findSymbol(
 const CLOSER_ONLY = /^\s*[})\]]+[;,)]*\s*$/;
 const indentOf = (line: string) => line.length - line.trimStart().length;
 
-// A body too long to print whole, cut to its shape: a class or interface keeps its member lines,
-// anything else its statements and one nesting level (the `if`, `throw`, `await` lines).
-// Each line keeps its number so the caller can read the part it needs.
 export function outline(hit: SymbolHit): string[] {
   const [first = ''] = hit.body;
   const depth = /\b(?:class|interface|enum)\s/.test(first) ? 2 : 4;
@@ -142,9 +129,6 @@ export function outline(hit: SymbolHit): string[] {
   );
 }
 
-// ponytail: per-line stripping, so a template literal or regex literal holding brackets can end
-// a body early; a real TypeScript parse if that shows up in practice.
-// Disjoint branches (escape vs non-backslash) keep this linear on a run of backslashes.
 const STRING_OR_COMMENT = /(['"`])(?:\\[\s\S]|(?!\1)[^\\])*\1|\/\/.*$/g;
 
 function blockFrom(lines: string[], start: number): string[] {
@@ -163,7 +147,6 @@ function blockFrom(lines: string[], start: number): string[] {
         depth--;
       }
     }
-    // `=> ` or `=` at the end of a line means the body starts on the next one.
     if (opened ? depth <= 0 && !/=>?\s*$/.test(code) : /;\s*$/.test(line)) {
       break;
     }

@@ -65,13 +65,8 @@ const logger = createLogger('promo-bonus');
 const EXPIRY_QUEUE = queue('promo-bonus-expiry');
 const FORFEIT_QUEUE = queue('promo-bonus-forfeit');
 const EXPIRY_CRON = '*/15 * * * *';
-// Shared by every money-adjacent job in this plugin - a bare enqueue() takes the driver's
-// default of one attempt, which turns one transient failure into a bonus the player earned and
-// never receives. Each handler's own database guard is what makes the retry itself safe.
 const MONEY_JOB_RETRY = { attempts: 5, backoff: { type: 'exponential', delayMs: 1000 } } as const;
 
-// Trust-boundary narrowing for a zod-parsed event payload whose shape varies by topic: some
-// forfeit-triggering events carry `initiatedBy`, some do not. `unknown` in, a known initiator out.
 function initiatedByOf(data: unknown): 'player' | 'admin' | 'system' | undefined {
   if (typeof data !== 'object' || data === null || !('initiatedBy' in data)) {
     return undefined;
@@ -86,11 +81,6 @@ const grantConcurrency = (c: TypedContainer<CoreTokenCatalog>) =>
   resolvePromoConfig(c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined).bonus
     .grantConcurrency;
 
-/**
- * Taking a player's bonuses away is a money movement, so it runs as a durable job rather than
- * inside a best-effort event handler: a process that dies between two of a player's grants has
- * to resume, and the `status = 'active'` claim makes the retry harmless.
- */
 const ForfeitJobSchema = z.object({
   userId: UuidSchema,
   reason: BonusForfeitReasonSchema,
@@ -142,8 +132,6 @@ export default {
           c.has(WAGER_TRACKING) ? c.get(WAGER_TRACKING) : undefined,
         ),
     );
-    // On the wallet's deposit transaction: the grant, and the outbox row announcing it, commit
-    // with the deposit that earned it.
     ctx.provide(BONUS_DEPOSITS, (c): BonusDepositCommands => {
       const service = new OfferService(
         c.get(DRIZZLE),
@@ -162,8 +150,6 @@ export default {
         },
       };
     });
-    // Built off the container rather than in the router factory: a job or the wallet calling
-    // these ports must not depend on the router having been resolved first.
     let lifecycleSvc: GrantLifecycleService | null = null;
     const grantLifecycle = (c: TypedContainer<CoreTokenCatalog>) =>
       (lifecycleSvc ??= new GrantLifecycleService(
@@ -173,9 +159,6 @@ export default {
         c.get(PLAY_ELIGIBILITY),
         grantConcurrency(c),
       ));
-    // A thin command port over GrantLifecycleService.forfeit - the shape an external
-    // system/job context needs (no admin session to assert, one named grant rather than every
-    // grant a player holds).
     ctx.provide(
       BONUS_LIFECYCLE,
       (c): BonusLifecycleCommands => createBonusLifecyclePort(grantLifecycle(c)),
@@ -193,12 +176,6 @@ export default {
     let jobs: JobQueueAdapter | null = null;
     let realtime: RealtimeTransport | null = null;
 
-    /**
-     * A signal, never the figures: the client refetches `GET /promo/balance`, so a dropped or
-     * reordered message costs nothing. Wired to the four changes a player cannot see coming -
-     * a deposit's bonus arriving from a job, a requirement completing, the sweep, an admin
-     * forfeiting. A bet's own progress is answered by the debit response the client already has.
-     */
     const signalBalance = (
       userId: Uuid,
       currency: string,
@@ -206,9 +183,6 @@ export default {
       eventId: string,
     ) => realtime?.publish(bonusBalanceChannel(userId), { eventId, currency, reason });
 
-    // Subscribed centrally rather than published beside each emit: the four topics already have
-    // one producer each, and a fifth producer added later gets the signal for free instead of
-    // having to remember it.
     for (const [topic, reason] of [
       ['promo.bonus.granted', 'granted'],
       ['promo.bonus.activated', 'activated'],
@@ -257,9 +231,6 @@ export default {
       },
     });
 
-    // A bonus is money a player may not keep once they have excluded themselves, entered a
-    // cooling-off period, closed the account or been banned, and the rule is immediate rather
-    // than "by the next sweep".
     const forfeitEverything =
       <
         K extends
@@ -281,22 +252,10 @@ export default {
           throw new Error(`promo bonus forfeit for '${topic}' - job queue not bound yet`);
         }
         const { userId, actorId } = parsed.data;
-        // Account closure and a ban (identity.user.deactivated) are always an admin action. A
-        // self-exclusion names its own initiator, which is 'player', 'admin' or 'system' - a
-        // rule-triggered exclusion is nobody's admin action, and recording it as one puts the
-        // wrong name on a regulator-facing audit row. Read via a type guard rather than the `in`
-        // narrowing the three-topic version used - the fourth topic in this union has no
-        // `initiatedBy` field at all, which collapses `parsed.data`'s inferred type to a point
-        // the compiler can no longer narrow through property presence alone.
         const initiatedBy: 'player' | 'admin' | 'system' =
           topic === 'player.account.closed' || topic === 'identity.user.deactivated'
             ? 'admin'
             : (initiatedByOf(parsed.data) ?? 'system');
-        // No queue idempotency key on purpose. It would have to be derived from the player and
-        // the reason, and a player who excludes themselves, lets the cool-off lapse, takes a new
-        // bonus and excludes themselves again produces the same key - which BullMQ drops
-        // silently, leaving the second bonus active. The durable guard is the `status = 'active'`
-        // claim inside `forfeitAllFor`, which already makes a redelivery write nothing twice.
         await jobs.enqueue(
           FORFEIT_QUEUE,
           {
@@ -321,8 +280,6 @@ export default {
       'player.account.closed',
       forfeitEverything('player.account.closed', 'account_closed'),
     );
-    // A ban is `identity.user.deactivated` - the admin-console "Ban" action flips `isActive`
-    // false, same event chat's own membership service already reacts to for room removal.
     ctx.events.on(
       'identity.user.deactivated',
       forfeitEverything('identity.user.deactivated', 'account_deactivated'),
@@ -360,7 +317,6 @@ export default {
           c.get(DRIZZLE),
           c.get(AUDIT_WRITER),
           c.get(EVENT_BUS),
-          // Resolved per call: WALLET_COMMANDS is built from this module's own ports.
           () => (c.has(WALLET_COMMANDS) ? c.get(WALLET_COMMANDS) : undefined),
           isTurnoverEnabled(
             resolveWalletTurnoverConfig(

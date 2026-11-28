@@ -30,13 +30,9 @@ import type { Hono } from 'hono';
 const REDIS_READY_TIMEOUT_MS = 10_000;
 
 export type TestApp = {
-  /** The Hono app - drive it directly with `app.request(path, init)`. */
   app: Hono;
-  /** The composition container, for resolving services/tokens in assertions. */
   container: Container<CoreTokenCatalog>;
-  /** The Redis logical database this app claimed, for a test that reads what a driver stored. */
   redisUrl: string;
-  /** Dispose the container (closes the DB pool, drains workers, frees the Redis db). */
   close(): Promise<void>;
 };
 
@@ -44,33 +40,6 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'igaming'> & {
   databaseUrl: string;
 };
 
-/**
- * Boot the full Hono + oRPC app in-process against a test database. No network
- * listener is opened - exercise routes with `app.request()` (the canonical Hono
- * test approach). CORS is left at the default.
- *
- * Pass the same plugins the real entrypoint uses (in OSS that is `loadExtensions()`;
- * a consumer passes its own).
- *
- * The five durable seams run on the SAME drivers production uses - Redis Streams,
- * BullMQ, Redis cache, Redis rate limiter and Redis Pub/Sub - so event fan-out, job
- * retries, throttling and realtime push are exercised for real rather than through
- * an in-process stand-in. Each booted app claims its own Redis logical database, so
- * several apps in one test file cannot compete for each other's events, jobs, cache
- * entries or channels.
- *
- * The broker reads from `startId: '0'` here, unlike production's `$`: a test acts
- * within milliseconds of boot, and a group created lazily at `$` would silently drop
- * anything published before it existed. Replay is harmless against a flushed database.
- *
- * `REALTIME_TRANSPORT` binds the same `RedisPubSubRealtimeTransport` production uses
- * (ADR-0031) - core ships no in-process fallback, so there is nothing else to bind.
- *
- * Audit records ship from `audit_outbox` after their write commits (ADR-0055), on the app's
- * background shipper. A test flushes with `flushAudit(app)` before it asserts on
- * `audit_log`, directly or through a route that reads it, rather than racing the shipper.
- */
-// Mirrors what the consumer composition root does. See ADR-0025.
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   const redisDatabase = await acquireTestRedisDatabase();
   const serviceName = `test-${randomUUID()}`;
@@ -127,18 +96,10 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
       },
     );
 
-    // `createRedisClient` fires connect() without awaiting it - right in production, where
-    // boot must not block on Redis, wrong for a test that issues its first request straight
-    // after this returns. The login limiter is `onUnavailable: 'deny'`, so a request that
-    // beats the handshake is answered with a fail-closed 429 rather than reaching the route.
-    // Only reproducible under load, which is exactly when the handshake is slowest.
     if (client && !client.isReady) {
       await once(client, 'ready', { signal: AbortSignal.timeout(REDIS_READY_TIMEOUT_MS) });
     }
   } catch (err) {
-    // A half-booted app still owns a Postgres pool, Redis connections and the claimed
-    // logical database. Left behind, the next suite to claim that database inherits its
-    // keys, and the run leaks a connection per failed boot.
     await Promise.allSettled([created?.close(), redisDatabase.release()]);
     throw err;
   }

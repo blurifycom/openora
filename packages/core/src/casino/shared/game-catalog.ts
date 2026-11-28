@@ -15,15 +15,10 @@ import {
   type GameProvider,
 } from '@openora/core/casino/schema/gaming';
 
-// The admin making a catalog change - carried into the emitted event for the audit trail.
 export type CatalogActor = {
   actorId: User['id'];
 } & ClientMeta;
 
-// A game is player-visible only when the game itself and its provider are both
-// active and the vendor has not marked the game unavailable. Single owner for the
-// "playable" definition - the public list/search filters and the startRound gate
-// must never drift apart.
 export function playableGameCondition() {
   return and(
     eq(game.isActive, true),
@@ -32,12 +27,10 @@ export function playableGameCondition() {
   );
 }
 
-// Retired (unavailable) rows stay pending forever, so the queue counts leave them out.
 export function pendingReviewCondition() {
   return and(eq(game.reviewStatus, 'pending'), eq(game.isUnavailable, false));
 }
 
-// A pending or declined game only goes live through an explicit per-game decision.
 export function isUnreviewed(status: Game['reviewStatus']): status is 'pending' | 'declined' {
   return status === 'pending' || status === 'declined';
 }
@@ -65,13 +58,6 @@ export type GameCategoryTriggerSnapshot = Pick<Game, 'name' | 'isActive' | 'prov
   categoryIds: readonly GameCategory['id'][];
 };
 
-// The category ids whose rank could have moved because of a game write - the union of
-// before/after membership, but only when the game's provider, name, active state, or category
-// membership actually changed (a name/active change matters because a definition can
-// order or filter on either, and an active flip also moves the playable/unplayable
-// split pins are placed within). Shared by the gaming.game.updated event handler
-// (plugin.ts, the fast path) and updateGame's own in-transaction dirty-marking
-// (gaming.service.ts, the durable marker the sweep reads) - see docs/modules/gaming.md.
 export function categoryRankTriggerIds(
   before: GameCategoryTriggerSnapshot,
   after: GameCategoryTriggerSnapshot,
@@ -100,13 +86,10 @@ export function rankDirtyPatch() {
   };
 }
 
-// True while a category has a change its materialized ranks do not reflect yet.
 export function isRankDirty(): SQL {
   return sql`${gameCategory.rankDirtyAt} IS NOT NULL AND (${gameCategory.rankedAt} IS NULL OR ${gameCategory.rankedAt} < ${gameCategory.rankDirtyAt})`;
 }
 
-// Marks every category in `categoryIds` dirty for the rank sweep, inside the caller's
-// own transaction - a no-op for an empty list. See docs/modules/gaming.md.
 export async function markCategoriesRankDirty(
   tx: DrizzleTx,
   categoryIds: readonly GameCategory['id'][],
@@ -120,9 +103,6 @@ export async function markCategoriesRankDirty(
     .where(inArray(gameCategory.id, [...categoryIds]));
 }
 
-// The distinct categories any of `gameIds` currently belongs to - one query, no N+1.
-// Shared by the durable dirty-marking below and plugin.ts's fast-path enqueue (a plain
-// read there, not inside a transaction) - see docs/modules/gaming.md.
 export async function categoryIdsForGameIds(
   db: DrizzleDb | DrizzleTx,
   gameIds: readonly Game['id'][],
@@ -137,8 +117,6 @@ export async function categoryIdsForGameIds(
   return rows.map((row) => row.categoryId);
 }
 
-// The distinct categories containing any game of `providerIds` - one query, no N+1.
-// Same sharing rationale as categoryIdsForGameIds above.
 export async function categoryIdsForProviderIds(
   db: DrizzleDb | DrizzleTx,
   providerIds: readonly GameProvider['id'][],
@@ -154,10 +132,6 @@ export async function categoryIdsForProviderIds(
   return rows.map((row) => row.categoryId);
 }
 
-// Marks every category containing one of `gameIds` dirty, inside the caller's own
-// transaction - a no-op when nothing matches. Returns the resolved category ids so a
-// caller that also needs them (eg to carry on an emitted event) doesn't have to look
-// them up a second time after commit. See docs/modules/gaming.md.
 export async function markCategoriesRankDirtyForGames(
   tx: DrizzleTx,
   gameIds: readonly Game['id'][],
@@ -167,9 +141,6 @@ export async function markCategoriesRankDirtyForGames(
   return categoryIds;
 }
 
-// Marks every category containing a game of `providerIds` dirty, inside the caller's
-// own transaction - a no-op when nothing matches. Same return-the-ids rationale as
-// markCategoriesRankDirtyForGames above.
 export async function markCategoriesRankDirtyForProviders(
   tx: DrizzleTx,
   providerIds: readonly GameProvider['id'][],
@@ -179,13 +150,6 @@ export async function markCategoriesRankDirtyForProviders(
   return categoryIds;
 }
 
-// The order every reader of a category's games uses: by the category's materialized
-// `rank` (job-written, NULL until the first rank run), falling back to name for a game
-// not yet ranked. Single owner - the public list-games route and GAME_CATALOG_READER
-// must never drift apart in ordering. Plain `asc(rank)` relies on Postgres' own default
-// (NULLS LAST for ASC) to put an unranked game after every ranked one - a leading
-// `rank IS NULL` term is behaviourally identical but defeats the `(category_id, rank)`
-// index, forcing a seq scan + sort of the whole category on every page.
 export function categoryGameOrder() {
   return [asc(gameCategoryGame.rank), asc(game.name), asc(game.id)] as const;
 }
@@ -273,7 +237,6 @@ export function isGamePlayable(
   return target.isActive === true && target.isUnavailable === false && provider.isActive === true;
 }
 
-// Groups batched join rows per owner id, keeping the query's row order in each list.
 export function groupRows<Row, Key, Value>(
   rows: Row[],
   keyOf: (row: Row) => Key,
@@ -292,8 +255,6 @@ export function groupRows<Row, Key, Value>(
   return grouped;
 }
 
-// One batched query for many games - never per-game lookups (no N+1).
-// Shared by gaming and lobby so the join + ordering has a single owner.
 export async function categoriesByGameIds(
   db: DrizzleDb,
   gameIds: Game['id'][],

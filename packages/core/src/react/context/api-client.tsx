@@ -53,16 +53,16 @@ function buildClient(config: OssApiClientConfig | OssApiClient): OssApiClient {
     }
     const res = await fetch(`${baseUrl}${path}`, init);
     if (!res.ok) {
-      // Surface the server's error message (eg the lockout notice) when present. Consumers
-      // needing structured status/data use the typed oRPC client (createClient), not this.
       let message = `${method} ${path} -> ${res.status}`;
-      try {
-        const errorBody = (await res.json()) as { message?: string };
-        if (errorBody?.message) {
-          message = errorBody.message;
-        }
-      } catch {
-        /* non-JSON */
+      const errorBody: unknown = await res.json().catch(() => null);
+      if (
+        typeof errorBody === 'object' &&
+        errorBody !== null &&
+        'message' in errorBody &&
+        typeof errorBody.message === 'string' &&
+        errorBody.message
+      ) {
+        message = errorBody.message;
       }
       throw new Error(message);
     }

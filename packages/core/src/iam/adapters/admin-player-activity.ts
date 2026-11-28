@@ -7,10 +7,6 @@ import type {
 } from '@openora/core/contracts';
 import { DrizzleService } from '@openora/core/server';
 import { sql } from 'drizzle-orm';
-// Read-only cross-domain read of the user/session tables via the public /schema
-// subpath (allowed per ADR-0020/0025) - iam already depends on identity (plugin.ts),
-// which owns these tables. Mirrors how identity's DrizzleAdminUserDirectory reads
-// the profile module's `player` table.
 import { session, user } from '@openora/core/pam/schema/identity';
 
 const DEFAULT_RANGE_DAYS = 30;
@@ -38,16 +34,8 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
     return result.rows.map((r) => ({ date: r.date, registrations: Number(r.registrations) }));
   }
 
-  // "Active" = a session row whose `updatedAt` falls in the trailing window. Chosen over
-  // `createdAt` because better-auth refreshes a session's `updatedAt` on continued use
-  // (schema/index.ts `$onUpdateFn`), so it approximates ongoing activity across the
-  // session's lifetime; `createdAt` would only capture the single login moment. This is
-  // the same "active" definition reused below for retention's "has a session row" check.
   async getActiveUsersTrend(filter: PlayerActivityFilter): Promise<ActiveUsersTrendPoint[]> {
     const { from, to } = resolveRange(filter);
-    // A single join bounded by the widest (MAU) window, then FILTER narrows the
-    // distinct-user count per day - one pass over `session` instead of three
-    // correlated subqueries re-scanning it for every generated day.
     const result = await this.drizzle.db.execute<{
       date: string;
       dau: string;

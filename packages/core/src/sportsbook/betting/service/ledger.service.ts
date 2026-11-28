@@ -114,7 +114,6 @@ export type LedgerStep =
   | { kind: 'settle'; args: SportsbookSettleArgs }
   | { kind: 'reopen'; args: SportsbookReopenArgs };
 
-/** What a ledger step did, and what it announces and audits before its transaction commits. */
 type LedgerResult = {
   outcome: SportsbookLedgerOutcome;
   userId?: User['id'];
@@ -123,7 +122,6 @@ type LedgerResult = {
   debt?: DebtChange;
 };
 
-/** Thrown inside a ledger transaction to roll it back and answer with a refusal. */
 class LedgerRefusal extends Error {
   constructor(
     readonly reason: SportsbookRefusalReason,
@@ -134,11 +132,6 @@ class LedgerRefusal extends Error {
   }
 }
 
-/**
- * The wallet holds this move's ref on a row the ledger never wrote: a concurrent request with the
- * same tx id committed first, or the ref is taken for good. The run retries once and answers a
- * second loss with `refusal`, so no raw error reaches the provider.
- */
 export class LedgerRaceLost extends Error {
   readonly refusal: LedgerRefusal;
 
@@ -152,7 +145,6 @@ export class LedgerRaceLost extends Error {
     this.name = 'LedgerRaceLost';
     const { provider, providerTxId } = key;
     const { providerName, providerRefId } = walletRef(key);
-    // Its own dedupe key, so it never folds into a request fingerprint mismatch on the same tx.
     this.refusal = new LedgerRefusal('fingerprint_mismatch', {
       kind: 'fingerprint_mismatch',
       dedupeKey: `wallet_ref:${provider}:${providerTxId}`,
@@ -199,7 +191,6 @@ type FingerprintParts = {
   promotionPotential?: string;
 };
 
-/** What identifies a leg: everything but its odds. */
 function legIdentity(leg: SportsbookBetLeg): string {
   return JSON.stringify([
     leg.eventId,
@@ -213,7 +204,6 @@ function legIdentity(leg: SportsbookBetLeg): string {
 const canonicalMoney = (amount: string | undefined) =>
   amount === undefined ? '' : moneyFloorToScale(amount, MONEY_SCALE);
 
-/** Parts added after the first release are appended only when present, so older requests keep their hash. */
 export function requestFingerprint(parts: FingerprintParts): string {
   const { promotion, promotionAmount, promotionPotential } = parts;
   const canonical = JSON.stringify([
@@ -252,7 +242,6 @@ export function requestFingerprint(parts: FingerprintParts): string {
 
 type ResolvedStake = Pick<SportsbookBetRow, 'cashStake' | 'voidPayout' | 'maxLossRefund'>;
 
-/** What the player paid, what a void returns and the most a loss may refund, fixed at reserve. */
 export function resolveStake(
   stake: string,
   promotion: SportsbookPromotion | undefined,
@@ -271,7 +260,6 @@ export function resolveStake(
   };
 }
 
-/** A type label the funder map leaves out is the operator's. */
 function promotionFunder(
   promotions: Pick<SportsbookPromotionsConfig, 'funder'>,
   type: string,
@@ -281,7 +269,6 @@ function promotionFunder(
   );
 }
 
-/** The most of a player-paid stake's payout a promotion funds: none of a void, its loss refund, or its boost. */
 export function cashPromotionCeiling(
   bet: Pick<SportsbookBetRow, 'promotionPotential' | 'maxLossRefund'>,
   result: SportsbookBetResult,
@@ -300,7 +287,6 @@ export function cashPromotionCeiling(
   }
 }
 
-/** The part of a payout a promotion funded, when the overlay leaves it out. */
 export function defaultPromotionAmount(
   bet: Pick<SportsbookBetRow, 'cashStake' | 'promotionPotential' | 'maxLossRefund'>,
   result: SportsbookBetResult,
@@ -309,7 +295,6 @@ export function defaultPromotionAmount(
   if (!isPositiveMoney(bet.cashStake) || result === 'lost') {
     return payout;
   }
-  // A half loss returns half the player's own stake; only the overlay knows what a refund added.
   return result === 'half_lost' ? '0' : cashPromotionCeiling(bet, result, payout);
 }
 
@@ -319,7 +304,6 @@ type Exact = { digits: bigint; scale: number };
 
 const EXACT_ONE: Exact = { digits: 1n, scale: 0 };
 
-/** Exact, untruncated: `digits / 10^scale` times a decimal string. */
 export function timesDecimal(product: Exact, decimal: string): Exact {
   const [whole, fraction = ''] = decimal.split('.');
   return {
@@ -335,7 +319,6 @@ export function compareExact(a: Exact, b: Exact): number {
   return left === right ? 0 : left > right ? 1 : -1;
 }
 
-/** True when a promotion-paid payout beats the stake times every leg's decimal odds. */
 export function isUnusualPromotionPayout(
   bet: Pick<SportsbookBetRow, 'cashStake' | 'stake' | 'legs'>,
   payout: string,
@@ -356,7 +339,6 @@ export function fitsDecimals(amount: string, decimals: number): boolean {
   return moneyEquals(moneyFloorToScale(amount, decimals), amount);
 }
 
-/** Decimals fit the currency, a void pays its fixed amount (or 0 on a promotion-paid stake), and a loss at most its cap. */
 export function isValidSettlement(
   bet: Pick<SportsbookBetRow, 'cashStake' | 'voidPayout' | 'maxLossRefund' | 'currencyDecimals'>,
   result: SportsbookBetResult,
@@ -371,20 +353,14 @@ export function isValidSettlement(
   );
 }
 
-/** Fits the currency's decimals and pays back at least what the player staked in cash. */
 function isValidPotentialPayout(payout: string, cashStake: string, decimals: number): boolean {
   return fitsDecimals(payout, decimals) && moneyCompare(payout, cashStake) >= 0;
 }
 
-/** A promotion's part of a potential payout fits the currency and the payout. */
 function isValidPromotionPotential(amount: string, payout: string, decimals: number): boolean {
   return fitsDecimals(amount, decimals) && moneyCompare(amount, payout) <= 0;
 }
 
-/**
- * How the accepted odds move the combined odds of the legs that carry them: -1, 0 or 1. Null when
- * an odds is not a decimal, so its direction is unknown.
- */
 export function oddsDirection(
   reserved: SportsbookBetLeg[],
   accepted: SportsbookBetLeg[],
@@ -406,13 +382,6 @@ export function oddsDirection(
   return compareExact(after, before);
 }
 
-/**
- * The fields of accepted terms that do not fit the reserved bet. The terms come as a pair, the legs
- * may change only their odds, and the payout moves with the combined odds: up when they rise, down
- * when they fall, not at all when they hold. Odds that are not decimals only let the payout change.
- * A promotion part needs the pair and a promotion bet, may change only when the odds moved, and is
- * required once the stored one no longer fits the new payout.
- */
 export function invalidTerms(
   bet: Pick<
     SportsbookBetRow,
@@ -470,7 +439,6 @@ export function invalidTerms(
   return fields;
 }
 
-/** Core's own align transactions; a provider callback may not use an id under it. */
 export const ALIGN_TX_PREFIX = 'core-align:';
 
 export function providerRequest<T extends TxKey>(args: T): T {
@@ -499,7 +467,6 @@ export function invalidAmount(
   });
 }
 
-/** A promotion part is nothing on a bet with no promotion, all of a promotion-paid payout, and within its ceiling otherwise. */
 export function isValidPromotionAmount(
   bet: Pick<
     SportsbookBetRow,
@@ -518,11 +485,6 @@ export function isValidPromotionAmount(
   );
 }
 
-/**
- * The stake a void or cancel at the bet's current version returns: the reserve's debit, or after a
- * reopen that undid a void, the stake it re-collected (`id` undefined when it collected nothing)
- * and the part it could not collect and left as debt.
- */
 async function stakeToReverse(
   tx: DrizzleTx,
   bet: Pick<SportsbookBetRow, 'id' | 'version'>,
@@ -541,7 +503,6 @@ async function stakeToReverse(
   const at = (kind: SportsbookTransactionKind, version: number) =>
     rows.find((r) => r.kind === kind && r.version === version);
   let stake = { id: rows.find((r) => r.kind === 'reserve')?.ids[0], uncollected: '0' };
-  // A reopen bumps the version; it re-collected a stake only when it undid a void.
   for (let version = 1; version <= bet.version; version++) {
     const voided = at('settle', version - 1);
     const reopen = at('reopen', version);
@@ -552,10 +513,6 @@ async function stakeToReverse(
   return stake;
 }
 
-/**
- * The wallet or the debt does not hold what the ledger expects of a settlement or cancel: final,
- * and filed for an operator.
- */
 export function ledgerMismatch(
   { provider, providerTxId }: TxKey,
   owner: Pick<SportsbookFindingArgs, 'betId' | 'userId'>,
@@ -570,7 +527,6 @@ export function ledgerMismatch(
   });
 }
 
-/** A provider callback for a bet core already moved past it, or dropped: refused and filed. */
 export function transitionRefused(
   { provider, providerTxId }: TxKey,
   kind: SportsbookTransactionKind,
@@ -622,11 +578,6 @@ const RequestTxKeySchema = SportsbookConfirmArgsSchema.pick({
   providerBetId: true,
 });
 
-/**
- * A promotion declaration core does not fully understand refuses as `promotion_not_allowed`, never
- * half-read. A malformed amount or leg odds refuse as `invalid_amount` and are filed; a malformed session id
- * refuses as `session_invalid`. Anything else malformed is the overlay's bug and throws the ZodError.
- */
 export function parseRequest<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
   const parsed = schema.safeParse(input);
   if (parsed.success) {
@@ -648,7 +599,6 @@ export function parseRequest<S extends z.ZodType>(schema: S, input: unknown): z.
   throw invalidAmount(key, { ...key, fields: fields.map(String) });
 }
 
-/** A callback's own move, apart from the `offset:` and `collect:` refs debt collections use. */
 export function walletRef({
   provider,
   providerTxId,
@@ -789,7 +739,6 @@ export class SportsbookLedgerService {
     );
   }
 
-  /** A step on a bet core holds, with the caller's own write (an align audit row) last in its transaction. */
   async applyStep(step: LedgerStep, inTx: StepHook): Promise<SportsbookLedgerOutcome> {
     switch (step.kind) {
       case 'confirm':
@@ -811,7 +760,6 @@ export class SportsbookLedgerService {
     }
   }
 
-  /** One retry on a lost race: the loser re-runs and answers from the winner's row. */
   private async run(op: () => Promise<LedgerResult>): Promise<SportsbookLedgerOutcome> {
     let result: LedgerResult;
     try {
@@ -863,7 +811,6 @@ export class SportsbookLedgerService {
     });
   }
 
-  /** The bet event to the outbox, and its audit row unless an align step wrote its own. */
   private async announceBet<K extends BetTopic>(
     tx: DrizzleTx,
     topic: K,
@@ -883,11 +830,6 @@ export class SportsbookLedgerService {
     }
   }
 
-  /**
-   * The stake currency's USD rate, read before the reserve transaction, which makes no network
-   * call. `null` when the cap cannot be checked: no usable rate, or a cap set after the read
-   * below. Never read without a cap.
-   */
   private async promotionUsdRate(args: ReserveArgs): Promise<string | null> {
     if (args.promotion?.stake !== 'promotion') {
       return null;
@@ -1002,13 +944,11 @@ export class SportsbookLedgerService {
         (!config.promotions.enabled ||
           (promotion.stake === 'promotion' &&
             promotionCap !== null &&
-            // Compared in the stake's currency: flooring the cap there is exact on the stake's grid.
             (promotionUsdRate === null ||
               moneyCompare(args.stake, moneyDivide(promotionCap, promotionUsdRate)) > 0)))
       ) {
         throw new LedgerRefusal('promotion_not_allowed');
       }
-      // The only eligibility gate for a promotion-paid stake: no wallet debit runs to re-check it.
       const refusal = await playRefusal(this.playEligibility, userId, tx);
       if (refusal) {
         throw new LedgerRefusal(refusal);
@@ -1045,7 +985,6 @@ export class SportsbookLedgerService {
         new Error('sportsbook reserve: bet insert returned no row'),
       );
 
-      // Without a debit nothing else proves the wallet a later settle credits exists.
       if (!isPositiveMoney(bet.cashStake) && !(await this.walletReader.hasWallet(userId, tx))) {
         throw new LedgerRefusal('insufficient_funds');
       }
@@ -1119,7 +1058,6 @@ export class SportsbookLedgerService {
         throw new LedgerRefusal('limit');
       }
       if (err instanceof WalletReplayMismatchError) {
-        // The bet row rolls back with this transaction, so the finding names only the player.
         throw new LedgerRaceLost('a stake', args, { userId: bet.userId }, err.transactionId);
       }
       throw err;
@@ -1367,7 +1305,6 @@ export class SportsbookLedgerService {
     });
   }
 
-  /** A cancel for a bet core never saw: a tombstone under the bet key, so a late reserve refuses. */
   private async cancelUnknown(args: CancelArgs): Promise<LedgerResult | 'bet_appeared'> {
     const db = this.drizzle.db;
     const fingerprint = requestFingerprint({
@@ -1388,7 +1325,6 @@ export class SportsbookLedgerService {
       if (again) {
         return this.answerStored(again, fingerprint, 'cancel');
       }
-      // A reserve committed since the unlocked read; start over under its lock order.
       if (await this.findBet(tx, args)) {
         return 'bet_appeared';
       }
@@ -1489,7 +1425,6 @@ export class SportsbookLedgerService {
         });
       }
       const pays = isPositiveMoney(payout);
-      // Only a stake the player paid comes back as a reversal; a promotion's void return is a win.
       const creditType: WalletTransactionType =
         result === 'void' && isPositiveMoney(current.cashStake) ? 'bet_reversal' : 'win';
       const debt =
@@ -1524,8 +1459,6 @@ export class SportsbookLedgerService {
       if (pays && creditType === 'bet_reversal') {
         const stake = await stakeToReverse(tx, settled);
         reversesTransactionId = stake.id;
-        // The reopen this void undoes left part of the stake as debt: the void cancels that rest
-        // and returns only what the player paid, the reopen's part and what was taken of the debt.
         if (isPositiveMoney(stake.uncollected)) {
           const cancelled = await this.debts.cancelForVoid(tx, settled);
           if (!cancelled) {
@@ -1537,7 +1470,6 @@ export class SportsbookLedgerService {
           }
           debtChange = cancelled.change;
           credited = moneyAdd(moneySubtract(payout, stake.uncollected), cancelled.collected);
-          // More than the reopen's stake row: the round cap bounds it instead.
           if (isPositiveMoney(cancelled.collected)) {
             reversesTransactionId = undefined;
           }
@@ -1603,7 +1535,6 @@ export class SportsbookLedgerService {
           debtChange = offset.change;
         }
       } else {
-        // A losing bet still settles the bonus round it was staked on.
         const ref = walletRef(args);
         const closed = await this.wallet.closeRound?.(tx, {
           userId: settled.userId,
@@ -1791,7 +1722,6 @@ export class SportsbookLedgerService {
       let balance: string;
       let debtChange: DebtChange | undefined;
       if (isPositiveMoney(current.payoutTotal)) {
-        // A void of a player-paid stake was a reversal, so the reopen re-stakes it; any other payout was a win.
         const type =
           current.result === 'void' && isPositiveMoney(current.cashStake) ? 'bet' : 'win_reversal';
         const owner = { betId: current.id, userId: current.userId };
@@ -1896,7 +1826,6 @@ export class SportsbookLedgerService {
     });
   }
 
-  /** The bet re-read under the player lock, in the status and at the version the step expects. */
   private async openVersion(
     tx: DrizzleTx,
     {
@@ -1951,7 +1880,6 @@ export class SportsbookLedgerService {
     return row;
   }
 
-  /** A reserve or a tombstone already claimed this provider bet id. */
   private async hasOrigin(
     db: DrizzleDb | DrizzleTx,
     { provider, providerBetId }: BetKey,

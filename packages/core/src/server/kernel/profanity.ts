@@ -7,9 +7,6 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 type ListedLanguage = Exclude<SupportedLanguage, 'en'>;
 
-// English goes through obscenity: it resolves leetspeak, repeated letters and look-alike
-// characters, and whitelists innocent words that contain a blocked one ("assassin"). Two of
-// its words are everyday words in a supported language: es/pt "negro" and de "Abo".
 const englishMatcher = new RegExpMatcher({
   ...new DataSet<{ originalWord: string }>()
     .addAll(englishDataset)
@@ -18,8 +15,6 @@ const englishMatcher = new RegExpMatcher({
   ...englishRecommendedTransformers,
 });
 
-// The other languages use the LDNOOBW lists (naughty-words, CC-BY-4.0), plus the common
-// Russian obscenities the list lacks.
 const MISSING: Partial<Record<ListedLanguage, readonly string[]>> = {
   ru: ['бля', 'блять', 'долбоёб', 'мудак', 'пидор', 'пиздец', 'сука', 'хуйня'],
 };
@@ -34,7 +29,6 @@ function escapeRegExp(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** One whole-word pattern per language; letters and digits are word characters in any script. */
 function buildListPattern(language: ListedLanguage) {
   const listed = nodeRequire(`naughty-words/${language}.json`) as string[];
   const terms = [...listed, ...(MISSING[language] ?? [])].map(normalize);
@@ -50,7 +44,6 @@ const listPatterns: Record<ListedLanguage, RegExp> = {
   pt: buildListPattern('pt'),
 };
 
-/** True when `content` contains a blocked term in any of `languages` (default: all supported). */
 export function hasProfanity(
   content: string,
   languages: readonly SupportedLanguage[] = SUPPORTED_LANGUAGES,

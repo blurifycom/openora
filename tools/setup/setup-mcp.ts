@@ -1,10 +1,5 @@
 #!/usr/bin/env node
 
-// Wires the oss-dev MCP server into this platform repo's .mcp.json + trusts it in
-// .claude/settings.json. OSS-repo only: scaffolded consumers ship their own .mcp.json
-// (pointing at node_modules/@openora/mcp) via `pnpm create:app`, so there is no
-// consumer --target path here anymore.
-
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

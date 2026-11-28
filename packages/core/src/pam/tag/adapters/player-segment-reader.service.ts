@@ -15,8 +15,6 @@ import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 
-// The one definition of the population (see PlayerSegmentReader): a staff login can carry a
-// player profile too, so the role is checked as well as the profile.
 export const inPopulation = (): SQL | undefined =>
   and(eq(user.role, 'player'), eq(user.isActive, true), ne(player.status, 'closed'));
 
@@ -61,7 +59,6 @@ export class PlayerSegmentReaderService implements PlayerSegmentReader {
                 ),
               ),
           );
-    // One row past the page says whether another page follows.
     const rows = await db
       .select({ id: player.id })
       .from(player)

@@ -10,9 +10,6 @@ export type DeviceDescription = {
 
 const UNKNOWN_DEVICE_LABEL = 'Unknown device';
 
-// Browsers ship a new build every few weeks and every one of them changes the
-// User-Agent. Comparing raw strings would revoke every Backoffice session on each
-// auto-update, so the fingerprint keeps only the major version of each token.
 export function normalizeUserAgent(userAgent: string | null | undefined): string {
   if (!userAgent) {
     return '';
@@ -58,11 +55,6 @@ function matchFirst(
   return patterns.find(([pattern]) => pattern.test(userAgent))?.[1] ?? null;
 }
 
-/**
- * Turns a raw User-Agent into the browser/OS pair the session list shows. Deliberately
- * a handful of patterns rather than a UA-parsing dependency: the value is a display
- * label, and a wrong guess costs a cosmetic string, never an access decision.
- */
 export function describeDevice(userAgent: string | null | undefined): DeviceDescription {
   if (!userAgent) {
     return { label: UNKNOWN_DEVICE_LABEL, browser: null, os: null };
@@ -76,14 +68,6 @@ export function describeDevice(userAgent: string | null | undefined): DeviceDesc
   return { label, browser, os };
 }
 
-/**
- * Whether a mid-session IP change is suspicious enough to end the session.
- *
- * `country` needs both countries resolved - an unbound or failing geo-ip lookup
- * yields nulls, and an unresolved lookup must never end a session on its own.
- * `any` is the strictest setting and will log users out across NAT and mobile
- * network hops, which is why it is not the default.
- */
 export function isSuspiciousIpChange({
   policy,
   sessionIp,

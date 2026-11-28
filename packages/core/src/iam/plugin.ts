@@ -41,13 +41,7 @@ export default {
   dependsOn: ['identity', 'audit'],
   requiresPorts: [MAIL_DISPATCH, FRESH_REAUTHENTICATION],
   register(ctx) {
-    // Captured from the provider factory so the event handlers below purge the SAME
-    // singleton the AdminGuard reads (Container memoizes per token). Null until the
-    // first admin request resolves it - but grant-mutation events only fire on admin
-    // routes, which resolve it first, so it is always set by the time one arrives.
     let resolverRef: DbAdminPermissionResolver | null = null;
-    // Tenant is resolved per request inside getGrants(), never captured at boot
-    // (factories run once outside any request ALS frame).
     ctx.provide(ADMIN_PERMISSION_RESOLVER, (c) => {
       resolverRef = new DbAdminPermissionResolver(
         c.get(DRIZZLE),
@@ -56,8 +50,6 @@ export default {
       return resolverRef;
     });
 
-    // A service with no role assignments of its own (chat on a database of its own) reads grants
-    // here. Unset ADMIN_PERMISSION_CALLERS refuses every caller.
     const adminPermissionCallers = parseInternalCallers(process.env['ADMIN_PERMISSION_CALLERS']);
     ctx.routers.addInternal('iam', (c) =>
       createInternalAdminPermissionsRouter(
@@ -66,9 +58,6 @@ export default {
       ),
     );
 
-    // Purge the grant cache the instant a grant changes so a revoked admin loses access
-    // immediately instead of waiting out the TTL. assign/revoke are user-keyed (one key);
-    // a role's permission change fans out to every holder (resolved in invalidateRole).
     for (const event of ['iam.role.assigned', 'iam.role.revoked'] as const) {
       ctx.events.on(event, (payload) => {
         const parsed = domainEventSchemas[event].safeParse(payload);

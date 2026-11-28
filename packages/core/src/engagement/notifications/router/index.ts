@@ -34,8 +34,6 @@ export function toNotificationDto(row: NotificationRow): Notification | null {
   if (data && !data.success) {
     return null;
   }
-  // Unlike `data`, a malformed `params` does not hide the row: the client can still render the
-  // type's title without it, as it does for a row written before `params` existed.
   const params = NotificationParamsSchema.safeParse(row.params);
   return {
     id: row.id,

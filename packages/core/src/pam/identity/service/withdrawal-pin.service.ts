@@ -32,14 +32,11 @@ import { nodeHeadersToHeaders } from '../../shared/headers-mapper.js';
 
 const logger = createLogger('withdrawal-pin');
 
-// Constant-time, though both sides are HMACs under a server secret.
 export const pinMatches = (candidate: string, stored: string): boolean =>
   candidate.length === stored.length &&
   timingSafeEqual(Buffer.from(candidate), Buffer.from(stored));
 
 const MINUTE_MS = 60 * 1000;
-// Five wrong PINs in a row lock withdrawals for half an hour. Fixed, not configurable: the
-// mail the player gets states the same 30 minutes, and a PIN is only 10,000 guesses wide.
 const WITHDRAWAL_PIN_MAX_FAILED_ATTEMPTS = 5;
 const WITHDRAWAL_PIN_LOCK_MS = 30 * MINUTE_MS;
 const WITHDRAWAL_PIN_RATE_LIMIT = {
@@ -66,11 +63,6 @@ export type WithdrawalPinServiceDeps = {
   trustedDeviceDays: number;
 };
 
-/**
- * Withdrawal PIN as a security control, independent of the login credential. Set, Change and
- * Remove all ask for fresh reauthentication; `verifyPin` is the half the wallet calls on every
- * withdrawal, through the `WITHDRAWAL_SECURITY` port.
- */
 export class WithdrawalPinService implements WithdrawalSecurity {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -137,8 +129,6 @@ export class WithdrawalPinService implements WithdrawalSecurity {
     if (role === 'player') {
       return;
     }
-    // A service-level denial still owes the audit log the same signal AdminGuard emits,
-    // since this check rejects before any shared guard runs (docs/standards/audit.md).
     this.events.emit('identity.user.unauthorized_access', {
       userId,
       playerId: null,
@@ -208,7 +198,6 @@ export class WithdrawalPinService implements WithdrawalSecurity {
     );
     const caller = await this.loadCaller(userId);
     await this.assertPlayer(userId, caller.role, 'remove', meta);
-    // Before the "no PIN set" shortcut, so the answer does not depend on whether a PIN exists.
     await assertFreshReauthentication({
       drizzle: this.drizzle,
       auth: this.auth,
@@ -248,8 +237,6 @@ export class WithdrawalPinService implements WithdrawalSecurity {
     totpCode,
     meta,
   }: Parameters<WithdrawalSecurity['assertReauthentication']>[0]): Promise<void> {
-    // The password is checked here with nothing else in front of it, so without a budget a
-    // stolen session could guess it through the address route.
     await assertRateLimit(
       this.limiter,
       makeRateLimitKey(RATE_LIMIT_KEYS.WITHDRAWAL_ADDRESS_REAUTH, userId),
@@ -278,12 +265,6 @@ export class WithdrawalPinService implements WithdrawalSecurity {
     return row?.lockedUntil && row.lockedUntil.getTime() > Date.now() ? row.lockedUntil : null;
   }
 
-  /**
-   * Reads, compares and counts under a row lock on the user, so a burst of parallel guesses is
-   * judged one at a time: each sees the lock the one before it set, and none can be evaluated
-   * after the fifth wrong one has tripped it. The lock event is written in that transaction; the
-   * mail goes out after the commit.
-   */
   async verifyPin({
     userId,
     pin,
@@ -308,15 +289,12 @@ export class WithdrawalPinService implements WithdrawalSecurity {
       if (!row) {
         return settle({ status: 'not_set' });
       }
-      // Before the comparison and before the no-PIN shortcut: a right guess must not lift a lock
-      // a wrong one set, and removing the PIN must not either.
       if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) {
         return settle({ status: 'locked', lockedUntil: row.lockedUntil });
       }
       if (row.hash === null) {
         return settle({ status: 'not_set' });
       }
-      // Withdrawing without a PIN is not a guess; it is a client that never asked for one.
       if (pin === undefined) {
         return settle({ status: 'missing' });
       }
@@ -358,8 +336,6 @@ export class WithdrawalPinService implements WithdrawalSecurity {
   }
 
   private async announceLock(userId: User['id'], lockedUntil: Date): Promise<void> {
-    // The lock has committed, so a failed enqueue must not turn the refusal into an error.
-    // Keyed on the lock's end, so retries of one lock mail once and the next lock mails again.
     try {
       await this.mailDispatch?.toUser({
         userId,

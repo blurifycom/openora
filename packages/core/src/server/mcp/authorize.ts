@@ -5,10 +5,6 @@ import type { McpAuthorization } from './kernel.js';
 
 const DENIAL_STATUSES: ReadonlySet<number> = new Set([401, 403]);
 
-/**
- * The kernel's verdict from AdminGuard: a 401/403 is a denial; any other error is rethrown,
- * so the kernel fails the call closed instead of treating an outage as a refusal.
- */
 export async function authorizeWithAdminGuard(
   guard: Pick<AdminGuard, 'assertUser'>,
   adminId: string,

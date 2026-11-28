@@ -4,9 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useOrpcQueryUtils } from '@openora/core/react';
 import { exchangeRateContract } from '../contract/index.js';
 
-// Matches the reader's own freshTtlMs default - a mount or window refocus inside that
-// window is still fresh server-side, so refetching only adds vendor-adjacent load for a
-// value that hasn't changed.
 const STALE_TIME_MS = 60_000;
 
 export function useExchangeRate(from: string, to: string) {

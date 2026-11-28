@@ -19,7 +19,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** What the row keeps of the input: its field names and a hash, never a value that could be a credential. */
 function inputSummary(input: unknown) {
   return {
     inputKeys: isRecord(input) ? Object.keys(input).sort() : [],
@@ -27,7 +26,6 @@ function inputSummary(input: unknown) {
   };
 }
 
-/** The input's `id`, else its only `*Id` field, when that is a UUID. */
 function resourceIdOf(input: unknown): string | null {
   if (!isRecord(input)) {
     return null;
@@ -44,29 +42,12 @@ function errorCodeOf(error: unknown): string {
   return error instanceof ORPCError ? error.code : 'INTERNAL_SERVER_ERROR';
 }
 
-/**
- * Leaves an audit record for an admin mutation that left none of its own, so no staff
- * intervention goes unrecorded whichever route (core or overlay) carries it. Runs around every
- * procedure; acts only when an admin guard granted a permission and the route is not a read.
- *
- * - Success with nothing audit-worthy noted (an audit row for the granted admin, or a published
- *   topic the audit module covers): one `admin.<resource>.<action>` row holding the route, the
- *   input's field names and its hash.
- * - A handler error other than an authorization denial: a failure row, even if something
- *   audit-worthy was noted, since a row written inside the rolled-back transaction is gone.
- *
- * The write fails open. After a committed mutation, refusing the response would not undo it and
- * would invite a retry that repeats it, so a failed write is logged at error level (and reaches
- * the error tracker) while the caller still gets the outcome. A failure row never masks the
- * handler's own error.
- */
 export function adminMutationAudit(audit: AuditWritePort) {
   async function record(
     { path, input }: Pick<ProcedureCall, 'path' | 'input'>,
     outcome: { result: 'success' } | { result: 'failure'; errorCode: string },
   ) {
     const grant = getRequestAuditTrail()?.grant;
-    // A `view` grant on a POST is a search or preview, not an intervention.
     if (!grant || grant.action === 'view') {
       return;
     }

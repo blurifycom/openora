@@ -11,11 +11,6 @@ export const BonusSlotTakenError = makeConflictError(
 
 export type GrantSlot = { userId: string; currency: string; source: BonusGrantSource };
 
-/**
- * Serializes every check-then-write on a player's active grants in one currency, so two grants
- * created or activated at once cannot both see a free slot. `multiple` has no slot to guard, so
- * it runs `fn` without the lock.
- */
 export function withGrantSlotLock<T>(
   tx: DrizzleTx,
   mode: GrantConcurrencyMode,
@@ -29,7 +24,6 @@ export function withGrantSlotLock<T>(
   return withAdvisoryXactLock(tx, `promo-grant-slot:${userId}:${currency}`, fn);
 }
 
-/** Whether `mode` leaves no room for another active grant in `slot`. Call under `withGrantSlotLock`. */
 export async function isSlotTaken(
   tx: DrizzleTx,
   mode: GrantConcurrencyMode,

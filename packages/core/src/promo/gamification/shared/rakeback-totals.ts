@@ -42,10 +42,6 @@ export async function claimedByCurrency(db: Db, userId: string): Promise<Rakebac
     .orderBy(asc(promoRakebackClaimPayout.currency));
 }
 
-/**
- * Prices per-currency amounts into the reference currency. A currency with no rate shows a null
- * reference amount and counts nothing toward the total - it is still paid on a claim.
- */
 export async function priceRakeback(
   db: Db,
   rates: ExchangeRateReader,

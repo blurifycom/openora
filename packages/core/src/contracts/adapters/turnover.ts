@@ -1,8 +1,3 @@
-/**
- * Deposit turnover requirement: real money credited to a player must be wagered a configured
- * number of times, valued in the pivot currency, before it may leave by withdrawal or transfer.
- * Wallet-internal (ADR-0065); this file holds the shapes other modules and clients read.
- */
 import * as z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, UuidSchema } from '../schemas/common.js';
 
@@ -18,7 +13,6 @@ export const TURNOVER_ENTRY_STATUSES = ['counted', 'pending', 'cleared'] as cons
 export const TurnoverEntryStatusSchema = z.enum(TURNOVER_ENTRY_STATUSES);
 export type TurnoverEntryStatus = z.infer<typeof TurnoverEntryStatusSchema>;
 
-/** How a ledger row's `turnover_contribution` counts: now, at the round's settlement, or as a reversal. */
 export const TURNOVER_STAKE_STATES = ['counted', 'deferred', 'reversal'] as const;
 export type TurnoverStakeState = (typeof TURNOVER_STAKE_STATES)[number];
 
@@ -66,11 +60,9 @@ export type TurnoverLockedData = {
   required: string;
   progress: string;
   remaining: string;
-  /** An entry is still unpriced, so the requirement is not known yet. */
   pending: boolean;
 };
 
-/** The outflow would move money while the turnover requirement is unmet. The router answers CONFLICT. */
 export class TurnoverLockedError extends Error {
   readonly data: TurnoverLockedData;
 
@@ -81,10 +73,6 @@ export class TurnoverLockedError extends Error {
   }
 }
 
-/**
- * A requirement was asked for while `wallet.turnover.multiplier` is '0'. Thrown out of
- * `WalletCommands.addTurnoverRequirement`; no router maps it, so a caller answers its own refusal.
- */
 export class TurnoverDisabledError extends Error {
   constructor() {
     super('the turnover requirement is off');
@@ -92,10 +80,6 @@ export class TurnoverDisabledError extends Error {
   }
 }
 
-/**
- * One balance's lock figures under both locks: the stricter of the two, never their sum. While
- * turnover is locked the whole balance is locked; `bonusLocked` is the bonus lock alone.
- */
 export function withTurnoverLock<T extends { balance: string }>(
   row: T,
   bonus: { locked: string; free: string },
@@ -116,7 +100,6 @@ export type AddTurnoverRequirementArgs = {
 
 export type AddTurnoverRequirementResult = {
   entryId: string;
-  /** `cleared` only on a replay of an entry staff have since cleared. */
   status: TurnoverEntryStatus;
   replayed: boolean;
 };

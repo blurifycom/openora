@@ -1,7 +1,3 @@
-/**
- * Which job queues this process consumes, from `JOB_WORKERS`. `include: null` is every queue,
- * `[]` none; a pattern is a queue name or a prefix ending in `*`.
- */
 export type JobWorkerSelection = {
   include: readonly string[] | null;
   exclude: readonly string[];
@@ -10,7 +6,6 @@ export type JobWorkerSelection = {
 export type SelectedJobWorkers<T> = {
   consumed: T[];
   skipped: T[];
-  /** Exclusions no registered queue matched - allowed, an optional module may be absent. */
   idleExclusions: string[];
 };
 
@@ -27,11 +22,6 @@ function assertPattern(pattern: string, entry: string): void {
   }
 }
 
-/**
- * Parses `JOB_WORKERS`: comma- or space-separated queue names and `prefix*` patterns, `!` before
- * one to exclude it, `*`/`all` for every queue and `none` for none. Unset or blank is null -
- * every queue, as before the variable existed. Only exclusions mean every queue but those.
- */
 export function parseJobWorkers(raw: string | undefined): JobWorkerSelection | null {
   const entries = (raw ?? '').split(/[,\s]+/).filter(Boolean);
   if (entries.length === 0) {
@@ -70,11 +60,6 @@ export function matches(pattern: string, queue: string): boolean {
   return pattern.endsWith('*') ? queue.startsWith(pattern.slice(0, -1)) : queue === pattern;
 }
 
-/**
- * Splits the registered workers into the ones this process consumes and the ones it leaves to
- * another. A queue named for inclusion that nothing registers fails the boot: a typo would
- * otherwise leave a worker process idle while its queue backs up.
- */
 export function selectJobWorkers<T extends { queue: string }>(
   registrations: readonly T[],
   selection: JobWorkerSelection | null,

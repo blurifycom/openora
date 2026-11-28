@@ -71,7 +71,6 @@ export default {
   ],
   dependsOn: ['wallet', 'audit', 'identity'],
   register(ctx) {
-    // SPORTSBOOK_PROVIDER is bound by the operator's overlay; core ships none.
     let ref: SportsbookServices | null = null;
     let jobs: JobQueueAdapter | null = null;
     const services = (c: TypedContainer<CoreTokenCatalog>): SportsbookServices => {
@@ -112,7 +111,6 @@ export default {
           config,
           sessions,
           debts,
-          // A stake: the ledger's own projection, like every wallet debit.
           playEligibility: c.get(LEDGER_PLAY_ELIGIBILITY),
           identity,
           wallet,
@@ -144,8 +142,6 @@ export default {
 
     ctx.provide(SPORTSBOOK_LEDGER, (c) => services(c).ledger);
 
-    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts,
-    // and the services above need the wallet's and the provider's ports.
     ctx.mcp.tool(turnoverExposureTool, (c) => {
       const turnover = new SportsbookTurnoverService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => turnover.turnoverExposure(input);

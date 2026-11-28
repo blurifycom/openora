@@ -66,7 +66,6 @@ export const SportsbookDebtIdempotencyKeyReusedError = makeConflictError(
   { reason: 'idempotency_key_reused' },
 );
 
-/** An admin debt request, keyed by the caller's idempotency key. */
 type DebtAction = {
   idempotencyKey: Uuid;
   action: SportsbookDebtAction;
@@ -75,7 +74,6 @@ type DebtAction = {
 
 const HOLD_REASON = 'Outstanding sportsbook debt';
 
-/** A debt change: audited and announced as `sportsbook.debt.changed` in its transaction. */
 export type DebtChange = {
   before: SportsbookPlayerDebtRow | undefined;
   debt: SportsbookPlayerDebtRow;
@@ -84,7 +82,6 @@ export type DebtChange = {
   holdActive: boolean;
   actor: AdminCaller | null;
   reason?: string;
-  /** A void's cancel: the shortfall it ended and what of it the void refunded. */
   voided?: { shortfallId: string; refunded: string };
 };
 
@@ -99,7 +96,6 @@ export type DebtCollection = {
 
 type CollectionSlice = Pick<WalletCorrectionDebitArgs, 'amount' | 'type' | 'providerRef'>;
 
-/** What collections, offsets and write-offs left of each shortfall; they consume the oldest first. */
 export function unconsumed<T extends { amount: string }>(
   shortfalls: readonly T[],
   consumed: string,
@@ -149,7 +145,6 @@ function snapshot(row: SportsbookPlayerDebtRow | undefined) {
     : null;
 }
 
-/** Whether the debt's player holds any outstanding debt, which holds their withdrawals. */
 export const holdActiveSql = sql<boolean>`exists (
   select 1 from ${sportsbookPlayerDebt} as other
   where other.user_id = ${sportsbookPlayerDebt}.user_id and other.outstanding > 0
@@ -164,7 +159,6 @@ export type SportsbookDebtDeps = {
   walletReader: WalletReader;
 };
 
-/** Every method runs under the player lock; the caller writes the change's audit row last. */
 export class SportsbookDebtService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -182,7 +176,6 @@ export class SportsbookDebtService {
     this.walletReader = deps.walletReader;
   }
 
-  /** The open debt a payout in this currency offsets, locked for the rest of the transaction. */
   async lockOutstanding(
     tx: DrizzleTx,
     { userId, currency }: Pick<SportsbookPlayerDebtRow, 'userId' | 'currency'>,
@@ -201,7 +194,6 @@ export class SportsbookDebtService {
     return row;
   }
 
-  /** A reopen took back less than the settlement paid: owe the rest and hold withdrawals. */
   async record(
     tx: DrizzleTx,
     {
@@ -256,13 +248,6 @@ export class SportsbookDebtService {
     };
   }
 
-  /**
-   * A void undid the reopen that left part of this bet's stake as debt (its latest `bet`
-   * shortfall: only a reopen of a void records one), so the system cancels what is left of it:
-   * never owed after all. Answers what offsets and collections already took of that shortfall, for
-   * the void to return with the rest; a write-off of it stays written off. Undefined when the bet
-   * has no such shortfall.
-   */
   async cancelForVoid(
     tx: DrizzleTx,
     bet: Pick<SportsbookBetRow, 'id' | 'userId' | 'currency' | 'provider' | 'providerBetId'>,
@@ -288,7 +273,6 @@ export class SportsbookDebtService {
     if (!before || shortfall?.debtId !== before.id) {
       return undefined;
     }
-    // In this transaction, under the debt row lock: a collection committed or made in it counts.
     const collected = await this.walletReader.sumProviderTransactions(
       {
         providerName: `${SPORTSBOOK_WALLET_PROVIDER_PREFIX}${bet.provider}`,
@@ -307,7 +291,6 @@ export class SportsbookDebtService {
     }
     let debt = before;
     if (isPositiveMoney(remaining)) {
-      // Cutting the shortfall to what was consumed of it keeps the oldest-first walk over the rest.
       if (moneyEquals(remaining, shortfall.amount)) {
         await tx
           .delete(sportsbookDebtShortfall)
@@ -338,17 +321,12 @@ export class SportsbookDebtService {
         holdActive: await this.releaseHoldIfClear(tx, debt.userId),
         actor: null,
         reason: `cancelled by a void of sportsbook bet ${bet.id}`,
-        // The debt keeps the refunded offsets in `collected`; the audit row records them.
         voided: { shortfallId: shortfall.id, refunded: collected },
       },
       collected,
     };
   }
 
-  /**
-   * Takes min(payout, outstanding) back from a payout just credited, oldest shortfall first, each in
-   * its own bet's round as the type its reopen used. Null when nothing moved.
-   */
   async offset(
     tx: DrizzleTx,
     debt: SportsbookPlayerDebtRow,
@@ -406,7 +384,6 @@ export class SportsbookDebtService {
     };
   }
 
-  /** Admin: take what the player's real balance holds against the outstanding debt. */
   async collect(
     id: SportsbookDebt['id'],
     { idempotencyKey }: Pick<CollectSportsbookDebtInput, 'idempotencyKey'>,
@@ -439,7 +416,6 @@ export class SportsbookDebtService {
     });
   }
 
-  /** Admin: forgive the outstanding debt. GGR keeps the original reversal; nothing reaches the ledger. */
   async writeOff(
     id: SportsbookDebt['id'],
     { reason, idempotencyKey }: Pick<WriteOffSportsbookDebtInput, 'reason' | 'idempotencyKey'>,
@@ -477,7 +453,6 @@ export class SportsbookDebtService {
     });
   }
 
-  /** Writes the debt change, and the balance changes an admin collect made, to the outbox. */
   async announce(tx: DrizzleTx, change: DebtChange, moves: DebtMove[] = []): Promise<void> {
     await this.events.emitInTransaction(tx, 'sportsbook.debt.changed', {
       debtId: change.debt.id,
@@ -504,10 +479,6 @@ export class SportsbookDebtService {
     }
   }
 
-  /**
-   * Runs an admin request once per idempotency key, under the player lock. A retry with the same
-   * request answers what the first answered; the key on another request is refused.
-   */
   private async adminChange({
     id,
     request,
@@ -579,7 +550,6 @@ export class SportsbookDebtService {
     }
   }
 
-  /** The debt's shortfalls not yet consumed, oldest first, with the round each one owes. */
   private async outstandingShortfalls(tx: DrizzleTx, debt: SportsbookPlayerDebtRow) {
     const shortfalls = await tx
       .select({
@@ -601,7 +571,6 @@ export class SportsbookDebtService {
     return rest;
   }
 
-  /** Collects each slice in turn until the balance runs out. Null when nothing moved. */
   private async collectInto(
     tx: DrizzleTx,
     before: SportsbookPlayerDebtRow,
@@ -675,7 +644,6 @@ export class SportsbookDebtService {
     };
   }
 
-  /** Releases the hold once nothing is outstanding in any currency. Returns whether it stays. */
   private async releaseHoldIfClear(
     tx: DrizzleTx,
     userId: SportsbookPlayerDebtRow['userId'],
@@ -701,7 +669,6 @@ export class SportsbookDebtService {
     return rows.length > 0;
   }
 
-  /** Inside the change's transaction. */
   async writeAudit(
     tx: DrizzleTx,
     { before, debt, cause, amount, actor, reason, voided }: DebtChange,

@@ -1,7 +1,3 @@
-// The ledger's deposit and wager limit gate, over its own `ledger_user_limit` projection and its own
-// `wallet_transaction` spend. Compliance, the owner of every limit, writes the projection through
-// RG_LIMIT_LEDGER in the transaction that changes a limit, and repairs it from the
-// `compliance.rg_limits.changed` outbox event and its boot backfill. See ADR-0057.
 import {
   createLogger,
   moneyAdd,
@@ -89,7 +85,6 @@ function sameRows(held: readonly LimitRow[], wanted: readonly LimitRow[]): boole
   );
 }
 
-/** Makes `userId`'s rows exactly `rows`, touching only the ones that differ. */
 async function replaceRows(db: Db, userId: User['id'], rows: readonly LimitRow[]) {
   const ids = rows.map((row) => row.limitId);
   await db
@@ -255,9 +250,6 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
       .where(eq(ledgerUserLimitVersion.userId, parsed.userId))
       .for('update');
     if (held && held.version > parsed.version) {
-      // The writer holds compliance's version row lock and its version is the truth: a higher one
-      // here came from outside compliance. Overwrite it, so the ledger never keeps limits
-      // compliance does not have.
       log.error(
         { userId: parsed.userId, heldVersion: held.version, version: parsed.version },
         'ledger_user_limit held a version ahead of compliance; overwritten',
@@ -292,7 +284,6 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     });
   }
 
-  /** The newest valid snapshot per user; a snapshot the contract rejects is logged and skipped. */
   private newestPerUser(snapshots: readonly RgLimitsSnapshot[]): Map<User['id'], RgLimitsSnapshot> {
     const newest = new Map<User['id'], RgLimitsSnapshot>();
     for (const candidate of snapshots) {
@@ -309,7 +300,6 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     return newest;
   }
 
-  /** Unlocked reads of the held versions and rows of `userIds`. */
   private async held(userIds: User['id'][]) {
     const db = this.drizzle.db;
     const [versions, rows] = await Promise.all([
@@ -334,8 +324,6 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
     if (newest.size === 0) {
       return 0;
     }
-    // Unlocked: a user already at or past the snapshot's version is never locked. Only a strictly
-    // newer version is written; an equal one may be a late delivery of rows a repair replaced.
     const { versionOf } = await this.held([...newest.keys()]);
     const newer = [...newest.values()].filter(
       (snapshot) => (versionOf.get(snapshot.userId) ?? -1) < snapshot.version,
@@ -380,11 +368,6 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
       .map((user) => user.userId);
   }
 
-  /**
-   * `behind`: the users held at a lower version than their snapshot; a user with none held is at
-   * version 0. `differing`: those at its version with other rows. `ahead`: those held higher,
-   * with other rows.
-   */
   async compare(snapshots: readonly RgLimitsSnapshot[]): Promise<ProjectionComparison> {
     const standing = await this.standing(snapshots);
     const ids = (users: typeof standing) => users.map((user) => user.userId);
@@ -450,30 +433,14 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
         and(
           eq(wallet.userId, userId),
           eq(walletTransaction.type, 'deposit'),
-          // A pending deposit is a reservation the wallet took under the player's deposit
-          // lock before charging the PSP. Counting it is what stops two concurrent deposits
-          // from spending the same headroom; it is released to `failed` if the charge fails.
           inArray(walletTransaction.status, ['completed', 'pending']),
-          // A held deposit an operator released later is spent when it reached the balance
-          // (reviewedAt), not when it landed on chain; every other deposit has no reviewedAt.
           gte(depositedAt, from),
-          // The database stamps createdAt, so the upper bound reads the same clock. An
-          // app-side new Date() that trails the database by a millisecond would drop a
-          // just-committed deposit out of the player's spend.
           lte(depositedAt, sql`now()`),
         ),
       )
       .groupBy(walletTransaction.currency);
   }
 
-  /**
-   * Play from the wallet ledger, whatever product it was on, netted per round. The ledger does not
-   * say which bet a reversal reverses, so a round's reversals, wins and win reversals count only
-   * when every bet of it was placed inside the window. A round that started before it adds its
-   * stakes plus whatever its win reversals here take back beyond its wins here, so a resettled
-   * payout lands in the period it is collected (ADR-0046). A round's stake never nets below 0, and
-   * a leg without a round id never offsets one.
-   */
   private async playByCurrency(db: Db, userId: User['id'], from: Date, legs: readonly PlayLeg[]) {
     const types = sql.join(
       legs.map((leg) => sql`(${leg.type}, ${leg.direction})`),
@@ -531,7 +498,6 @@ export class LedgerRgLimitsService implements RgLimitsPort, RgLimitLedgerPort {
   }
 }
 
-/** The limits projection over a bare database handle, for a seed script that boots no container. */
 export function ledgerRgLimits(
   db: DrizzleService['db'],
   rates?: ExchangeRateReader,

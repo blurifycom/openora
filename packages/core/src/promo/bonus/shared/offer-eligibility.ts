@@ -18,14 +18,6 @@ export type OfferIneligibility =
   | 'currency_mismatch'
   | 'below_minimum_deposit';
 
-/**
- * Whether an offer is open to this player, and if not, which rule closed it. Pure: the caller
- * supplies the facts, so the same predicate answers "show me the offers" and "credit this
- * deposit" without one of them drifting into a laxer version of the other.
- *
- * Absent facts fail the rule that needs them rather than passing it: an offer for first
- * depositors only is not open to a caller who cannot say whether this is a first deposit.
- */
 export function offerIneligibility(input: OfferEligibilityInput): OfferIneligibility | null {
   const { offer, at } = input;
 

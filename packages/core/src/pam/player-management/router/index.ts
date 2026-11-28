@@ -117,8 +117,6 @@ export function createPlayerRouter({
       return player.summary();
     }),
 
-    // Player-facing (not adminGuard-gated) - powers the chat `/profile` command,
-    // same as the routes this replaces in chat-commands.
     playerSearch: os.playerSearch.handler(({ input, context }) => {
       const viewerId = getUserId(context);
       return player.searchPlayers(input.q, input.limit, viewerId);

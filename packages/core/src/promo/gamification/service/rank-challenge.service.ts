@@ -27,25 +27,6 @@ import {
   withWinners,
 } from '../shared/rank-challenge-ladder.js';
 
-/**
- * The Rank Challenge engine: a fifth `WAGER_TRACKING` consumer alongside `RankService`,
- * `RakebackService`, `StreakService` and `RaceService` - a race-to-threshold rather than a
- * repeating ladder or window. The FIRST player whose lifetime real-money wagering crosses a
- * tier's threshold wins it, once, forever; every other player who later crosses the same
- * threshold wins nothing.
- *
- * Own-money only, the same rule `RaceService` applies: `args.realAmount` already excludes
- * whatever part of a stake a bonus grant covered, so wagering a bonus never wins a prize funded
- * by the operator's own cash pool.
- *
- * Claiming happens here, inline in the same transaction every other `WAGER_TRACKING` consumer
- * runs in (below the wallet's duplicate-bet guard) - the atomic part is the unique index on
- * `promoRankChallengeClaim.tierId`, not the transaction boundary. Crediting the cash prize and
- * emitting the win event are deferred to `RankChallengePayoutService`, mirroring how
- * `promoRankLevelUp`/`promoStreakMilestoneGrant` settle out-of-band from the bet that earned
- * them - a domain event announced before its own commit could tell a player about a prize a
- * rolled-back transaction never granted.
- */
 export class RankChallengeService implements WagerTrackingCommands {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -87,8 +68,6 @@ export class RankChallengeService implements WagerTrackingCommands {
         ? args.realAmount
         : await this.rates.convert(args.realAmount, args.currency, ladderCurrency, tx);
     if (amount === null) {
-      // ponytail: a wager with no rate is not counted toward the challenge; revisit if this
-      // shows up in logs the way the equivalent race-side skip would.
       this.logger.warn(
         { userId: args.userId, from: args.currency, to: ladderCurrency },
         'rank challenge wager skipped - no exchange rate',
@@ -128,10 +107,6 @@ export class RankChallengeService implements WagerTrackingCommands {
     }
 
     for (const tier of contestable.sort((a, b) => a.position - b.position)) {
-      // The claim guard: two concurrent transactions racing the same tier both attempt this
-      // insert; the unique index on tierId lets exactly one land. `onConflictDoNothing` plus a
-      // `.returning()` check (not a pre-check select) is what makes this race-safe - a
-      // select-then-insert has a TOCTOU gap this does not.
       const [won] = await tx
         .insert(promoRankChallengeClaim)
         .values({
@@ -143,16 +118,11 @@ export class RankChallengeService implements WagerTrackingCommands {
         })
         .onConflictDoNothing({ target: promoRankChallengeClaim.tierId })
         .returning({ id: promoRankChallengeClaim.id });
-      // Nothing to audit here beyond the claim row itself - RankChallengePayoutService carries
-      // the AuditWritePort and records the settlement (cash credit, win event) once it runs,
-      // the same split RankService uses between "rank changed" (recorded inline) and the
-      // level-up bonus (settled later, audited by RankPayoutService's own caller).
       void won;
     }
     return [];
   }
 
-  /** The ladder's tiers alone - what `recordWager`/`getForPlayer` need, no winner join. */
   private async getTiers(): Promise<{ currency: string; tiers: RankChallengeTier[] }> {
     const tiers = await this.drizzle.db
       .select({ ...TIER_COLUMNS, currency: promoRankChallengeTier.currency })
@@ -165,7 +135,6 @@ export class RankChallengeService implements WagerTrackingCommands {
     };
   }
 
-  /** The ladder as an operator configured it, plus who has won each tier so far. Public. */
   async getLadder(): Promise<RankChallengeLadder> {
     const { currency, tiers } = await this.getTiers();
     return {

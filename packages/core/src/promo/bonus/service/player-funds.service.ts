@@ -16,10 +16,6 @@ export class PlayerFundsService {
     private readonly locks: Pick<BonusFundLockCommands, 'readLockedFunds'>,
   ) {}
 
-  /**
-   * An unknown player reads as no balances, like the grant list. While a turnover requirement is
-   * on, `locked` is the stricter of it and the bonus lock, never their sum (ADR-0065).
-   */
   read(userId: Uuid): Promise<AdminPlayerFunds> {
     return this.drizzle.db.transaction(async (tx) => {
       const { activeCurrency, balances } = await this.wallet.getBalances(userId, tx);

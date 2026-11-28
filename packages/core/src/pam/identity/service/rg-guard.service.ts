@@ -17,13 +17,7 @@ type BlockedAccount = {
 };
 
 type AccountBlockGateOptions = {
-  /**
-   * Expire every session on the account before throwing. Needed wherever the caller has
-   * already let better-auth mint one (password login, email-code verification); the phone
-   * path checks the gate before minting, so it has nothing to revoke and passes false.
-   */
   revokeSessions: boolean;
-  /** `ORPCError.data` for each block, so each surface keeps its own error vocabulary. */
   errorData: {
     rgBlocked: Record<string, string>;
     suspended: Record<string, string>;
@@ -31,13 +25,6 @@ type AccountBlockGateOptions = {
   };
 };
 
-/**
- * The RG and backoffice (suspended/closed) gates for an account that has just proven a
- * credential - never before, so a probe can't tell a restricted account apart from a
- * wrong secret. Shared by every surface that hands out a session, so the three of them
- * cannot drift: a gate that only some login paths enforce is not a gate.
- * Returns the resolved playerId so callers can attach it to their own success event.
- */
 export async function assertAccountNotBlocked(
   { drizzle, events }: { drizzle: DrizzleService; events: EventBus },
   account: BlockedAccount,
@@ -73,18 +60,11 @@ export async function assertAccountNotBlocked(
     });
   }
 
-  // The player status a suspended or closed account carries, if it is one. Distinct mechanism
-  // from RG (self_excluded is out of scope here) - such a player can never log back in.
   const blockedPlayerStatus =
     playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')
       ? playerRow.status
       : null;
 
-  // A deactivated account (a back-office ban, or a staff member taken off the roster) cannot
-  // sign in, whatever its role. Checked with the other blocks so a probe still learns nothing
-  // about the account before the credential has been proven. Audited here, as a denial of the
-  // proven credential; both events fire when the account is also suspended, so neither hides
-  // the other.
   if (!account.isActive) {
     await revoke();
     events.emit('identity.user.login_blocked', {
@@ -127,14 +107,6 @@ export async function assertAccountNotBlocked(
   return playerRow?.id ?? null;
 }
 
-/**
- * The country rule for an account that has just proven a credential, on every surface that
- * hands out a session - a rule only some sign-in paths enforce is bypassed by switching
- * flows. After the credential, not before, so staff keep backoffice access from a blocked
- * country without the exemption turning into a pre-auth probe for which addresses are
- * staff. The denial is audited by the compliance decision itself
- * (`compliance.geo.access_blocked`); `onDenied` is only the caller's own cleanup.
- */
 export async function assertCountryAllowed(
   geoCheck: GeoCheckCommands | undefined,
   account: { role: string },

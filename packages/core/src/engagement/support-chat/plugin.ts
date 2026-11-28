@@ -36,17 +36,13 @@ const logger = createLogger('support-chat');
 
 const SYNC_QUEUE = queue('support-chat.sync-customer');
 const SyncJobSchema = z.object({ userId: UuidSchema });
-// 30s doubling over 10 attempts: the last retry runs about 4h after the first failure.
 const SYNC_ENQUEUE_OPTIONS = {
   attempts: 10,
   backoff: { type: 'exponential', delayMs: 30_000 },
 } as const;
-// Once those retries run out, one try at the top of each hour until a sync lands.
 const RESYNC_EVERY_MS = 60 * 60_000;
 const RESYNC_RETRY_PAUSE_MS = 1_000;
 
-// What refreshes a linked player's context besides a chat open, the first link included.
-// Username and active-currency changes emit no event; the next open picks them up.
 const SYNC_TOPICS = [
   'support_chat.customer.linked',
   'rg.self_exclusion.activated',
@@ -68,8 +64,6 @@ export default {
   dependsOn: ['identity', 'profile', 'compliance', 'audit'],
   requiresPorts: [WALLET_READER, PLAYER_RANK_READER],
   register(ctx) {
-    // Set by the router factory, which runs after subscriptions are wired but before any
-    // event or job arrives (see create-app.ts boot order).
     let jobQueue: JobQueueAdapter | null = null;
     let drizzle: DrizzleService | null = null;
     let service: SupportChatService | null = null;
@@ -81,9 +75,6 @@ export default {
       await jobQueue.enqueue(SYNC_QUEUE, { userId }, SYNC_ENQUEUE_OPTIONS);
     };
 
-    // A self-excluded player cannot sign in to refresh it, so support would see stale RG state
-    // for good. The key names the hour: every give-up in that hour shares one job, and the key
-    // is never reused while the queue still keeps the failed job.
     const scheduleResync = async (userId: Uuid) => {
       if (!jobQueue) {
         throw new Error('support-chat job queue not bound yet');
@@ -100,36 +91,27 @@ export default {
       );
     };
 
-    // No orderingKey: the shipped drivers do not honour it. Two syncs for one player may run
-    // at once; syncCustomer re-reads after each write, so the last write still converges.
     ctx.jobs.worker({
       queue: SYNC_QUEUE,
       schema: SyncJobSchema,
       handler: async ({ payload, attempt }) => {
         if (!service) {
-          // Another process may have the provider bound: fail so the queue retries the job there
-          // instead of acking a sync that never ran.
           logger.warn(
             { userId: payload.userId, attempt },
             'support-chat sync attempt failed - no SUPPORT_CHAT_PROVIDER bound in this process',
           );
           throw new Error('support-chat sync needs a SUPPORT_CHAT_PROVIDER, none bound here');
         }
-        // The service already reduced an adapter failure to a listed code, so `err` is safe as is.
         await service.syncCustomer(payload.userId).catch((err: unknown) => {
           logger.warn({ err, userId: payload.userId, attempt }, 'support-chat sync attempt failed');
           throw err;
         });
       },
-      // Scheduled whichever process gives up: one without the provider cannot tell a fleet where
-      // another process has it from one where none does, so the resync stays owed either way.
       onDeadLetter: async ({ payload, id }, error) => {
         logger.error(
           { err: error, userId: payload.userId, jobId: id },
           'support-chat sync gave up - support may see stale context until the hourly resync lands',
         );
-        // The driver only logs a hook that throws, so a refused enqueue would end the chain: try
-        // once more after a pause, then say plainly the context is stranded.
         await scheduleResync(payload.userId)
           .catch(async () => {
             await new Promise((resolve) => setTimeout(resolve, RESYNC_RETRY_PAUSE_MS));
@@ -144,10 +126,6 @@ export default {
       },
     });
 
-    // Throws while the queue is not bound yet, so the broker redelivers the event rather than
-    // it being marked handled (ADR-0045). A player who never opened the chat has nothing to
-    // refresh. A linked one gets a job even where no provider is bound: another process may have
-    // one, and the worker retries until it does.
     const refreshOn =
       <K extends (typeof SYNC_TOPICS)[number]>(topic: K) =>
       async (payload: unknown) => {

@@ -25,18 +25,12 @@ const DEFAULT_FAILURE_COOLDOWN_MS = 30_000;
 
 const RATE_WARM_QUEUE = queue('exchange-rate-warm');
 const RateWarmJobSchema = z.object({});
-// Well inside freshTtlMs (60s default) so a warmed coin never crosses into soft-stale
-// between ticks, and its hot-path readers never fall through to a synchronous vendor call.
 const WARM_INTERVAL_MS = 30_000;
 const WARM_CONCURRENCY = 4;
 
 export default {
   id: 'exchange-rate',
   register(ctx) {
-    // Set inside the router factory below (needs container access) and read by the warm
-    // job worker, same lazily-constructed-singleton shape as wallet's sweep/reconciliation
-    // services - the worker registers before the router factory runs, but is only
-    // invoked once the schedule fires, by which point this is set.
     let reader: ExchangeRateReaderService | null = null;
     let warmCurrencies: readonly string[] = [];
     let warmPivot = '';
@@ -62,10 +56,6 @@ export default {
       reader = service;
       const pivot = resolveExchangeRatePivot(exchangeRateConfig);
       warmPivot = pivot;
-      // The launch catalog: every crypto currency the operator actually offers, plus
-      // whatever fiat it displays. Kept warm so a hot path (RG gate, rank accrual, a
-      // social transfer) never waits on the vendor for a coin players actually use -
-      // an unlisted currency simply falls back to the existing on-demand fetch.
       warmCurrencies = [
         ...new Set(
           [
@@ -100,16 +90,12 @@ export default {
 
     ctx.routers.add('exchangeRate', (c, options) => {
       const platformConfig = c.get(PLATFORM_CONFIG);
-      // The pivot joins the list even when the operator does not offer it for display:
-      // every cross rate is computed through it, so a quote against it is always legitimate.
       const supported = [
         ...resolveDisplayCurrencies(platformConfig.displayCurrencies),
         resolveExchangeRatePivot(platformConfig.exchangeRate),
       ];
 
       const jobQueue = c.get(JOB_QUEUE);
-      // Idempotent schedule (keyed by scheduleId) - see wallet's custody-sweep cron for
-      // the same pattern.
       if (options?.mounted !== false) {
         void jobQueue
           .schedule(RATE_WARM_QUEUE, 'exchange-rate-warm.cron', {}, { everyMs: WARM_INTERVAL_MS })

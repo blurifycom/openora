@@ -50,7 +50,6 @@ function pick<T>(
   return result.success ? (result.data ?? null) : null;
 }
 
-// A chained row, or a queued record under its event id.
 type RgHistoryRow = Pick<
   SerializedRow<AuditLog, 'createdAt'>,
   'id' | 'action' | 'actorType' | 'createdAt'
@@ -90,9 +89,6 @@ const AUDIT_SORT_COLS = {
   resourceId: auditLog.resourceId,
 } as const;
 
-// Key order is deterministic - changes here BREAK the chain for existing rows.
-// Treat this as an append-only list. before/after/result are IN the chain - a row's
-// mutation payload and outcome must be tamper-evident, not just its who/what/where.
 type CanonicalHashInput = Pick<
   AuditLog,
   | 'id'
@@ -108,9 +104,6 @@ type CanonicalHashInput = Pick<
   | 'prevHash'
 > & { createdAt: string };
 
-// Postgres jsonb reorders object keys (length-then-lex) on read-back, so before/after
-// must have their nested key order canonicalized before hashing - otherwise record()
-// and verifyChain() disagree on the exact same data. Arrays keep their original order.
 export function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortKeysDeep);
@@ -219,13 +212,6 @@ export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
 
-// What `audit_outbox.entry` holds: the entry with its correlation id and `createdAt` resolved at
-// enqueue, inside the request that wrote it. `createdAt` is queue time: when the business
-// transaction wrote the record, not when it committed or shipped; for a record mapped from an
-// event it is the event's own time, so the tap and the consumer queue the same entry for it. `seq` is assigned at ship time
-// and is the authoritative order of the chain; `createdAt` is not monotonic in it. Checked at
-// enqueue, so a bad entry fails the business transaction as an `audit_log` insert used to; the
-// shipper checks each row again and moves one that fails aside instead of stopping behind it.
 export const OutboxEntrySchema = z.object({
   actorId: z.string().nullish(),
   actorType: AuditActorTypeSchema,
@@ -238,25 +224,16 @@ export const OutboxEntrySchema = z.object({
   userAgent: z.string().nullish(),
   correlationId: z.string().nullable(),
   result: z.string().nullish(),
-  // Postgres has no year 0, so such an entry could never be chained: refused here, it moves aside.
   createdAt: z.iso.datetime().refine((at) => !at.startsWith('0000'), 'year 0 cannot be stored'),
 });
 
 type OutboxEntry = z.infer<typeof OutboxEntrySchema>;
 
-/** One `audit_outbox` row on its way into the chain. */
 export type ShippableEntry = { eventId: string; entry: unknown };
 
-// Postgres takes at most 65,535 bind parameters per statement; at 17 columns a row, this many
-// rows stay well under it.
 const MAX_ROWS_PER_INSERT = 1_000;
 
-// `occurredAt` is the audited event's time, passed only by the audit plugin's event paths; any
-// other record is stamped now, and a time key on the record itself is dropped by the schema, so a
-// caller of `AUDIT_WRITER` cannot backdate its entry.
 function outboxEntry(input: RecordInput, occurredAt?: EventEnvelope['occurredAt']): OutboxEntry {
-  // An entry that leaves the correlation id unset takes the one its context runs under, e.g. the
-  // agent proposal an MCP execution writes for; an explicit value, null included, is kept.
   const correlationId =
     input.correlationId === undefined ? (getCurrentCorrelationId() ?? null) : input.correlationId;
   const createdAt = (occurredAt === undefined ? new Date() : new Date(occurredAt)).toISOString();
@@ -277,11 +254,6 @@ async function enqueue(
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * `eventId` as the uuid `event_id` column takes: a uuid as it is, anything else (an event id
- * from a broker that does not mint uuids) as the sha1-based uuid of its text, so a redelivery
- * maps to the same id and still dedups.
- */
 function auditEventId(eventId: EventEnvelope['eventId']): ShippableEntry['eventId'] {
   if (UUID_PATTERN.test(eventId)) {
     return eventId;
@@ -301,21 +273,10 @@ async function enqueueOne(
   noteAuditWrite(input.actorId);
 }
 
-/**
- * Queues one audit record inside the caller's transaction: it reaches `audit_log` once the
- * transaction commits and the audit shipper appends it to the hash chain, and never if it rolls
- * back. Takes no lock, so the business transaction never waits on the chain. The record is stamped
- * now under a fresh event id, so a caller can neither backdate it nor key it to another record.
- */
 export function enqueueAuditInTransaction(txn: DrizzleTx, input: RecordInput): Promise<void> {
   return enqueueOne(txn, input, randomUUID());
 }
 
-/**
- * Queues the audit record of an event, keyed by its event id and dated by its `occurredAt`, so the
- * tap, the consumer and a redelivery queue one equal entry. Only the audit plugin's event paths
- * call it, and `audit/server` does not export it: no other caller may backdate a record (ADR-0055).
- */
 export function enqueueEventAuditInTransaction(
   txn: DrizzleTx,
   input: RecordInput,
@@ -346,12 +307,8 @@ function latestChainHash(txn: DrizzleTx) {
     .then(([latest]) => latest?.hash ?? null);
 }
 
-// The column types audit_log's snapshots as records, which every reader indexes by key, but the
-// jsonb stores an array snapshot (a role's permission list) as is, as it always has.
-// ponytail: widen the column type once its readers narrow arrays themselves.
 const snapshot = (value: OutboxEntry['before']) => (value ?? null) as AuditLog['before'];
 
-/** The row `entry` appends at `seq` after `prevHash`, hashed over what is persisted. */
 function chainedRow(
   { eventId, entry }: { eventId: ShippableEntry['eventId']; entry: OutboxEntry },
   { seq, prevHash }: { seq: number; prevHash: string | null },
@@ -377,13 +334,6 @@ function chainedRow(
   return { ...entry, before, after, eventId, id, seq, prevHash, createdAt, hash };
 }
 
-/**
- * Appends `entries` to the hash chain in order, inside `txn` and under the chain lock, with one
- * read of the chain head and one sequence reservation for the lot. An entry whose `eventId` is
- * already in the log is skipped, so a batch shipped again after a crash adds nothing; the unique
- * `event_id`, `seq` and `prev_hash` indexes refuse what slips past the lock. Every entry is
- * checked again before any row is written, so a malformed one fails the whole batch.
- */
 export async function appendAuditEntries(
   txn: DrizzleTx,
   entries: readonly ShippableEntry[],
@@ -439,24 +389,11 @@ export async function appendAuditEntries(
   });
 }
 
-/**
- * True when `tx` reaches a main database whose chain split `migrate` moved to a database of its
- * own: its `audit_log`, if any is left, is one nothing reads.
- */
 export async function chainMovedOut(tx: DrizzleTx): Promise<boolean> {
   const { rows } = await tx.execute<{ split: boolean }>(sql.raw(CHAIN_SPLIT_SQL));
   return rows[0]?.split ?? false;
 }
 
-/**
- * Appends one row to the hash chain straight away, inside the caller's transaction and holding
- * the `audit_log` chain lock until it commits, so every other append waits on the caller's
- * transaction. For a deploy step that runs outside the container and reads its own row back.
- * Throws on a split main database, whose own `audit_log` is no longer the chain.
- *
- * @deprecated Use `enqueueAuditInTransaction`, which queues the record and takes no lock. Removed
- * in the next minor release.
- */
 export async function recordAuditInTransaction(
   txn: DrizzleTx,
   input: RecordInput,
@@ -494,20 +431,12 @@ const hashOf = (row: AuditLog) =>
 
 const VERIFY_CHUNK_SIZE = 1_000;
 
-/** Where an earlier check left a chain it found intact: the last row it checked. */
 export type AuditChainAnchor = { fromSeq: AuditLog['seq']; fromHash: AuditLog['hash'] };
 
 export type AuditChainVerdict =
   | { valid: true }
-  // `rowId` is null when the anchored row itself is gone.
   | { valid: false; firstBrokenSeq: AuditLog['seq']; rowId: AuditLog['id'] | null };
 
-/**
- * Checks the hash chain in `db`: every row links to the one before it and hashes to its stored
- * hash. From `anchor`, the check starts at that row, which must still be there with the hash the
- * anchor kept, and covers it and every later row; without one, the whole chain from its head.
- * Keyset-paged, so a large chain verifies in constant memory.
- */
 export async function verifyAuditChain(
   db: DrizzleDb,
   anchor?: AuditChainAnchor,
@@ -542,14 +471,6 @@ export async function verifyAuditChain(
   }
 }
 
-/**
- * Reads, eventually consistent with the writes: `list` and `exportCsv` read the chain, which a
- * record reaches only once the shipper has moved it from `audit_outbox`, so a record shows a
- * moment after the transaction that wrote it commits. `listMyRgHistory` also reads the player's
- * queued records, so a player sees a limit change straight away. The chain is read through
- * `auditDrizzle`, the outbox through `drizzle`; they are the same unless the chain has a database of
- * its own.
- */
 export class AuditService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -558,7 +479,6 @@ export class AuditService {
     private readonly auditDrizzle: DrizzleService = drizzle,
   ) {}
 
-  /** Queues `input` in a transaction of its own, stamped now. */
   async record(input: RecordInput): Promise<void> {
     await this.drizzle.db.transaction((tx) => enqueueAuditInTransaction(tx, input));
   }
@@ -580,13 +500,6 @@ export class AuditService {
     return { items: rows.map(toDto), total, page, limit };
   }
 
-  /**
-   * Player self-service RG limit history, the changes still queued for the chain included, so a
-   * player sees a change as soon as it commits. Queued records come after every chained one, as the
-   * shipper will chain them. A record's `id` is its event id, queued or chained, so it keeps it
-   * across the ship; a record chained before event ids existed keeps its row id. Returns an empty
-   * page, not an error, when the caller has no player profile.
-   */
   async listMyRgHistory(userId: User['id'], filters: MyRgHistoryFilters) {
     const { page, limit } = filters;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
@@ -599,8 +512,6 @@ export class AuditService {
       actionPrefix: RG_LIMIT_ACTION_PREFIX,
       sortOrder: filters.sortOrder,
     };
-    // Read before the chain: a record shipped in between is then found in the chain's snapshot
-    // and counted there once.
     const queued = await this.queuedRgHistory(playerId);
     const offset = pageToOffset(page, limit);
     const newestFirst = (filters.sortOrder ?? 'desc') === 'desc';
@@ -625,7 +536,6 @@ export class AuditService {
           .filter(({ eventId }) => !chainedIds.has(eventId))
           .map(({ row }) => row);
         const chained = await chainCount(tx, scope);
-        // Newest first, the queued records open the list; oldest first, they close it.
         const lead = newestFirst ? pending.reverse() : [];
         const tail = newestFirst ? [] : pending;
         const fromLead = lead.slice(offset, offset + limit);
@@ -652,9 +562,6 @@ export class AuditService {
     );
   }
 
-  // The player's RG limit records still in `audit_outbox`, oldest first, each under its event id,
-  // the id it keeps once chained. An entry that fails its schema never reaches the chain and is
-  // left out here too.
   private async queuedRgHistory(playerId: Uuid) {
     const rows = await this.drizzle.db
       .select({ eventId: auditOutbox.eventId, entry: auditOutbox.entry })
@@ -678,8 +585,6 @@ export class AuditService {
     });
   }
 
-  // Hard cap to prevent unbounded bulk extraction / OOM; exports exceeding it are
-  // truncated to the latest rows. Use verifyChain for full-chain integrity.
   static readonly EXPORT_MAX_ROWS = 50_000;
 
   static readonly VERIFY_CHUNK_SIZE = VERIFY_CHUNK_SIZE;
@@ -715,7 +620,6 @@ export class AuditService {
     return [header, ...lines].join('\n');
   }
 
-  /** See `verifyAuditChain`. */
   verifyChain(anchor?: AuditChainAnchor): Promise<AuditChainVerdict> {
     return verifyAuditChain(this.auditDrizzle.db, anchor);
   }

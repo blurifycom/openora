@@ -78,15 +78,6 @@ type Caller = Extract<McpTokenAuthentication, { ok: true }> & { clientMeta: Clie
 
 type ToolCall = Caller & { correlationId: RunContext['correlationId'] };
 
-/**
- * The MCP Streamable HTTP endpoint for admin tokens, stateless and answering in JSON. Each
- * request passes, in order: the Origin check, POST only, the bearer's format, the client
- * address's minute limit, the token, the token's minute and day limits, and the admin's MCP
- * grant; only then does the SDK see it. A limiter that cannot reach its store answers 503.
- * Only read-class tools are served, every call runs through the kernel under the token's
- * admin, and a call naming any other tool is audited and refused. Throws at construction when
- * a tool's schemas cannot be published.
- */
 export function createMcpHttpTransport(deps: McpHttpTransportDeps): McpHttpTransport {
   const tools = exposedTools(deps.kernel.listTools(), deps.config.personalFields);
   const state: TransportState = {
@@ -118,8 +109,6 @@ async function handle(state: TransportState, request: Request, clientMeta: Clien
 }
 
 async function serve(state: TransportState, request: Request, clientMeta: ClientMeta) {
-  // In stateless mode the SDK answers a GET with an SSE stream that never ends; its client
-  // reads a 405 as "no stream" and carries on over POST.
   if (request.method !== 'POST') {
     return methodNotAllowed();
   }
@@ -190,7 +179,6 @@ async function serveProtocol(state: TransportState, request: Request, caller: Ca
   if (Array.isArray(parsed.body)) {
     return batchRefused();
   }
-  // The SDK's stateless transport refuses a second request, so every request gets its own pair.
   const server = protocolServer(state, { ...caller, correlationId: randomUUID() });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
@@ -204,9 +192,6 @@ async function serveProtocol(state: TransportState, request: Request, caller: Ca
   }
 }
 
-// The SDK copies every request header, Authorization included, into each handler's
-// `extra.requestInfo`, and sends a thrown error's message to the client verbatim: the handlers
-// never read `extra` and never let an internal error escape.
 function protocolServer(state: TransportState, call: ToolCall) {
   const server = new McpServer(
     { name: SERVER_NAME, version: state.kernel.catalogVersion },

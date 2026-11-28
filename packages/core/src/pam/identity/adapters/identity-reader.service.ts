@@ -27,8 +27,6 @@ export class IdentityReaderService implements IdentityReader {
   }
 
   async getPlayerIdsInactiveSince(sinceDate: Date): Promise<User['id'][]> {
-    // Join users to their most-recent session. Players with no session at all
-    // (registered but never logged in) are included via the LEFT JOIN + isNull check.
     const lastSessionPerUser = this.drizzle.db
       .select({
         userId: session.userId,

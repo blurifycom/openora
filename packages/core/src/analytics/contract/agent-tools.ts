@@ -39,17 +39,14 @@ export const FINANCIAL_SUMMARY_MAX_DAYS = 366;
 export const FINANCIAL_SUMMARY_MAX_CURRENCIES = 100;
 export const FINANCIAL_SUMMARY_MAX_PRODUCT_ROWS = 300;
 
-/** ggr.summary's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolveGgrSummaryRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, GGR_SUMMARY_DEFAULT_DAYS, now);
 }
 
-/** payments.flow_daily's days: `dateTo` defaults to the day of `now`, `dateFrom` to 14 days ending on it. */
 export function resolvePaymentsFlowRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, PAYMENTS_FLOW_DEFAULT_DAYS, now);
 }
 
-/** financial.summary's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolveFinancialSummaryRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, FINANCIAL_SUMMARY_DEFAULT_DAYS, now);
 }

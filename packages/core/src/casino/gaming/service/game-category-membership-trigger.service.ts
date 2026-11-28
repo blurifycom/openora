@@ -31,7 +31,6 @@ type GameMembershipSnapshot = {
   tagIds: readonly string[];
 };
 
-/** What one game update could have moved for a rule, or null when no rule could care. */
 export function membershipChangeForGameUpdate(
   before: GameMembershipSnapshot,
   after: GameMembershipSnapshot,
@@ -43,8 +42,6 @@ export function membershipChangeForGameUpdate(
     ...before.tagIds.filter((id) => !afterTags.has(id)),
     ...after.tagIds.filter((id) => !beforeTags.has(id)),
   ];
-  // Playability also depends on the provider being active, which the snapshot does not
-  // carry, so a provider move counts as a possible flip.
   const playabilityChanged = before.isActive !== after.isActive || providerChanged;
   if (!providerChanged && movedTagIds.length === 0 && !playabilityChanged) {
     return null;
@@ -64,11 +61,6 @@ export function mergeChanges(changes: readonly GameCategoryRuleChange[]): GameCa
   };
 }
 
-/**
- * Decides when a rule-mode category is re-evaluated: a catalogue change reaching one of
- * its clauses, or the periodic sweep. Only queues `gaming.category.membership` jobs - the
- * worker hands them to GameCategoryMembershipService.
- */
 export class GameCategoryMembershipTriggerService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -176,12 +168,6 @@ export class GameCategoryMembershipTriggerService {
       });
   }
 
-  /**
-   * Queues an event-triggered evaluation for every rule-mode category `change` reaches.
-   * Changes within `MEMBERSHIP_EVENT_DEBOUNCE_MS` are merged and looked up once, so a
-   * burst costs one category scan and one job per category. Per process: the point is
-   * to absorb a burst, not to dedupe across replicas.
-   */
   enqueueAffected(change: GameCategoryRuleChange): void {
     this.pendingChanges.push(change);
     if (this.flushTimer) {
@@ -215,7 +201,6 @@ export class GameCategoryMembershipTriggerService {
     this.flushTimer.unref();
   }
 
-  /** The rule-mode categories `change` could have moved a game into or out of. */
   async affectedCategoryIds(change: GameCategoryRuleChange): Promise<string[]> {
     const rows = await this.drizzle.db
       .select({ id: gameCategory.id, rule: gameCategory.membershipRule })
@@ -226,7 +211,6 @@ export class GameCategoryMembershipTriggerService {
       .map((row) => row.id);
   }
 
-  /** What created or changed `gameIds` could have moved: their providers and tags. */
   async changeForGames(gameIds: readonly string[]): Promise<GameCategoryRuleChange> {
     if (gameIds.length === 0) {
       return { providerIds: [], tagIds: [], playabilityChanged: false };
@@ -248,7 +232,6 @@ export class GameCategoryMembershipTriggerService {
     };
   }
 
-  /** GAMING_COMMANDS.notifyGamesCreated: announces the ids that really are game rows. */
   async notifyGamesCreated(gameIds: readonly string[]): Promise<void> {
     const uniqueIds = [...new Set(gameIds)];
     for (let start = 0; start < uniqueIds.length; start += GAMES_CREATED_EVENT_BATCH) {
@@ -262,11 +245,6 @@ export class GameCategoryMembershipTriggerService {
     }
   }
 
-  /**
-   * Queues a scheduled evaluation for up to `MEMBERSHIP_SWEEP_BATCH_LIMIT` rule-mode
-   * categories, least recently attempted first. The only trigger `most_played` has, and
-   * the backstop for a lost event or a game inserted without `notifyGamesCreated`.
-   */
   async sweep(): Promise<void> {
     const rows = await this.drizzle.db
       .select({ id: gameCategory.id })
@@ -279,8 +257,6 @@ export class GameCategoryMembershipTriggerService {
     }
   }
 
-  // No idempotencyKey, for the reason enqueueGameCategoryRank gives: a key derived from
-  // the category id would dedupe every later trigger against the first completed job.
   private enqueue(categoryId: GameCategory['id'], trigger: GameCategoryMembershipJob['trigger']) {
     this.jobQueue
       .enqueue(GAME_CATEGORY_MEMBERSHIP_QUEUE, { categoryId, trigger }, MEMBERSHIP_JOB_RETRY)

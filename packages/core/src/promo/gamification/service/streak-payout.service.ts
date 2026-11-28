@@ -46,21 +46,10 @@ export type StreakPayoutDeps = {
   logger: Logger;
 };
 
-/** Who started the block: null when no person did (a rule), so the audit row names the system. */
 export type StreakForfeitActor = { id: Uuid; isAdmin: boolean } | null;
 
 const BATCH = 500;
 
-/**
- * Settles a fixed reward `StreakService.recordWager` unlocked, when its player claims it: a bonus
- * through `BONUS_GRANTS`, priced from the reward's USD amount into the currency the player plays
- * in, under the rollover and expiry window captured at unlock. The reward row is the whole source
- * of truth; the live streak config is never read, so an edit to it cannot change a reward already
- * held. A claim after `expiresAt` is refused, and `expireDue` settles the rows nobody claimed.
- *
- * A player under a responsible-gambling block gets nothing settled, the same rule
- * `RankPayoutService` applies - a bonus waiting at the end of a block is an incentive to return.
- */
 export class StreakPayoutService {
   private readonly drizzle: DrizzleService;
   private readonly grants: BonusGrantCommands | undefined;
@@ -82,10 +71,6 @@ export class StreakPayoutService {
     this.logger = deps.logger;
   }
 
-  /**
-   * Row lock with SKIP LOCKED plus the unsettled and unexpired filters make a double or parallel
-   * claim settle once; the loser sees the reward as not claimable.
-   */
   async claim(userId: Uuid, milestoneGrantId: Uuid): Promise<StreakClaimOutcome> {
     if (!this.grants || !this.eligibility) {
       throw new Error('streak claim needs BONUS_GRANTS and PLAY_ELIGIBILITY bound');
@@ -102,12 +87,6 @@ export class StreakPayoutService {
     });
   }
 
-  /**
-   * Settles every reward whose claim window has closed as `expired`, with one audit row each in
-   * the same transaction. The `settledAt is null` claim makes a repeated run write nothing twice.
-   * A row from before the window was captured has no expiry and can never be claimed, so it is
-   * swept too.
-   */
   async expireDue(now: Date): Promise<number> {
     let expired = 0;
     for (;;) {
@@ -168,15 +147,6 @@ export class StreakPayoutService {
     }
   }
 
-  /**
-   * Marks unclaimed rewards nobody has been told about yet as announced, handing each to
-   * `announce` once its own transaction has committed. A reward whose claim window has closed is
-   * skipped. `recordWager` inserts the reward inside
-   * the bet's own transaction, which has no after-commit hook, so the announcement is read back
-   * from committed rows instead. A row that fails is logged and left for the next tick without
-   * holding back the rest of the batch. A player under a responsible-gambling block is not invited
-   * to claim: the milestone is settled `restricted`, the same outcome a claim would get.
-   */
   async announceReached(announce: (reached: StreakMilestoneReached) => void): Promise<void> {
     if (!this.eligibility) {
       return;
@@ -207,11 +177,6 @@ export class StreakPayoutService {
     }
   }
 
-  /**
-   * Settles every reward a player has not claimed as `restricted` when a responsible-gambling
-   * block starts, the same rule that forfeits their active bonuses, with one audit row per reward
-   * in the same transaction. The `settledAt is null` claim makes a retried job write nothing twice.
-   */
   async forfeitUnclaimed({
     userId,
     reason,
@@ -373,8 +338,6 @@ export class StreakPayoutService {
       await settle('restricted', []);
       return { outcome: 'restricted', granted: [] };
     }
-    // A settled row is never reactivated except after a same-day reversal, so the reach time
-    // keeps a re-unlocked reward's credit apart from the reversed one's.
     const granted = await this.grantOne(tx, {
       userId,
       reward,
@@ -404,8 +367,6 @@ export class StreakPayoutService {
     if (!this.grants) {
       throw new Error('BONUS_GRANTS is not bound');
     }
-    // A bonus can only be wagered by bets in the currency it was granted in. No rate throws,
-    // rolling the claim back so the reward stays claimable.
     const currency = (await this.walletReader.getBalances(userId, tx)).activeCurrency;
     const { amount } = await priceForPayout(
       tx,

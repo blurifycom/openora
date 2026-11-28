@@ -1,4 +1,3 @@
-// node --test tools/__tests__/agent-retro-scan.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -46,7 +45,6 @@ test('counts in-window failures, hook blocks and real corrections only', () => {
       isCompactSummary: true,
     }),
   ];
-  // one assistant message split into two content blocks repeats its usage
   const usage = { input_tokens: 400_000, output_tokens: 100_000 };
   lines.push(
     { type: 'assistant', timestamp: now, message: { id: 'm1', usage, content: [] } },
@@ -56,7 +54,6 @@ test('counts in-window failures, hook blocks and real corrections only', () => {
   const write = (path, entries) =>
     writeFileSync(path, entries.map((l) => JSON.stringify(l)).join('\n'));
   write(join(dir, 's1.jsonl'), lines);
-  // a subagent of s1 failing the same way is the same incident, not a second session
   mkdirSync(join(dir, 's1', 'subagents'), { recursive: true });
   write(join(dir, 's1', 'subagents', 'agent-1.jsonl'), [
     toolUse('c', 'pnpm verify'),
@@ -77,7 +74,6 @@ test('counts in-window failures, hook blocks and real corrections only', () => {
   assert.doesNotMatch(out, /ancient failure/);
   assert.match(out, /no, use the other branch/);
   assert.doesNotMatch(out, /being continued/);
-  // the hook block is an error, but not a failure of `git push` itself
   assert.doesNotMatch(out, /\| git push \(/);
   assert.match(out, /\| 1 \| 1 \| PreToolUse unnamed: no review \|/);
   assert.match(out, /\| 2 \| 1 \| pnpm verify \|/);
@@ -105,14 +101,12 @@ test('defaults to the transcripts of this checkout and openora, keyed checkout-r
     message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: path } }] },
   });
   const projects = {
-    // the same file read from the main checkout and from a worktree is one row
     '-Users-x-my-casino': read('a', '/Users/x/my.casino/apps/api/src/index.ts'),
     '-Users-x-my-casino--claude-worktrees-fix': read(
       'b',
       '/Users/x/my.casino/.claude/worktrees/fix/apps/api/src/index.ts',
     ),
     '-Users-x-openora': read('c', '/Users/x/openora/README.md'),
-    // a name that merely contains this repo's name is another project
     '-Users-x-my-casino2': read('d', '/Users/x/my-casino2/other.ts'),
   };
   for (const [dir, entry] of Object.entries(projects)) {
@@ -150,7 +144,6 @@ test('masks credentials in command examples', () => {
     [
       ...commands.map((command, i) => toolUse(`t${i}`, command)),
       toolUse('e', 'gh auth status'),
-      // a digit-bearing token in an error: normalize must not split it before masking
       toolError('e', 'bad credentials for ghp_a1B2c3D4e5F69z8y7x'),
     ]
       .map((l) => JSON.stringify(l))
@@ -159,6 +152,5 @@ test('masks credentials in command examples', () => {
   const out = execFileSync('node', [SCAN, '--root', root, '--save', 'false'], { encoding: 'utf8' });
   assert.match(out, /tool calls: 11/);
   assert.doesNotMatch(out, /sekret|9z8y7x/);
-  // masking keeps the key that groups rows
   assert.match(out, /\| 3 \| 1 \| curl -H \|/);
 });

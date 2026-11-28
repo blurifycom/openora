@@ -3,11 +3,6 @@ import { TagsRuleParamsSchema, defineGameCategoryRule } from '@openora/core/cont
 import type { DrizzleService } from '@openora/core/server';
 import { game, gameTag, gameTagGame } from '../../schema/index.js';
 
-/**
- * Games carrying ANY listed tag, playable or not. Two 'tags' clauses in one rule require
- * a game to carry a tag from each. A tag deleted after the rule was saved simply stops
- * matching. Ordered by name.
- */
 export function createTagsRule(drizzle: DrizzleService) {
   return defineGameCategoryRule({
     key: 'tags',

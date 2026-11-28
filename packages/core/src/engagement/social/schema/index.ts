@@ -5,8 +5,8 @@ export const friendship = pgTable(
   'friendship',
   {
     id: uuid().primaryKey().defaultRandom(),
-    requesterId: uuid().notNull(), // bare id - cross-module (user from pam), no FK
-    addresseeId: uuid().notNull(), // bare id - cross-module (user from pam), no FK
+    requesterId: uuid().notNull(),
+    addresseeId: uuid().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()

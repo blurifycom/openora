@@ -53,7 +53,6 @@ const ON_RAMP_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 const ON_RAMP_STATUS_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 
 const OPTIONS_TTL_MS = 60 * 1000;
-// However fast the client polls, the vendor is asked about an order at most this often.
 const STATUS_TTL_MS = 10 * 1000;
 
 const OPEN_STATUSES: readonly OnRampStatus[] = ['pending', 'processing'];
@@ -97,12 +96,6 @@ type OnRampPurchase = {
   network: string;
 };
 
-/**
- * Buying crypto with fiat on a vendor's hosted checkout, delivered on-chain to the player's own
- * deposit address. Nothing here touches the ledger: the coins arrive like any other deposit and
- * `creditDepositByAddress` credits them, with its own holds and checks. This service gates who
- * may open a checkout, keeps the order row, and records what the vendor reports.
- */
 export class OnRampService {
   private readonly drizzle: DrizzleService;
   private readonly wallet: WalletService;
@@ -133,7 +126,6 @@ export class OnRampService {
     this.cache = deps.cache;
   }
 
-  /** The vendor's fiats, and only those of its assets the platform takes deposits in. */
   async options(userId: User['id'], meta: ClientMeta): Promise<OnRampOptions> {
     const country = await this.admit(userId, meta);
     const [options, assets] = await Promise.all([
@@ -145,7 +137,6 @@ export class OnRampService {
         .filter((asset) => asset.depositEnabled)
         .map((asset) => [assetKey(asset.currency, asset.network), asset]),
     );
-    // Answered in the catalog's own spelling of the pair, whatever case the vendor used.
     return {
       fiats: options.fiats,
       assets: options.assets.flatMap((offered) => {
@@ -155,24 +146,12 @@ export class OnRampService {
     };
   }
 
-  /** Estimates only, possibly none: the vendor's checkout page sets the price. */
   async quote(purchase: OnRampPurchase): Promise<OnRampQuote[]> {
     const country = await this.admit(purchase.userId, purchase.meta);
     await this.assertPurchasable(purchase, country);
     return this.fetchQuotes(purchase, country);
   }
 
-  /**
-   * Every gate runs before the vendor opens an order, and the player gates run before a replay,
-   * so a player restricted since the first attempt cannot fetch its checkout again. The deposit
-   * limit is checked and the order row inserted under the player's deposit lock, so concurrent
-   * checkouts and deposits are counted against each other. The delivery address is always one the platform
-   * issued to this player, and the order row exists before the vendor is called, so a webhook
-   * can always find it. The order fails only when the vendor does not open the checkout; once
-   * it has, a failure to record that leaves the order pending for the vendor's webhook. A
-   * replayed key returns the original checkout, asking the vendor for it again if it was never
-   * recorded.
-   */
   async checkout(
     purchase: OnRampPurchase & { idempotencyKey: string },
   ): Promise<OnRampCheckoutResponse> {
@@ -249,11 +228,6 @@ export class OnRampService {
     );
   }
 
-  /**
-   * Asks the vendor to open the order's checkout and records it. The vendor dedupes on the
-   * idempotency key, so a retry gets the checkout an earlier attempt opened; only the first
-   * attempt to record it writes and audits.
-   */
   private async openAndRecordCheckout(
     purchase: OnRampPurchase & { idempotencyKey: string },
     order: Pick<WalletOnRampOrder, 'id' | 'walletAddress' | 'walletTag'>,
@@ -317,11 +291,6 @@ export class OnRampService {
     return { purchaseId, checkoutUrl: checkout.checkoutUrl };
   }
 
-  /**
-   * The player's own order, refreshed from the vendor while it is still open. Another
-   * player's order answers exactly like an unknown one. A vendor failure answers the stored
-   * status rather than failing the read.
-   */
   async getOrder(userId: User['id'], purchaseId: WalletOnRampOrder['id']): Promise<OnRampOrder> {
     await assertRateLimit(
       this.limiter,
@@ -359,15 +328,6 @@ export class OnRampService {
     };
   }
 
-  /**
-   * Records a vendor status update on its order. An unknown order, an event naming the vendor id
-   * recorded on another order, or one whose customer or delivery address disagrees with the
-   * order, is logged and dropped - the vendor
-   * still gets a success, so a forged or misrouted event learns nothing. So is an event the
-   * adapter parsed into something malformed: refusing it would only have the vendor redeliver it
-   * forever. A redelivery writes nothing. Never credits: a `completed` order is paid by the
-   * on-chain deposit.
-   */
   async recordWebhook(parsed: OnRampWebhookEvent): Promise<void> {
     const valid = OnRampWebhookEventSchema.safeParse(parsed);
     if (!valid.success) {
@@ -409,13 +369,6 @@ export class OnRampService {
     });
   }
 
-  /**
-   * Applies a vendor report to the order under a row lock and audits it, in one transaction. The
-   * status only moves forward along `NEXT_STATUSES`; a report of the current status still records
-   * the delivery details the order is still missing, never replacing one, so a late redelivery
-   * cannot overwrite a newer one. Anything else is out of order and writes nothing. The audit row
-   * carries the vendor id that reported it. Returns the order's status afterwards.
-   */
   private async transition(
     purchaseId: WalletOnRampOrder['id'],
     next: Pick<
@@ -488,10 +441,6 @@ export class OnRampService {
     return result.status;
   }
 
-  /**
-   * Opens the vendor checkout and validates what comes back. A malformed answer, a non-https
-   * URL above all, is a vendor fault: the client would be sent to it.
-   */
   private async openCheckout(
     input: Parameters<OnRampAdapter['createCheckout']>[0],
   ): Promise<OnRampCheckout> {
@@ -502,7 +451,6 @@ export class OnRampService {
     return result.data;
   }
 
-  // Only the error's class reaches the audit log; the vendor's message stays in the logs.
   private async failCheckout(
     purchase: OnRampPurchase & { idempotencyKey: string },
     purchaseId: WalletOnRampOrder['id'],
@@ -534,10 +482,6 @@ export class OnRampService {
     });
   }
 
-  /**
-   * The vendor's status for an order, cached briefly per order so polling cannot spend the
-   * vendor's quota. An answer outside the status set is logged and treated as unknown.
-   */
   private async vendorStatus(
     purchaseId: WalletOnRampOrder['id'],
     externalId: NonNullable<WalletOnRampOrder['externalId']>,
@@ -575,11 +519,6 @@ export class OnRampService {
     return byExternalId;
   }
 
-  /**
-   * Whether `externalId` is the vendor id recorded on a different order. A vendor may name the
-   * order on its webhooks by an id of its own rather than the checkout id `createCheckout`
-   * returned, so an id no other order holds is not a mismatch.
-   */
   private async namesAnotherOrder(
     order: WalletOnRampOrder,
     externalId: OnRampWebhookEvent['externalId'],
@@ -595,11 +534,6 @@ export class OnRampService {
     return other !== undefined;
   }
 
-  /**
-   * The order an earlier attempt under the same key opened, never a second one. A pending order
-   * with no checkout recorded is handed back to be opened again; a failed one has nothing to hand
-   * back, and the client retries under a fresh key.
-   */
   private async replay(
     purchase: OnRampPurchase & { idempotencyKey: string },
   ): Promise<WalletOnRampOrder | null> {
@@ -626,7 +560,6 @@ export class OnRampService {
     return order;
   }
 
-  /** Throttle, RG restriction, deposit admission, then geo. Returns the country the vendor is told. */
   private async admit(userId: User['id'], meta: ClientMeta): Promise<string | null> {
     await assertRateLimit(
       this.limiter,
@@ -691,11 +624,6 @@ export class OnRampService {
     return currencyAssets;
   }
 
-  /**
-   * A delivery under the network's deposit minimum lands on chain but is never credited. Judged on
-   * the best estimate. With a minimum to meet and no estimate to judge it on - the vendor failed,
-   * answered garbage or had none - buying is unavailable rather than unchecked.
-   */
   private async assertAboveDepositMinimum(
     purchase: OnRampPurchase,
     assets: readonly { network: string; minDeposit: string }[],
@@ -721,7 +649,6 @@ export class OnRampService {
     }
   }
 
-  // A quote that would deliver nothing, or for another purchase than the one asked, is not a quote.
   private async fetchQuotes(
     { userId, fiatCurrency, fiatAmount, currency, network }: OnRampPurchase,
     country: string | null,

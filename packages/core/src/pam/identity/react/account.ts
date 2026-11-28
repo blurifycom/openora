@@ -65,7 +65,6 @@ export type UseConfirmPhoneVerificationResult = UseMutationResult<
   PhoneVerificationConfirmInput
 >;
 type UseTwoFactorStatusResult = UseQueryResult<TwoFactorStatus, Error>;
-// The route takes no body, so the mutation carries no variables of its own.
 type UseSendTwoFactorOtpResult = UseMutationResult<SendTwoFactorOtpResult, Error, unknown>;
 export type UseRegenerateBackupCodesResult = UseMutationResult<
   BackupCodesResult,
@@ -84,8 +83,6 @@ const invalidateSecurityControls = (utils: IdentityUtils, queryClient: QueryClie
   Promise.all([
     queryClient.invalidateQueries({ queryKey: utils.me.key() }),
     queryClient.invalidateQueries({ queryKey: utils.security.me.key() }),
-    // Enrolment state lives in its own query, so without this the Security page keeps
-    // rendering the pre-enrolment controls until something else refetches it.
     queryClient.invalidateQueries({ queryKey: utils.twoFactorStatus.key() }),
   ]);
 
@@ -107,9 +104,6 @@ export function useVerify2fa() {
   });
 }
 
-// The Security page reads this rather than `me`: the active method and the masked
-// destinations are 2FA state, not profile fields, and must refresh whenever enrolment
-// changes without dragging the whole user object along.
 export function useTwoFactorStatus(): UseTwoFactorStatusResult {
   const utils = useOrpcQueryUtils(identityContract);
   return useQuery(utils.twoFactorStatus.queryOptions());
@@ -129,8 +123,6 @@ export function useDisable2fa() {
   });
 }
 
-// Rotating the set spends nothing else, but it does change `backupCodesRemaining`, so
-// the status query has to refetch or the Security page keeps showing the old count.
 export function useRegenerateBackupCodes(): UseRegenerateBackupCodesResult {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();

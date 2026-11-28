@@ -25,7 +25,6 @@ export const TURNOVER_EXPOSURE_MAX_DAYS = 92;
 export const TURNOVER_EXPOSURE_MAX_CURRENCIES = 20;
 export const LARGEST_OPEN_BETS_MAX = 20;
 
-/** sportsbook.turnover_exposure's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolveTurnoverExposureRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, TURNOVER_EXPOSURE_DEFAULT_DAYS, now);
 }
@@ -114,7 +113,6 @@ export const BETS_FIND_SORT_FIELDS = ['placedAt', 'stake', 'potentialPayout'] as
 export const BetsFindSortBySchema = z.enum(BETS_FIND_SORT_FIELDS);
 export type BetsFindSortBy = z.infer<typeof BetsFindSortBySchema>;
 
-/** sportsbook.bets_find's days: `placedTo` defaults to the day of `now`, `placedFrom` to 30 days ending on it. */
 export function resolveBetsFindRange(
   { placedFrom, placedTo }: { placedFrom?: string; placedTo?: string },
   now = new Date(),
@@ -194,10 +192,8 @@ export const betsFindTool = defineMcpTool({
 const PROMOTION_REPORT_DEFAULT_DAYS = 30;
 export const PROMOTION_REPORT_MAX_DAYS = 92;
 export const PROMOTION_REPORT_MAX_CURRENCIES = 20;
-/** Promotion type and funder rows one currency lists. */
 export const PROMOTION_REPORT_MAX_ROWS = 50;
 
-/** sportsbook.promotion_report's days: `dateTo` defaults to the day of `now`, `dateFrom` to 30 days ending on it. */
 export function resolvePromotionReportRange(input: DayRangeInput, now = new Date()) {
   return resolveDayRange(input, PROMOTION_REPORT_DEFAULT_DAYS, now);
 }
@@ -217,7 +213,6 @@ const PromotionFiguresSchema = z.object({
   bets: z.number().int().nonnegative(),
   promotionPaid: MoneyAmountSchema,
   promotionReversed: MoneyAmountSchema,
-  /** What promotions cost net: paid less taken back by reopens; negative when reopens took more. */
   net: SignedMoneyAmountSchema,
 });
 
@@ -280,10 +275,8 @@ export const DebtsSummaryOutputSchema = z.object({
     .array(
       z.object({
         currency: CurrencyTickerSchema,
-        /** Players owing in this currency now. */
         openDebts: z.number().int().nonnegative(),
         outstanding: MoneyAmountSchema,
-        /** Over every debt in this currency, open or settled. */
         owed: MoneyAmountSchema,
         collected: MoneyAmountSchema,
         writtenOff: MoneyAmountSchema,
@@ -296,7 +289,6 @@ export const DebtsSummaryOutputSchema = z.object({
               owed: MoneyAmountSchema,
               collected: MoneyAmountSchema,
               openSince: TimestampSchema,
-              /** The player's withdrawals are held while any debt of theirs is outstanding. */
               withdrawalsHeld: z.boolean(),
             }),
           )

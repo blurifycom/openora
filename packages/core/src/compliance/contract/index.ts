@@ -85,10 +85,6 @@ export const PlayerKycViewSchema = z.object({
 export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
-// Player-facing projection of KycVerificationSchema: no riskSignals, checks, decisionReason,
-// provider, or referenceId - those are fraud-detection internals, admin-only via getPlayerKyc.
-// `exempt` is a narrow, player-safe derivation of `triggeredBy === 'exemption'` - it tells the
-// player their approval came from a jurisdiction rule rather than exposing the internal field.
 export const KycVerificationSummarySchema = z.object({
   tier: KycTierSchema,
   status: KycStatusSchema,
@@ -171,8 +167,6 @@ const isBareHttpsOrigin = (value: string) => {
   }
 };
 
-// An origin, not a page: the consumer appends the path the visitor asked for, and an
-// origin is the unit a host allowlist can compare without parsing surprises.
 export const MirrorUrlSchema = z
   .string()
   .max(253 + 'https://'.length)
@@ -181,8 +175,6 @@ export const MirrorUrlSchema = z
     'Mirror URL must be an https origin with no path, e.g. https://example.com',
   );
 
-// What a country actually gets, whatever the stored flags say: a blacklisted country with a
-// mirror in force is `redirected`, not `blocked`.
 export const CountryEffectiveAccessSchema = z.enum(['blocked', 'redirected', 'open']);
 export type CountryEffectiveAccess = z.infer<typeof CountryEffectiveAccessSchema>;
 
@@ -191,8 +183,6 @@ export const CountryRuleSchema = z.object({
   countryCode: CountryCodeSchema,
   blacklisted: z.boolean(),
   redirectIp: z.boolean(),
-  // A plain string on output: the shape is enforced where it is written, and a row written
-  // outside the API must not fail every read of the list.
   mirrorUrl: z.string().nullable(),
   effectiveAccess: CountryEffectiveAccessSchema,
   kycRequired: z.boolean(),
@@ -245,7 +235,6 @@ export const UpsertCountryRuleInputSchema = CountryRuleSchema.pick({
   kycRequired: true,
 })
   .extend({
-    // Omitted keeps the stored target, so a client that predates the field cannot clear it.
     mirrorUrl: MirrorUrlSchema.nullable().optional(),
     expectedUpdatedAt: TimestampSchema.nullable(),
     confirm: z.boolean().optional(),
@@ -253,7 +242,6 @@ export const UpsertCountryRuleInputSchema = CountryRuleSchema.pick({
   .strict();
 export type UpsertCountryRuleInput = z.infer<typeof UpsertCountryRuleInputSchema>;
 
-// In the fx pivot currency. A null withdrawal threshold means no single-withdrawal trigger.
 export const GlobalKycConfigSchema = z.object({
   enabled: z.boolean(),
   withdrawalThreshold: MoneyAmountSchema.nullable(),
@@ -266,7 +254,6 @@ export type GlobalKycConfig = z.infer<typeof GlobalKycConfigSchema>;
 export const SetGlobalKycConfigInputSchema = z
   .object({
     enabled: z.boolean(),
-    // Omitted = unchanged.
     withdrawalThreshold: PositiveMoneyAmountSchema.nullable().optional(),
     cumulativeDepositThreshold: PositiveMoneyAmountSchema.optional(),
     confirm: z.literal(true),
@@ -275,7 +262,6 @@ export const SetGlobalKycConfigInputSchema = z
   .strict();
 export type SetGlobalKycConfigInput = z.infer<typeof SetGlobalKycConfigInputSchema>;
 
-// ISO 3166-1 alpha-2 assigns 249 codes; the cap lets one request cover every country.
 const GeoRuleCountryCodesSchema = z.array(CountryCodeSchema).min(1).max(250);
 
 export const UpsertGameGeoRulesInputSchema = GameGeoRuleSchema.pick({
@@ -316,8 +302,6 @@ const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
   countryCode: CountryCodeSchema.nullable(),
   reason: z.string().nullable(),
-  // Set on an allowed decision for a country redirected to a mirror, null on every denial:
-  // a consumer serving the primary domain sends the visitor there instead of rendering.
   redirectUrl: z.string().nullable(),
 });
 

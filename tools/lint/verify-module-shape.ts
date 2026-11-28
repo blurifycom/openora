@@ -1,30 +1,9 @@
 #!/usr/bin/env node
-/**
- * Structural-shape guard. After ADR-0025 the domains fold into @openora/core as
- * subpaths, so this asserts every folded domain under packages/core/src/<name>
- * still matches the canonical shape - an agent can't quietly delete or relocate a
- * required piece mid-task ("constraint decay"). Runs in `pnpm verify`.
- *
- * A "domain" is any dir under packages/core/src/ other than the engine zones
- * (contracts, server, react, scripts) and the cross-cutting shared zones (common,
- * testing - same exclusion as the oxlint boundaries/module-shape plugins). Single-slice
- * ones keep index.ts + plugin.ts
- * at their root (wallet, iam, audit, ...); multi-slice ones (casino: gaming/lobby;
- * engagement; pam) keep index.ts + per-slice plugin/contract/schema.
- *
- * Required per domain (checked against the @openora/core package.json exports):
- *   index.ts              - the domain slice root (its public API source)
- *   a contract subpath    - @openora/core exports "./<domain>/contract(s)..." (cross-domain
- *                           comms go through the published contract, never a sibling import)
- *   a runtime subpath     - @openora/core exports "./<domain>/plugin" | "./<domain>/server" |
- *                           "./<domain>/plugins/*" (the plugin host loads the domain through one)
- */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
-// Domains fold into @openora/core as subpaths. See ADR-0025.
 const coreSrc = join(repoRoot, 'packages', 'core', 'src');
 const engineDirs = new Set(['contracts', 'server', 'react', 'scripts', 'common', 'testing']);
 

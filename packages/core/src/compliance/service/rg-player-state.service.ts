@@ -1,7 +1,6 @@
 import type { Player, RgStanding } from '@openora/core/contracts';
 import type { RgPlayerState } from '../contract/index.js';
 
-/** The RG standing reader's facts as the `rg.player_state` tool serves them: dates as ISO times. */
 export function toRgPlayerState(playerId: Player['id'], standing: RgStanding): RgPlayerState {
   return {
     playerId,

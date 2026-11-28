@@ -243,7 +243,6 @@ export class ChatContextRoomService implements ChatContextRooms {
     return { ...result, afterCommit };
   }
 
-  // Same lock as player joins and leaves.
   private async withRoom<T>(
     t: DrizzleTx,
     ref: string,
@@ -292,9 +291,7 @@ export class ChatContextRoomService implements ChatContextRooms {
     return addedUserIds;
   }
 
-  // After commit: accounts are read outside the caller's transaction, best effort.
   private async announceJoined(roomId: Uuid, userIds: Uuid[]) {
-    // Null when the read failed: no join is signalled then, since a staff joiner cannot be told.
     const accounts = await this.accounts
       .getAccounts(userIds)
       .catch((err: unknown): Map<string, Account> | null => {
@@ -311,7 +308,6 @@ export class ChatContextRoomService implements ChatContextRooms {
         ip: null,
         userAgent: null,
       });
-      // The member list hides staff from ordinary viewers, so their joins are not signalled.
       if (accounts && !isStaffRole(account?.role)) {
         const payload: ChatMemberJoinedSignal = { roomId, userId };
         await this.signal(roomId, CHAT_MEMBER_JOINED_SIGNAL, payload);

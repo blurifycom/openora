@@ -16,7 +16,6 @@ const CORE_PLUGIN_MODULES = [
   { id: 'chat', path: '@openora/core/engagement/plugins/chat' },
   { id: 'chat-commands', path: '@openora/core/engagement/plugins/chat-commands' },
   { id: 'social', path: '@openora/core/engagement/plugins/social' },
-  // Binds the chat ports to the chat service when CHAT_SERVICE_URL is set; nothing otherwise.
   { id: 'chat-remote', path: '@openora/core/engagement/plugins/chat-remote' },
   { id: 'money-remote', path: '@openora/core/money-remote/plugin' },
   { id: 'profile', path: '@openora/core/pam/plugins/profile' },
@@ -29,24 +28,6 @@ const CORE_PLUGIN_MODULES = [
   { id: 'cms', path: '@openora/core/cms/plugins/cms' },
 ] as const;
 
-/**
- * The full set of built-in platform plugins, as a ready-to-spread
- * `PluginEntry[]` for a consumer's `extensions.config.ts`.
- *
- * Each path is resolved through `@openora/core`'s own package exports, so it
- * points at the installed package's compiled plugin - the npm dependency in a
- * deployed consumer, or the linked workspace checkout in local development.
- * This replaces hand-maintained filesystem paths that assumed an adjacent core
- * checkout.
- *
- * Compose your registry as `[...corePlugins(), ...overlays]`. To opt a module
- * out, filter by id, together with the modules that depend on it, e.g. chat:
- * `corePlugins().filter((p) => !['chat', 'chat-commands', 'social'].includes(p.id))`.
- * `player-management` requires `CHAT_BLOCK_READER`, so without chat an overlay must bind it:
- * `ctx.provide(CHAT_BLOCK_READER, ...)` with a reader whose `getExcludedUserIds`,
- * `getBlockedUserIds` and `getBlockerIds` resolve to `[]`, or keep `chat-remote` with
- * `CHAT_SERVICE_URL` to read them from a chat service.
- */
 export function corePlugins(): PluginEntry[] {
   return CORE_PLUGIN_MODULES.map((module) => ({
     id: module.id,

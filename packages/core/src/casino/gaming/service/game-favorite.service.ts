@@ -45,7 +45,6 @@ export class GameFavoriteService {
     );
   }
 
-  // Unlike listFavorites, includes hidden games - a hidden favorite must still heart itself.
   async listFavoriteIds(userId: User['id']): Promise<Game['id'][]> {
     const rows = await this.drizzle.db
       .select({ gameId: gameFavorite.gameId })
@@ -75,7 +74,6 @@ export class GameFavoriteService {
         if (Number(total) >= GAME_FAVORITE_LIMIT) {
           throw new GameFavoriteLimitReachedError(GAME_FAVORITE_LIMIT);
         }
-        // ne() above excludes this gameId, so re-favoriting never counts as a cap hit.
         await tx.insert(gameFavorite).values({ userId, gameId }).onConflictDoNothing();
       }),
     );

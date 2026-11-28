@@ -1,5 +1,3 @@
-// `trace-report.ts --gantt` prints the PR "Trace" section: one mermaid gantt per status of a
-// procedure, locks `crit`, writes `active`, statements new since the baseline prefixed `+`.
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,7 +57,6 @@ test('prints one gantt per status with the trace id, the transaction as a parent
   assert.match(out, /^ {2}dateFormat x$/m);
   assert.match(out, /^ {2}pg transaction 3\.3 ms :3, 7$/m);
   assert.match(out, /^ {2}· pg INSERT ledger_entry 2\.0 ms :active, 3, 6$/m);
-  // The title carries the procedure; no root bar repeats it. A milestone leaves room on the right.
   assert.doesNotMatch(out, /^ {2}wallet\.deposit/m);
   assert.match(out, /^ {2}end :milestone, 14, 0ms$/m);
   assert.doesNotMatch(out, /\+ pg/);
@@ -100,7 +97,6 @@ test('marks a statement the baseline never ran, and names a missing procedure', 
 });
 
 test('a statement the baseline ran under another status is not new; a bare name matches no other procedure', () => {
-  // The baseline ran the insert only in a 403 request, the current run in the 200.
   const baseline = dir([
     ...spans.filter((row) => row.traceId === refused),
     span(refused, '10', '8', 'pg.query', 202, 1, {

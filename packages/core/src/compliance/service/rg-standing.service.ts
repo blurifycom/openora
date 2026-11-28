@@ -30,7 +30,6 @@ type ExclusionRow = Pick<
   'kind' | 'status' | 'isPermanent' | 'startsAt' | 'expiresAt' | 'liftedAt'
 >;
 
-/** Null when the user has no player profile. */
 export async function readPlayerCurrency(
   tx: DrizzleTx,
   userId: User['id'],
@@ -43,11 +42,6 @@ export async function readPlayerCurrency(
   return row?.currency ?? null;
 }
 
-/**
- * A cooling-off whose end has passed is over even while the sweep has not yet marked it
- * expired, so one lifted after that ended when it ran out; a self-exclusion stays in force,
- * past its term too, until it is lifted.
- */
 export async function readExclusionFacts(
   tx: DrizzleTx,
   userId: User['id'],
@@ -138,9 +132,6 @@ export async function readActiveFlags(
   }));
 }
 
-/**
- * Reads a limit stored without a currency in the player's own currency, for the reading only.
- */
 export async function readLimits(
   tx: DrizzleTx,
   userId: User['id'],

@@ -10,11 +10,6 @@ import {
   GrantNotForfeitableError,
 } from './grant-lifecycle.service.js';
 
-/**
- * Adapts `GrantLifecycleService.forfeit` (throws on refusal) to the BONUS_LIFECYCLE command port
- * shape (returns an outcome). The service itself emits `promo.bonus.forfeited`, so a job-driven
- * forfeit gets the same realtime balance signal and player notification as any other.
- */
 export function createBonusLifecyclePort(service: GrantLifecycleService): BonusLifecycleCommands {
   return {
     async forfeit(grantId, reason, note): Promise<BonusForfeitOutcome> {

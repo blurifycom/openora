@@ -36,10 +36,6 @@ export function mcpTokenStatus(token: McpTokenLifecycle, now: Date): McpTokenSta
 type AuthenticatedMcpToken = McpTokenLifecycle &
   Pick<McpToken, 'id' | 'adminUserId' | 'createdAt'> & { credentialsChangedAt: Date | null };
 
-/**
- * A token issued at or before its admin's latest credential change is refused as
- * `credentials_changed`, whether or not the revocation that change asked for was recorded.
- */
 export function mcpTokenAuthentication(
   token: AuthenticatedMcpToken | undefined,
   now: Date,

@@ -12,8 +12,6 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
     email,
     firstName: row.firstName,
     lastName: row.lastName,
-    // Already a 'YYYY-MM-DD' string - the column is a `date` in string mode, unlike the
-    // timestamps below.
     dateOfBirth: row.dateOfBirth,
     phone: row.phone,
     country: row.country,
@@ -35,7 +33,6 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
   };
 }
 
-/** The identity columns `toPlayer` needs, or null when the user row is gone. */
 export async function fetchIdentityByUserId(db: DrizzleDb | DrizzleTx, userId: User['id']) {
   const [record] = await db
     .select({ email: user.email, username: user.username })

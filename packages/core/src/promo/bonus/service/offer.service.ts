@@ -69,7 +69,6 @@ const isDepositTriggered = sql`${promoOffer.rules} ->> 'periodDays' is null`;
 
 type OfferContext = { isFirstDeposit?: boolean };
 
-/** A bonus this deposit created, for the caller that owns the commit to announce afterwards. */
 export type GrantedBonus = {
   userId: Uuid;
   grantId: Uuid;
@@ -141,8 +140,6 @@ export class OfferService {
     }
     return this.drizzle.db.transaction(async (tx) => {
       const before = await this.requireOffer(tx, id);
-      // Re-denominating an offer players have already banked deposits against would pay a grant
-      // in one currency backed by deposits made in another.
       if (patch.currency !== undefined && patch.currency !== before.currency) {
         const [claimed] = await tx
           .select({ id: promoOptIn.id })
@@ -172,33 +169,19 @@ export class OfferService {
     });
   }
 
-  /**
-   * Before any deposit, "this is a first depositor" means they have not deposited yet. The fact
-   * has to be supplied or a first-deposit-only offer fails its own rule and becomes invisible to
-   * the very players it is for.
-   */
   private async offerFacts(userId: Uuid, context: OfferContext): Promise<OfferContext> {
     if (context.isFirstDeposit !== undefined) {
       return context;
     }
     const lifetime = await this.wallet.getLifetimeDeposit(userId);
-    // null means at least one currency couldn't be priced, which only happens once a deposit
-    // exists - so unpriced reads the same as "not the first deposit".
     return { ...context, isFirstDeposit: lifetime !== null && moneyCompare(lifetime, '0') === 0 };
   }
 
-  // Fallback for a WalletReader implementation without isFirstDeposit; null (an unpriced
-  // currency) reads as "not the first deposit", same direction as offerFacts above.
   private async isFirstDepositByLifetimeTotal(userId: Uuid, depositAmount: string, tx?: unknown) {
     const lifetime = await this.wallet.getLifetimeDeposit(userId, tx);
     return lifetime !== null && moneyCompare(lifetime, depositAmount) === 0;
   }
 
-  /**
-   * A first-deposit-only offer is for the first deposit that could qualify for it, so an earlier
-   * deposit below its minimum or in another currency does not use it up. Undefined when the
-   * offer has no such rule, the caller already supplied the fact, or the wallet cannot answer.
-   */
   private async firstQualifying(
     userId: Uuid,
     offer: PromoOfferRow,
@@ -220,7 +203,6 @@ export class OfferService {
     return !earlier;
   }
 
-  /** The offers open to this player right now, with what their deposits have put toward each. */
   async listForPlayer(userId: Uuid, context: OfferContext = {}): Promise<PlayerOffer[]> {
     const rows = await this.drizzle.db
       .select({ offer: promoOffer, optIn: promoOptIn })
@@ -245,11 +227,6 @@ export class OfferService {
     return open;
   }
 
-  /**
-   * The live catalogue for a signed-out visitor, under the same predicate a player's list uses.
-   * A visitor who registers has deposited nothing yet, so a first-deposit-only offer is open to
-   * them - the same fact `offerFacts` supplies for a player with no deposits.
-   */
   async listPublic(): Promise<PublicOffer[]> {
     const rows = await this.drizzle.db
       .select()
@@ -265,8 +242,6 @@ export class OfferService {
   }
 
   async optIn(userId: Uuid, offerId: Uuid, context: OfferContext = {}): Promise<PlayerOffer> {
-    // Checked before the offer is even read: a self-excluded or banned player is not open to any
-    // offer, and there is no lock to take on their behalf.
     if (await this.playEligibility.isRestricted(userId)) {
       throw new OfferNotEligibleError();
     }
@@ -294,8 +269,6 @@ export class OfferService {
       ) {
         throw new BonusSlotTakenError();
       }
-      // The unique index is the guard: two parallel opt-ins settle on one row rather than both
-      // reading "not opted in" and both inserting.
       const [claimed] = await tx
         .insert(promoOptIn)
         .values({ userId, offerId })
@@ -319,31 +292,16 @@ export class OfferService {
     });
   }
 
-  /**
-   * A confirmed deposit, checked against every offer the player has taken. Each deposit must meet
-   * the minimum on its own; one short of it counts toward nothing.
-   *
-   * Runs on the caller's transaction: the grant and the deposit that earned it commit together.
-   */
   async applyDeposit(
     tx: DrizzleTx,
     deposit: { userId: Uuid; amount: string; currency: string; transactionId: Uuid },
     context: OfferContext = {},
   ): Promise<GrantedBonus[]> {
-    // Comparing the running lifetime total to this deposit's amount would answer for whichever
-    // deposit happened to be summed last, not for this one - `isFirstDeposit` instead compares
-    // this transaction's own `created_at` against every other completed deposit.
     const isFirstDeposit = this.wallet.isFirstDeposit
       ? await this.wallet.isFirstDeposit(deposit.userId, deposit.transactionId, tx)
       : await this.isFirstDepositByLifetimeTotal(deposit.userId, deposit.amount, tx);
-    // Re-evaluated here rather than trusted from opt-in time: the deposit can land after a
-    // self-exclusion or ban that landed between the opt-in and this deposit settling, and the
-    // forfeit sweep that reacted to that exclusion has no way to know a grant would appear later.
     const isRestricted = await this.playEligibility.isRestricted(deposit.userId, tx);
     const at = new Date();
-    // Reported rather than emitted here: the deposit and the grant commit together on the
-    // caller's transaction, and a notification promising a bonus that then rolled back is worse
-    // than a late one.
     const granted: GrantedBonus[] = [];
     let realBalance: string | null = null;
     const currentRealBalance = async () => {
@@ -358,7 +316,6 @@ export class OfferService {
       if (offer.currency !== deposit.currency) {
         continue;
       }
-      // At-least-once delivery: the unique index stops a redelivered deposit granting twice.
       const [counted] = await tx
         .insert(promoOptInDeposit)
         .values({ optInId: optIn.id, transactionId: deposit.transactionId, amount: deposit.amount })
@@ -395,7 +352,6 @@ export class OfferService {
         continue;
       }
 
-      // With a locked existing balance, every real unit the player holds is tied to the grant.
       const unlinked =
         funds.existingBalance === 'locked'
           ? positiveOrZero(moneySubtract(await currentRealBalance(), buckets.linked))
@@ -411,8 +367,6 @@ export class OfferService {
         buckets: { linked: buckets.linked, unlinked },
         wageringRequired,
         source: 'deposit',
-        // Per offer, not per deposit: one deposit can qualify several claims, and a shared
-        // reference would make the second one collide with the first.
         sourceRef: `${deposit.transactionId}:${offer.id}`,
         actor: { type: 'system' },
         offerId: offer.id,
@@ -420,8 +374,6 @@ export class OfferService {
         onSlotTaken: 'refuse',
       });
       if (!created.ok && created.reason === 'slot_taken') {
-        // Another bonus took the slot after the opt-in. No bonus for this deposit, and the claim
-        // stays open for the next one.
         continue;
       }
       if (!created.ok) {
@@ -454,10 +406,6 @@ export class OfferService {
     return granted;
   }
 
-  /**
-   * A deposit made while a grant runs is real money tied to it (bucket A), whatever offer or
-   * payment method it came through. Goes to the grant a bet would be attributed to.
-   */
   private async addToUnlinked(
     tx: DrizzleTx,
     deposit: { userId: Uuid; amount: string; currency: string; transactionId: Uuid },
@@ -485,7 +433,6 @@ export class OfferService {
       .where(eq(promoGrant.id, grant.id));
   }
 
-  /** False when this deposit was already counted into a grant's buckets. */
   private async countDeposit(
     tx: DrizzleTx,
     deposit: { amount: string; transactionId: Uuid },
@@ -499,19 +446,10 @@ export class OfferService {
     return inserted.length > 0;
   }
 
-  /**
-   * The claims this deposit could satisfy: the ones the player took, plus the offers that need no
-   * taking. An offer marked `requiresOptIn: false` applies to any qualifying deposit, so the claim
-   * is opened here rather than requiring the player to ask for something already theirs. A
-   * period-close offer is never one of them: its job pays it off play over a window, not a deposit.
-   */
   private async claimsFor(
     tx: DrizzleTx,
     deposit: { userId: Uuid; currency: string },
   ): Promise<{ optIn: PromoOptInRow; offer: PromoOfferRow }[]> {
-    // Scoped to this deposit's currency: an automatic offer in another currency could never be
-    // satisfied by this deposit, and opening a claim on it anyway would leave a row that later
-    // blocks re-denominating that offer for a player who could never have earned a bonus from it.
     const automatic = await tx
       .select({ id: promoOffer.id })
       .from(promoOffer)
@@ -530,8 +468,6 @@ export class OfferService {
         .onConflictDoNothing();
     }
 
-    // `of` the opt-in only: locking the joined offer rows as well would put two deposits for
-    // different players in a deadlock over the offers they happen to share.
     return tx
       .select({ optIn: promoOptIn, offer: promoOffer })
       .from(promoOptIn)
@@ -546,10 +482,6 @@ export class OfferService {
       .for('update', { of: promoOptIn });
   }
 
-  // Locked: `update()` reads this to decide whether a currency change is safe, and a concurrent
-  // `optIn()` racing between that read and the write would let a claim land under the currency
-  // being replaced, then get skipped by every later deposit because it no longer matches the
-  // offer it claims against.
   private async requireOffer(tx: DrizzleTx, id: Uuid): Promise<PromoOfferRow> {
     const [row] = await tx.select().from(promoOffer).where(eq(promoOffer.id, id)).for('update');
     if (!row) {
@@ -597,7 +529,6 @@ function toPublicOffer(row: PromoOfferRow): PublicOffer {
   };
 }
 
-/** The wire carries timestamps as strings; the column wants dates, and null is a real value. */
 export function toPatch({ validFrom, validUntil, ...rest }: Partial<CreatePromoOfferInput>) {
   return {
     ...rest,

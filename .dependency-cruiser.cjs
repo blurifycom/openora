@@ -1,25 +1,3 @@
-/**
- * Whole-graph architectural boundary gate (deterministic - no agent in the loop).
- *
- * This complements, it does not replace, the oxlint `oss-boundaries/*` plugin.
- * That plugin matches IMPORT-SPECIFIER STRINGS per file with zero module
- * resolution (by design - see tools/lint/oxlint-boundaries-plugin.mjs). These rules
- * run against the RESOLVED dependency graph, so they also catch what the string
- * matcher cannot: transitive edges, re-export/barrel laundering, dynamic
- * `import()`, and relative paths that dodge the `@openora/` specifier prefix.
- *
- * The layering mirrors AGENTS.md > Dependency rules. Keep the two enforcers in
- * sync: a rule added here should have a string-level twin in the oxlint plugin
- * (fast per-edit feedback) and vice versa.
- *
- * @type {import('dependency-cruiser').IConfiguration}
- */
-
-// Package self-reference subpaths (@openora/core/<domain>/...) resolve through the
-// exports map to dist/, which is excluded - without a paths mapping those edges are
-// INVISIBLE to the graph and every rule below silently skips them. Reuse the canonical
-// paths from packages/core/tsconfig.json (rebased onto the repo root, extends dropped -
-// the ts parser can't follow it from here) via a flat tsconfig generated at load time.
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
@@ -35,16 +13,12 @@ const generatedTsConfig = join(generatedTsConfigDir, 'dependency-cruiser-tsconfi
 mkdirSync(generatedTsConfigDir, { recursive: true });
 writeFileSync(
   generatedTsConfig,
-  // files/baseUrl are tsconfig-relative: point back at the repo root from node_modules/.cache
   JSON.stringify({
     files: ['../../extensions.config.ts'],
     compilerOptions: { baseUrl: '../..', paths: rebased },
   }),
 );
 
-// The money service and the platform service each take their tables with them (ADR-0063), so
-// neither side reads the other's schema; they meet through ports.
-// Shared modules (audit, mail, fx) and chat (no-chat-schema-outside-chat) sit in neither list.
 const MONEY_MODULES = '^packages/core/src/(?:wallet|promo|casino/gaming|sportsbook)/';
 const MONEY_SCHEMA =
   '^packages/core/src/(?:wallet|promo/bonus|promo/gamification|casino/gaming|sportsbook/betting)/schema/';
@@ -52,8 +26,6 @@ const PLATFORM_MODULES =
   '^packages/core/src/(?:pam|compliance|analytics|admin-console|engagement|iam|cms|casino/lobby)/';
 const PLATFORM_SCHEMA =
   '^packages/core/src/(?:pam/identity|pam/profile|pam/tag|pam/player-note|compliance|engagement/notifications|engagement/support-chat|iam|cms|casino/lobby)/schema/';
-// Platform readers of the casino game catalog, which still lives in the gaming schema. They
-// leave this list when the catalog splits from the round ledger into a platform module.
 const CASINO_CATALOG_READERS = [
   '^packages/core/src/casino/lobby/service/lobby[.]service[.]ts$',
   '^packages/core/src/compliance/service/compliance[.]service[.]ts$',
@@ -148,15 +120,10 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    // Scan first-party source only; skip compiled output, (test|spec) files and test
-    // support under __tests__/ - tests legitimately wire several domains together (the
-    // oxlint twin disables the cross-domain rule for *.test.ts / *.spec.ts for the same reason).
     exclude: { path: '(/dist/|/node_modules/|/__tests__/|[.](test|spec)[.]ts$)' },
     includeOnly: '^(apps|packages)/',
     tsPreCompilationDeps: true,
     tsConfig: { fileName: generatedTsConfig },
-    // ~8s cold on 3.3k modules; the cache cuts unchanged re-runs (pre-commit) to <1s.
-    // Invalidates on config, option, or file-set change ('metadata' strategy uses git).
     cache: true,
   },
 };

@@ -33,8 +33,6 @@ type GrantRequirement = { resource: string; action: string };
 
 const GRANT_RESOLVE_CONCURRENCY = 10;
 
-// Postgres matches a uuid in any letter case but prints it lowercase, and grants are keyed by
-// the printed form, so an id is looked up the way the database answers it.
 const canonicalUserId = (userId: string) => userId.toLowerCase();
 
 const toHeaders = (raw: OssContext['request']['headers']) => {
@@ -56,37 +54,14 @@ const heldRequirements = <T extends GrantRequirement>(
   requirements: readonly T[],
 ) => requirements.filter(({ resource, action }) => holdsGrant({ role, grants }, resource, action));
 
-/**
- * The single admin-enforcement point - every admin route calls `assert()` as its
- * first line, never re-implementing the role check. Overload without
- * `resource`/`action` only requires a valid admin session; the 3-arg overload
- * additionally checks a specific permission. When the iam module's permission
- * resolver is bound, DB-assigned grants are authoritative: an admin with no
- * assigned role (never assigned, or every role revoked) holds no permissions and
- * is not a super admin. Only when no resolver is bound does the static role table
- * decide. Every denial emits `identity.user.unauthorized_access` for audit, before
- * throwing.
- */
 export class AdminGuard {
-  // Uses the shared SessionResolver (one better-auth init for the whole app) rather than a second createAuth over the same DB.
   constructor(
     private readonly drizzle: DrizzleService,
-    // Undefined in a service with no session tables: the request middleware has already
-    // resolved the session through the identity service, so the guard reads `context.auth`.
     private readonly sessions: Pick<SessionResolver, 'resolveSession'> | undefined,
-    // When bound (iam module loaded), grants come from DB only; otherwise static roles decide.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,
-    // When bound (identity module loaded), resolves the PAM player.id for a
-    // player-role denial's audit attribution. This engine-zone file must not import
-    // the player schema directly (ADR-0019/0025), so it goes through this port instead.
     private readonly identityReader?: Pick<IdentityReader, 'getPlayerIdByUserIdSafe'>,
-    // When bound (identity module loaded), enforces mandatory 2FA enrolment and the
-    // session's device fingerprint. Same layering reason as identityReader.
     private readonly securityPolicy?: AdminSecurityPolicy,
-    // When bound (identity module loaded, or the identity service read remotely), roles and the
-    // active flag come from it, always `fresh` so a demotion bites on the next call; the raw
-    // read below is the fallback for an identity-less boot.
     private readonly accounts?: AccountReader,
   ) {}
 
@@ -117,8 +92,6 @@ export class AdminGuard {
     const userId = resolvedSession?.userId;
     if (!userId) {
       throwIfSessionUnavailable(context);
-      // The idle policy ended this session on the way in, so say so: the back office shows
-      // the reason on its sign-in page instead of a bare "not signed in".
       const idleEnded = (context as { sessionEndedReason?: string }).sessionEndedReason;
       throw new ORPCError('UNAUTHORIZED', {
         message: idleEnded ? 'Signed out after inactivity' : 'Authentication required',
@@ -142,11 +115,6 @@ export class AdminGuard {
     return caller;
   }
 
-  /**
-   * `assert` for a caller that is not an HTTP request (an agent run, an MCP token): the same
-   * user, role, grant, active-account and 2FA-enrolment checks and the same denial event, without
-   * a session - so no session-integrity check, and `ip`/`userAgent` are null.
-   */
   async assertUser<R extends ResourceName>(
     userId: string,
     resource: R,
@@ -159,12 +127,6 @@ export class AdminGuard {
     });
   }
 
-  /**
-   * The requirements `userId` holds, decided as `assertUser` decides but with no denial event
-   * and no 2FA check. On its own it only narrows what a caller is shown. A route may also call it
-   * after `assert` has passed, to accept any one of several alternative permissions; when none
-   * is held, the route calls `assert` again so the denial is recorded.
-   */
   async filterGranted<T extends GrantRequirement>(
     userId: string,
     requirements: readonly T[],
@@ -177,12 +139,6 @@ export class AdminGuard {
     return granted;
   }
 
-  /**
-   * `filterGranted` for many users: their accounts are read in one query, then each active
-   * admin's grants through the permission resolver (and its cache). A user missing from the
-   * map holds none of `requirements`. The map is keyed by the lowercase id. A non-uuid id fails
-   * the query, as it does for `assert`.
-   */
   async filterGrantedUsers<T extends GrantRequirement>(
     userIds: readonly string[],
     requirements: readonly T[],
@@ -192,8 +148,6 @@ export class AdminGuard {
     }
     const active = await this.activeRoles(userIds);
     const admins = active.filter(({ role }) => isRoleName(role));
-    // ponytail: one grants read per admin on a cold cache, since the resolver port resolves a
-    // single user; a batched `getGrantsMany` on AdminPermissionResolver lifts that ceiling.
     const entries = await mapConcurrent(
       admins,
       GRANT_RESOLVE_CONCURRENCY,
@@ -203,10 +157,6 @@ export class AdminGuard {
     return new Map(entries.filter(([, held]) => held.length > 0));
   }
 
-  /**
-   * `subject` names the route for the audit trail only (`admin.<resource>.<action>`): the
-   * permission checked is always super-admin, which would label every such row `admin.admin`.
-   */
   async assertSuperAdmin(
     context: unknown,
     subject: { resource: string; action: string } = { resource: 'admin', action: 'super-admin' },
@@ -255,8 +205,6 @@ export class AdminGuard {
     const deniedAction = permission?.action ?? 'access';
 
     const { account, granted } = await this.resolveAccess(userId, permission ? [permission] : []);
-    // A deactivated account is refused on every path, read fresh on every call: deactivation also
-    // ends its sessions, but sign-in does not check the flag, and a token it issued has no session.
     if (!account || !account.isActive || !account.isAdmin) {
       this.emitUnauthorized(userId, account?.role, deniedResource, deniedAction, ip, userAgent);
       throw new ORPCError('FORBIDDEN', {
@@ -289,11 +237,6 @@ export class AdminGuard {
     return { userId, role: account.role, ip, userAgent };
   }
 
-  /**
-   * The account behind `userId` and which of `requirements` it holds under `holdsGrant`. Grants
-   * are read only for an account whose role the static table knows, and only when there is
-   * something to check.
-   */
   private async resolveAccess<T extends GrantRequirement>(
     userId: string,
     requirements: readonly T[],
@@ -330,7 +273,6 @@ export class AdminGuard {
     return row && { role: row.role, isActive: row.isActive, isAdmin: isRoleName(row.role) };
   }
 
-  // null only when no resolver is bound - an unassigned admin under a bound resolver gets [].
   private resolveGrants(userId: string): Promise<AdminGrant[] | null> {
     return this.permissionResolver
       ? this.permissionResolver.getGrants(userId)

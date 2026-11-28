@@ -1,25 +1,4 @@
 #!/usr/bin/env node
-/**
- * Scaffold a thin host app for a single microservice: apps/<name>/, which boots a
- * SUBSET of the platform's modules (a service manifest) from the SAME codebase.
- * The module logic is NOT copied - the host reuses the root extensions.config.ts
- * and filters it to the chosen modules, so there is one source of truth per module
- * whether it runs in the monolith or as its own service.
- *
- * Usage:
- *   pnpm create:service <name> <module,module,...>
- *
- * Run without arguments, it prints an example that boots (service-example.json, which an E2E
- * boots too). The manifest lists every module its modules depend on, every module that binds a
- * port they require, and every module behind a control they would otherwise skip
- * (`controlPorts`, AdminGuard's); a boot that misses any prints one manifest line adding all of
- * them. The host bakes the service name as its SERVICE_NAME - its own Redis Streams consumer
- * group.
- *
- * After scaffolding: `pnpm install`, build deps, then
- *   pnpm -F @openora/<name>-service dev          # uses the baked-in manifest
- *   SERVICE_MANIFEST=<module,...> pnpm -F @openora/<name>-service dev   # override
- */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,7 +27,6 @@ const manifest = rawManifest
 
 const configSrc = readFileSync(join(repoRoot, 'extensions.config.ts'), 'utf8');
 const knownIds = [...configSrc.matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1]);
-// A flag (`wallet:no-routes`) is not part of the id; createApp validates the flag itself.
 const unknown = manifest.filter((m) => !knownIds.includes(m.split(':')[0] ?? m));
 if (unknown.length > 0) {
   console.error(`Unknown module id(s): ${unknown.join(', ')}.\nKnown: ${knownIds.join(', ')}`);

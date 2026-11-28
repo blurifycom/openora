@@ -18,16 +18,11 @@ const SORT_COLUMNS: Record<PlayersFindSortBy, SQL> = {
   totalWagered: sql`${player.totalWagered}`,
 };
 
-/** A KYC status filter that also matches the legacy `verified` rows an `approved` one means. */
 export function kycStatusesMatching(statuses: readonly KycStatus[]): KycStatus[] {
   const normalized = new Set(statuses.map(normalizeKycStatus));
   return normalized.has('approved') ? [...normalized, 'verified'] : [...normalized];
 }
 
-/**
- * Finds players by account facts an operator filters on, for an agent: no identity data, so it
- * reads the player profile alone and never the user table.
- */
 export class PlayersFindService {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -88,7 +83,6 @@ export class PlayersFindService {
         })
         .from(player)
         .where(where)
-        // The player id breaks ties, so equal figures always list in the same order.
         .orderBy(
           sql`${SORT_COLUMNS[sortBy]} ${direction} nulls last`,
           sql`${player.id} ${direction}`,
@@ -111,7 +105,6 @@ export class PlayersFindService {
     };
   }
 
-  /** The tag keys each of `playerIds` holds now, alphabetical. */
   private async activeTagKeys(playerIds: readonly string[]): Promise<Map<string, TagKey[]>> {
     if (playerIds.length === 0) {
       return new Map();

@@ -22,19 +22,12 @@ import { kycVerification, rgFlag } from '../schema/index.js';
 const HOUR_MS = 60 * 60 * 1000;
 const RECENT_FLAG_DAYS = 7;
 
-/** Hours from `from` to `now`, to one decimal, never negative. */
 const hoursBetween = (from: Date, now: Date) =>
   Math.round(Math.max(0, (now.getTime() - from.getTime()) / HOUR_MS) * 10) / 10;
 
-/** A flag's limit as it was stored, kept only when it is a limit type compliance knows. */
 const limitTypeOf = (value: string | null): LimitType | null =>
   LimitTypeSchema.safeParse(value).data ?? null;
 
-/**
- * The compliance queues an agent reads across all players: the open responsible-gambling flags
- * and the KYC verifications waiting. Each names a player by player id only, and returns no
- * reason, note, document or personal data.
- */
 export class ComplianceQueuesService {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -83,10 +76,6 @@ export class ComplianceQueuesService {
     };
   }
 
-  /**
-   * Counts each player's latest verification per tier: an older one a later attempt superseded
-   * waits for nothing.
-   */
   async kycQueue(
     { tier, status, limit }: KycQueueInput,
     now: Date = new Date(),

@@ -1,6 +1,3 @@
-// babysit.mjs --once against a fake `gh`: a green draft asks to be marked ready, a thread with a
-// drafted reply stays quiet until a new comment lands, a final reaction from the account answers a
-// thread (eyes only means picked up), and a live session holding the PR wins.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once as onceEvent } from 'node:events';
@@ -26,7 +23,6 @@ after(() => {
 execFileSync('git', ['init', '-q', repo]);
 execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/o/r.git']);
 mkdirSync(bin);
-// The fake answers `gh pr view` from pr.json and `gh api graphql` from threads.json
 writeFileSync(
   join(bin, 'gh'),
   `#!/bin/sh\ncase "$1" in pr) cat "${repo}/pr.json" ;; api) cat "${repo}/threads.json" ;; esac\n`,

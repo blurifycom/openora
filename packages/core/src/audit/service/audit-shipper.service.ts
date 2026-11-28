@@ -23,10 +23,6 @@ const CHAINED_WITH_OTHER_CONTENT = 'event_id already chained with different cont
 
 type Shippable = ShippableEntry & { outboxId: number; raw: string };
 
-/**
- * Appends `shippable` to the chain `txn` reaches and returns the rows the chain holds with other
- * content. Each entry is compared as the outbox's own jsonb text, never a JS round trip of it.
- */
 async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[]> {
   await appendAuditEntries(txn, shippable);
   if (shippable.length === 0) {
@@ -44,12 +40,6 @@ async function chain(txn: DrizzleTx, shippable: Shippable[]): Promise<Rejection[
   }));
 }
 
-// A chain appended to before the main database's old one is wholly copied over would fork the
-// history: the copy runs in seq order with the target's head as its cursor (the audit-copy
-// runbook), so the target holding the old chain's last row, hash and all, means it holds every row,
-// and the fence on the old chain means no legacy writer adds one after it. A drain ships back into
-// the main database itself, which is the old chain: the same database of the same cluster, by
-// whatever route each session reached it. A fence counts only while it fires for every session.
 async function instanceOf(tx: DrizzleTx): Promise<string | undefined> {
   const { rows } = await tx.execute<{ instance: string }>(sql.raw(INSTANCE_SQL));
   return rows[0]?.instance;
@@ -86,24 +76,6 @@ async function refuseChainBeforeCopy(main: DrizzleTx, chainTx: DrizzleTx): Promi
   }
 }
 
-/**
- * Moves one batch of `audit_outbox` rows from `db` into the hash chain in `chainDb` (default `db`,
- * the single-database layout), oldest first, in one transaction on `db` that holds the
- * shipper lock, so one shipper per database ships at a time; returns null when another holds it
- * and `wait` is false. A row the chain cannot take as it is moves to `audit_outbox_rejected`,
- * copied unchanged with the reason, and the rest ship: an entry that fails its schema, or one
- * whose event id the chain already holds with other content (a forged or colliding row), which is
- * never dropped as a duplicate. The rows are deleted once the append has committed, in the same
- * transaction when the chain shares the database and right after its own otherwise, so a crash
- * ships the whole batch again and the append skips every `event_id` the log already has.
- *
- * With the chain in its own database, `db` must reach the main one as the shipper role
- * (`AUDIT_SHIPPER_DRIZZLE`), the only role its outbox guard lets delete. Nothing checks that
- * `chainDb` points at the chain's database; the split mark split `migrate` leaves on the main
- * database is the guard: with `chainDb` left as `db` there, this throws instead of shipping. It
- * also throws before any append while the main database still holds an old chain that `chainDb`
- * lacks the last row of.
- */
 async function shipAuditBatch(
   db: DrizzleDb,
   { wait = false, chainDb = db }: { wait?: boolean; chainDb?: DrizzleDb } = {},
@@ -146,8 +118,6 @@ async function shipAuditBatch(
         });
       }
     }
-    // What the delete guard checks: a row whose event id is chained with other content, already
-    // or just now, is moved aside rather than deleted as shipped.
     if (chainDb === db) {
       if (batch.length > 0 && (await chainMovedOut(tx))) {
         throw new Error(
@@ -166,8 +136,6 @@ async function shipAuditBatch(
       );
     }
     if (rejected.length > 0) {
-      // Copied in SQL, so the entry the guard compares is the outbox's own jsonb, not a JS round
-      // trip of it.
       await tx.execute(sql`
         INSERT INTO audit_outbox_rejected (outbox_id, event_id, entry, error, created_at)
         SELECT o.id, o.event_id, o.entry, r.error, o.created_at
@@ -195,22 +163,13 @@ async function shipAuditBatch(
   return result.size;
 }
 
-/**
- * Ships everything queued in `db` before the call into the chain in `chainDb`, waiting for a
- * running shipper rather than skipping. For tests and tools that read `audit_log` straight after a
- * write.
- */
 export async function drainAuditOutbox(db: DrizzleDb, chainDb: DrizzleDb = db): Promise<void> {
-  while ((await shipAuditBatch(db, { wait: true, chainDb })) === BATCH_SIZE) {
-    // A full batch may have left more behind.
-  }
+  let shipped: number | null;
+  do {
+    shipped = await shipAuditBatch(db, { wait: true, chainDb });
+  } while (shipped === BATCH_SIZE);
 }
 
-/**
- * How far the chain lags the writes: the rows waiting in `audit_outbox`, the age of the oldest by
- * the database clock (null when none wait), and the rows moved to `audit_outbox_rejected`. For an
- * operator's health probe or alert; a growing age means no shipper is shipping.
- */
 export async function auditOutboxBacklog(db: DrizzleDb): Promise<{
   pending: number;
   oldestPendingAgeMs: number | null;
@@ -235,25 +194,13 @@ export async function auditOutboxBacklog(db: DrizzleDb): Promise<{
 }
 
 export type AuditShipperOptions = {
-  /** The database holding the chain; defaults to the one holding the outbox. */
   chainDb?: DrizzleDb;
-  /** Idle wait between polls, in ms. */
   intervalMs?: number;
   onError?: (err: unknown) => void;
 };
 
-/**
- * Ships `audit_outbox` to the chain in the background: polls every `intervalMs`, keeps going
- * while batches come back full, and backs off exponentially (capped at 5s) while shipping fails.
- * Every replica runs one; the shipper lock lets one ship at a time and the rest skip.
- *
- * ponytail: polls every 200ms per replica (an indexed, usually empty read). Swap for LISTEN/NOTIFY
- * if the idle load or the audit lag matters.
- */
 export class AuditShipper {
   private running = false;
-  // Bumped on every start and stop, so a drain left over from an earlier run never schedules a
-  // second loop beside the current one.
   private generation = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private draining: Promise<void> | undefined;
@@ -298,11 +245,11 @@ export class AuditShipper {
   private async drain(generation: number): Promise<void> {
     const current = () => generation === this.generation;
     try {
-      while (
-        current() &&
-        (await shipAuditBatch(this.db, { chainDb: this.opts.chainDb ?? this.db })) === BATCH_SIZE
-      ) {
-        // Keep going while batches come back full, so a backlog clears at append speed.
+      while (current()) {
+        const shipped = await shipAuditBatch(this.db, { chainDb: this.opts.chainDb ?? this.db });
+        if (shipped !== BATCH_SIZE) {
+          break;
+        }
       }
       this.failures = 0;
     } catch (err) {

@@ -22,7 +22,6 @@ const ObjectJsonSchema = ToolSchema.shape.inputSchema;
 export type ExposedTool = {
   id: McpToolDescriptor['id'];
   iam: McpIamRequirement;
-  /** The output keys that reach the client. */
   keys: readonly string[];
   definition: Tool;
 };
@@ -58,12 +57,6 @@ function withoutKeys(schema: Tool['inputSchema'], dropped: ReadonlySet<string>) 
   };
 }
 
-/**
- * The read-class tools as MCP tool definitions, named by their model names. Each output schema
- * is the kernel's, already narrowed to the allow-listed keys; in 'drop' mode the keys a tool
- * marks as personal leave both it and every result. Throws when a tool's input or output
- * schema is not a JSON object schema.
- */
 export function exposedTools(
   descriptors: readonly McpToolDescriptor[],
   personalFields: McpPersonalFieldMode,
@@ -103,11 +96,6 @@ function failureBody({ error, issues }: McpFailure) {
   return issues ? { error, issues } : { error };
 }
 
-/**
- * A kernel result as an MCP tool result. A failure carries only its code and input issues, and
- * no `structuredContent`: the SDK client validates any structured content against the tool's
- * output schema, error results included.
- */
 export function toCallToolResult(
   result: McpToolResult,
   keys: readonly string[],

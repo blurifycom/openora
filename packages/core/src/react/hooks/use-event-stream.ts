@@ -5,9 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 export type EventStreamStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
 export type UseEventStreamOptions<T> = {
-  /** When false, the stream is not opened (and an open one is torn down). */
   enabled?: boolean;
-  /** Called for each event as it arrives, before state updates. */
   onEvent?: (event: T) => void;
 };
 
@@ -19,15 +17,6 @@ export type UseEventStreamResult<T> = {
 const MAX_RETRY_DELAY_MS = 30_000;
 const STABLE_CONNECTION_MS = 5_000;
 
-/**
- * Generic client-side real-time transport. Consumes any async-iterable source
- * (eg an oRPC event iterator served as SSE: `client.x.stream(undefined, { signal })`).
- *
- * Owns an AbortController per active subscription, loops `for await` over the
- * iterable, calls `onEvent` and tracks the latest value + connection status.
- * Re-subscribes when `subscribe` identity changes, so memoize it at the call site.
- * Reconnects automatically with exponential backoff when the stream drops unexpectedly.
- */
 export function useEventStream<T>(
   subscribe: (signal: AbortSignal) => Promise<AsyncIterable<T>>,
   options: UseEventStreamOptions<T> = {},
@@ -36,7 +25,6 @@ export function useEventStream<T>(
   const [last, setLast] = useState<T | null>(null);
   const [status, setStatus] = useState<EventStreamStatus>('idle');
 
-  // Keep the latest onEvent without forcing a re-subscribe each render.
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
@@ -74,11 +62,6 @@ export function useEventStream<T>(
             return;
           }
           setStatus('open');
-          // Only trust this connection - and reset the backoff - once it has
-          // stayed open a while or delivered something. Resetting the instant
-          // subscribe() resolves means a connection accepted then dropped
-          // immediately (idle-timeout proxy, server ending the generator
-          // early) reconnects at a fixed ~1s delay forever instead of backing off.
           stableTimer = setTimeout(markStable, STABLE_CONNECTION_MS);
           for await (const event of iterable) {
             if (cancelled) {
@@ -89,14 +72,12 @@ export function useEventStream<T>(
             setLast(event);
           }
         } catch (err) {
-          // Intentional teardown — do not reconnect.
           if (cancelled || (err as Error)?.name === 'AbortError') {
             return;
           }
         } finally {
           clearTimeout(stableTimer);
           if (!cancelled) {
-            // Unexpected close: reconnect with exponential backoff.
             setStatus('closed');
             const delay = Math.min(1000 * 2 ** retryCount, MAX_RETRY_DELAY_MS);
             retryCount += 1;

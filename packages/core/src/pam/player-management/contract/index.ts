@@ -1,4 +1,3 @@
-// Shared so the profile module can derive from them too. See ADR-0021.
 import { oc, populateContractRouterPaths } from '@orpc/contract';
 import * as z from 'zod';
 import {
@@ -17,7 +16,6 @@ import { paginated } from '@openora/core/contracts/kit';
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
 export * from './agent-tools.js';
 
-/** Player row enriched with their active tags - used only by the admin list endpoint. */
 export const PlayerWithTagsSchema = PlayerSchema.extend({
   tags: z.array(TagKeySchema),
   accountManager: AccountManagerSchema.nullable(),
@@ -25,7 +23,7 @@ export const PlayerWithTagsSchema = PlayerSchema.extend({
 export type PlayerWithTags = z.infer<typeof PlayerWithTagsSchema>;
 
 export const PlayerRegistrationPointSchema = z.object({
-  date: z.string(), // YYYY-MM-DD
+  date: z.string(),
   count: z.number().int(),
 });
 
@@ -36,8 +34,6 @@ export const PlayerSummarySchema = z.object({
   selfExcluded: z.number().int(),
 });
 
-// Ported from chat-commands: powers the chat `/profile` command's search step
-// and profile card. See AGENTS.md "block/ignore search exclusion".
 export const PlayerSearchResultSchema = z.object({
   userId: UuidSchema,
   username: z.string(),
@@ -79,8 +75,6 @@ export const playerContract = populateContractRouterPaths({
     )
     .output(PlayerWithTagsSchema),
 
-  // Resolve a player by their identity userId - the id every other module (compliance
-  // RG flags, audit, wallet) carries, since none of them know the PAM playerId.
   getByUserId: oc
     .route({ method: 'GET', path: '/players/by-user/{userId}' })
     .input(z.object({ userId: UuidSchema }))
@@ -98,7 +92,6 @@ export const playerContract = populateContractRouterPaths({
     )
     .output(PlayerWithTagsSchema),
 
-  // 422 `data.reason` is an AccountManagerIneligibleReason; a null id removes the manager.
   setAccountManager: oc
     .route({ method: 'PUT', path: '/players/{playerId}/account-manager' })
     .input(z.object({ playerId: UuidSchema, accountManagerId: UuidSchema.nullable() }))
@@ -114,7 +107,6 @@ export const playerContract = populateContractRouterPaths({
     )
     .output(z.array(AccountManagerCandidateSchema)),
 
-  // Staff managing at least one player, deactivated included; feeds GET /players' accountManagerId filter.
   assignedAccountManagers: oc
     .route({ method: 'GET', path: '/players/account-managers/assigned' })
     .output(z.array(AssignedAccountManagerSchema)),
@@ -131,8 +123,6 @@ export const playerContract = populateContractRouterPaths({
 
   summary: oc.route({ method: 'GET', path: '/players/stats/summary' }).output(PlayerSummarySchema),
 
-  // Chat `/profile` command's search step - excludes players the caller has
-  // blocked/ignored (moderation). See AGENTS.md.
   playerSearch: oc
     .route({ method: 'GET', path: '/players/search' })
     .input(
@@ -143,7 +133,6 @@ export const playerContract = populateContractRouterPaths({
     )
     .output(z.array(PlayerSearchResultSchema)),
 
-  // Looked up by identity userId (like getByUserId), never the PAM playerId.
   playerProfile: oc
     .route({ method: 'GET', path: '/players/{userId}/profile-card' })
     .input(z.object({ userId: UuidSchema }))

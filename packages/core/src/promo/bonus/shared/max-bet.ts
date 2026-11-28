@@ -20,7 +20,6 @@ export function resolveMaxBet(grantedAmount: string, terms: MaxBetTerms): string
     : moneyMin(floored, maxBetCeiling);
 }
 
-/** The ways a terms object contradicts itself about its max bet; empty when it is coherent. */
 export function maxBetTermsIssues(terms: MaxBetTerms): string[] {
   const issues: string[] = [];
   const { maxBet, maxBetRate, maxBetFloor, maxBetCeiling } = terms;

@@ -34,29 +34,20 @@ import { countRemainingBackupCodes } from './backup-codes.service.js';
 
 const logger = createLogger('admin-security');
 
-// A Super Admin cannot clear their own second factor - that would let a single
-// compromised account walk itself back to the unenrolled state. The reset always
-// goes through another Super Admin.
 export const SelfTwoFactorResetError = makeConflictError(
   'SelfTwoFactorResetError',
   'An admin cannot reset their own second factor - ask another Super Admin',
 );
 
-// A player reset signs the player out everywhere and mails them, so it is refused when
-// there is no second factor to reset rather than doing both for nothing.
 export const TwoFactorNotEnabledError = makeConflictError(
   'TwoFactorNotEnabledError',
   'This player has no second factor to reset',
 );
 
-// Recording activity on every admin request would be one write per call; the session
-// list only needs minute-level resolution.
 const LAST_SEEN_THROTTLE_MS = 5 * 60 * 1000;
 
 export type AdminSecurityServiceDeps = {
   drizzle: DrizzleService;
-  // Read-only here: the recovery set is stored encrypted, and only better-auth's own
-  // server-side reader can count it.
   auth: Auth;
   events: EventBus;
   sessions: SessionService;
@@ -67,14 +58,6 @@ export type AdminSecurityServiceDeps = {
   mailDispatch?: MailDispatchPort | undefined;
 };
 
-/**
- * Enforcement half of the Backoffice session policy, resolved by `AdminGuard` on every
- * admin request through ADMIN_SECURITY_POLICY.
- *
- * Both checks throw rather than return a verdict: a caller that forgets to branch on a
- * boolean would silently grant access, which is the one failure mode this class exists
- * to prevent.
- */
 export class AdminSecurityService implements AdminSecurityPolicy {
   private readonly drizzle: DrizzleService;
   private readonly auth: Auth;
@@ -155,8 +138,6 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       .where(and(eq(session.id, sessionId), eq(session.userId, userId)))
       .limit(1);
 
-    // The caller resolved this session a moment ago, possibly from a cache in another service,
-    // so a session ended since (revoked, expired, deleted) is refused here rather than served.
     if (!row?.live) {
       throw new ORPCError('UNAUTHORIZED', {
         message: 'Authentication required',
@@ -211,17 +192,10 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     }
   }
 
-  /**
-   * Ends a session whose device or network no longer matches, and drops the trust that
-   * device held - otherwise the next login would silently skip the second factor on the
-   * very device that just failed the check.
-   */
   private async endCompromisedSession(
     { userId, sessionId, ip, userAgent }: AdminSessionContext & { sessionId: Session['id'] },
     mismatch: 'user_agent' | 'ip',
   ): Promise<never> {
-    // No actorId: the guard forced this itself, not the device owner nor an admin -
-    // passing `userId` here would read in the audit trail as a self-revoke.
     await this.sessions.revokeSession(userId, sessionId, undefined, { ip, userAgent });
     await this.trustedDevices.revokeForDevice(userId, userAgent, undefined);
     this.events.emit('identity.session.fingerprint_mismatch', {
@@ -248,10 +222,6 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       .where(eq(session.id, sessionId));
   }
 
-  /**
-   * What the Backoffice needs before it renders anything: whether this account still
-   * has to enrol, and whether the browser it is on holds an unexpired trust grant.
-   */
   async status(userId: User['id'], userAgent: string | null): Promise<AdminSecurityStatus> {
     const [row] = await this.drizzle.db
       .select({
@@ -295,14 +265,6 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     return { success: true as const };
   }
 
-  /**
-   * A revoked device loses its live sessions in the same breath, so the grant cannot
-   * outlive the revoke on the browser that already holds one.
-   *
-   * `keepSessionId` spares the caller's own session: revoking trust on the browser you
-   * are sitting in means "ask me for a code next time", not "sign me out now" - the same
-   * line `SessionService.revokeOwnSession` draws for sessions.
-   */
   private async endSessionsOnDevice(
     userId: User['id'],
     deviceUserAgent: string | null,
@@ -322,13 +284,6 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     }
   }
 
-  /**
-   * Returns an account to the unenrolled state so its owner can set a second factor up
-   * again: the shared recovery path for a lost authenticator, since better-auth's own
-   * disable endpoint asks for the account's password and a locked-out admin has no way
-   * to reach it. The trust grants and live sessions go with it - leaving either behind
-   * would let a browser keep the access the reset exists to withdraw.
-   */
   async resetTwoFactor(userId: User['id'], actorId: User['id'], reason: string, meta?: ClientMeta) {
     if (userId === actorId) {
       throw new SelfTwoFactorResetError();
@@ -337,16 +292,6 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     return { success: true as const };
   }
 
-  /**
-   * The support-desk twin of `resetTwoFactor`, for a player who lost their device: the
-   * caller only needs the player-update grant, so it refuses any account whose role is not
-   * `player` - an admin's second factor stays a Super Admin matter, even when that admin
-   * also holds a player profile.
-   *
-   * Unlike the admin path it leaves `requireTwoFactorOnLogin` as the player set it. With no
-   * factor enrolled, TWO_FACTOR_SETUP_POLICY then holds the account to the enrolment flow
-   * until a new one is set up, rather than letting it drop to password-only.
-   */
   async resetPlayerTwoFactor(
     userId: User['id'],
     actorId: User['id'],
@@ -357,11 +302,6 @@ export class AdminSecurityService implements AdminSecurityPolicy {
       forPlayer: true,
     });
 
-    // Addressed by user id so delivery resolves the recipient's name, locale and
-    // anti-phishing code - a security notice must carry the code. Keyed on the enrolment
-    // that was cleared, so one reset mails once however often the enqueue is retried. The
-    // reset has committed, so a failed enqueue must not fail it: the caller would retry a
-    // reset that already took effect.
     try {
       await this.mailDispatch?.toUser({
         userId,
@@ -381,11 +321,6 @@ export class AdminSecurityService implements AdminSecurityPolicy {
     meta: ClientMeta | undefined,
     { forPlayer }: { forPlayer: boolean },
   ): Promise<{ clearedEnrolmentId: string | null }> {
-    // Both writes commit together: a process death between them would leave
-    // twoFactorEnabled true with no twoFactor row - locked out with no repair
-    // route, since resetting requires a Super Admin who is themselves gated on
-    // AdminGuard.assertEnrolled. The row is locked so a concurrent role change cannot
-    // slip an admin past the player-only check between the read and the writes.
     const clearedEnrolmentId = await this.drizzle.db.transaction(async (tx) => {
       const [account] = await tx
         .select({ role: user.role, twoFactorEnabled: user.twoFactorEnabled })
@@ -408,23 +343,15 @@ export class AdminSecurityService implements AdminSecurityPolicy {
         .update(user)
         .set({
           twoFactorEnabled: false,
-          // Cleared with the enrolment it described: a stale method would route the
-          // next enrolment's code to a transport the account never chose.
           twoFactorMethod: null,
           failedTwoFactorAttempts: 0,
           twoFactorLockoutUntil: null,
-          // Same reason `disableTwoFactor` clears it: left set on an admin, it strands the
-          // account in an enforced-but-ungrantable state (the setter itself requires
-          // `twoFactorEnabled`). A player reset keeps it on purpose: TWO_FACTOR_SETUP_POLICY
-          // holds that state to the enrolment flow, which is what ends it.
           ...(forPlayer ? {} : { requireTwoFactorOnLogin: false }),
         })
         .where(eq(user.id, userId));
       return cleared?.id ?? null;
     });
 
-    // Recorded before the revokes: the factor is already gone, so a revoke that throws must
-    // not also lose the only record of who cleared it and why.
     this.events.emit('identity.2fa.reset', {
       userId,
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),

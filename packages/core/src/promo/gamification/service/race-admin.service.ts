@@ -32,17 +32,6 @@ export function assertPositionsAffordable(
   }
 }
 
-/**
- * The operator's side of a race: create, list, and read one, and replace its config as one
- * validated set - the same shape `RankAdminService.set`/`setConfig` use. Every write is audited
- * with a before/after.
- *
- * Prospective only: editing dates, the prize pool, positions or eligible products on a race that
- * has already closed is refused outright, the same conservative rule `RankAdminService` applies
- * once players hold ladder state. An active/upcoming race may still be edited - its leaderboard
- * and payout are computed from live data at settle time, so a mid-race edit only ever affects
- * standings going forward.
- */
 export class RaceAdminService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -102,9 +91,6 @@ export class RaceAdminService {
     const { raceId, ...fields } = input;
     assertPositionsAffordable(fields.prizePool, fields.positions);
     return this.drizzle.db.transaction(async (tx) => {
-      // `no key update`, not `update`: every bet into this race takes a key-share lock on the row
-      // (the foreign key from its standing); an edit never touches the key, so it need not block
-      // them.
       const [locked] = await tx
         .select(RACE_COLUMNS)
         .from(promoRace)

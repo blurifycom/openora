@@ -27,7 +27,6 @@ export function platformScopesFor(reach: ChatRoomReach): ChatModerationScope[] {
   return [...CHAT_SCOPES_COVERING_REACH[reach]];
 }
 
-// `validate` guards new restrictions only; lifting one must still reach missing, deleted or private rooms.
 export async function resolveModerationTarget(
   db: DrizzleDb | DrizzleTx,
   roomId: ChatModerationRoomId,

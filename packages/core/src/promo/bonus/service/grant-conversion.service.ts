@@ -39,7 +39,6 @@ export const TransferGrantConversionWalletUnavailableError = makeConflictError(
   { reason: 'wallet_unavailable' },
 );
 
-/** The wallet refused a conversion's cash credit; `reason` is the wallet's own. */
 class TransferGrantCreditRefusedError extends Error {
   readonly reason: string;
 
@@ -59,7 +58,6 @@ const failureOf = (err: unknown): TransferGrantConversionFailure =>
         ? 'invalid_amount'
         : 'failed';
 
-/** The ledger reference of a conversion's cash credit: one per grant, so a retry replays it. */
 const CONVERSION_PROVIDER = 'promo:grant-conversion';
 
 const ZERO = '0';
@@ -72,7 +70,6 @@ type WalletPorts = Required<
 
 type Outcome = ConvertedTransferGrant | 'open_round' | null;
 
-// A queued (`pending`) grant converts too: activation re-checks `pending` under the grant lock.
 const LIVE_STATUSES = ['pending', 'active'] as const;
 
 const isLiveTransferGrant = (sources: readonly TransferGrantSource[]) =>
@@ -89,11 +86,6 @@ const remainingWagering = (grant: Pick<PromoGrant, 'wageringRequired' | 'wagerin
   return moneyCompare(left, ZERO) > 0 ? left : ZERO;
 };
 
-/**
- * Turns live gift, rain and donation grants into real cash that carries a turnover requirement
- * equal to the wagering each grant still had left (ADR-0065), for an operator moving transfer
- * credits from bonus grants to cash. Each grant converts in a transaction of its own.
- */
 export class GrantConversionService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -110,7 +102,6 @@ export class GrantConversionService {
     actor: { id: Uuid; meta?: ClientMeta | undefined },
   ): Promise<ConvertTransferGrantsResult> {
     const wallet = this.walletPorts();
-    // A grant with an open bet is never a candidate, so a page of them cannot stall the batch.
     const candidates = await this.drizzle.db
       .select({ id: promoGrant.id })
       .from(promoGrant)
@@ -146,7 +137,6 @@ export class GrantConversionService {
       .select({ n: count() })
       .from(promoGrant)
       .where(isLiveTransferGrant(sources));
-    // Counted after the loop, so a grant whose bet opened mid-run counts here once.
     const [open] = await this.drizzle.db
       .select({ n: count() })
       .from(promoGrant)
@@ -216,7 +206,6 @@ export class GrantConversionService {
       if (!owner) {
         return null;
       }
-      // Taken first, the wallet row lock serialises this with every path that locks grants or the turnover row.
       await wallet.movableFunds(tx, owner);
       const [grant] = await tx
         .select()
@@ -238,7 +227,6 @@ export class GrantConversionService {
       if (paysCash) {
         await this.creditCash(tx, wallet, grant, cash);
       }
-      // No cash, nothing to lock: the requirement would hold the player's own deposits instead.
       const requiredInCurrency = paysCash ? remainingWagering(grant) : ZERO;
       const entry =
         moneyCompare(requiredInCurrency, ZERO) > 0

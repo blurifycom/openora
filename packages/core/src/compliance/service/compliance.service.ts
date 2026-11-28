@@ -116,14 +116,10 @@ type CountryRuleSettings = Pick<
   mirrorUrl: string | null;
 };
 
-// Redirection needs both the toggle and a target; either alone changes nothing. An empty
-// target (a row written outside the API) is no target, so it cannot open a blocked country.
 export function mirrorTargetOf(rule: { redirectIp: boolean; mirrorUrl: string | null }) {
   return rule.redirectIp && rule.mirrorUrl ? rule.mirrorUrl : null;
 }
 
-// A blacklisted country that is redirected plays on the mirror, so the API lets it through
-// and keeping it off the primary domain is left to whoever serves that domain.
 export function deniesAccess(rule: {
   blacklisted: boolean;
   redirectIp: boolean;
@@ -145,9 +141,6 @@ function hasCountryRuleChanges(before: typeof countryRule.$inferSelect, next: Co
   return COUNTRY_RULE_FIELDS.some((field) => countryRuleFieldValue(before, field) !== next[field]);
 }
 
-// A change needs `confirm` when it moves a country on or off the blacklist, lets a denied
-// country in, sends a blacklisted country to a different mirror, or drops KYC. Closing
-// access - turning a mirror off on a blacklisted country - never does.
 export function needsConfirmation(
   before: typeof countryRule.$inferSelect,
   next: CountryRuleSettings,
@@ -230,8 +223,6 @@ function gameGeoRuleLockKey(
   return `game-geo-rule:${gameId}:${countryCode}`;
 }
 
-// Bulk writers take this exclusive; single-target writers take it shared, before their
-// per-(game, country) keys.
 function gameGeoRuleCountryLockKey(countryCode: string): string {
   return `game-geo-rule-country:${countryCode}`;
 }
@@ -357,7 +348,6 @@ const VISITOR_GEO_BLOCK_AUDIT_WINDOW_MS = 60 * 60 * 1000;
 type ReplaceGameGeoRulesBatch = ReturnType<typeof ReplaceGameGeoRulesInputSchema.parse>['rules'];
 
 const GEO_RULE_SYNC_GAMES_PER_TX = 500;
-// Postgres caps a statement at 65535 bind parameters.
 const GEO_RULE_SYNC_ROWS_PER_STATEMENT = 5000;
 
 export function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -425,21 +415,6 @@ export class ComplianceService {
     this.events.emit('compliance.geo.access_blocked', { countryCode, reason, ip: ipAddress });
   }
 
-  /**
-   * The single country-rule decision every caller shares: registration, login, game
-   * launch and any page-level gate a consumer builds on `GET /compliance/geo-check`.
-   *
-   * Fail-closed on an unresolved country whenever any block rule exists, so a lookup
-   * outage cannot silently reopen a blacklisted jurisdiction. A denial is emitted here
-   * rather than by each caller, so no enforcement point can be added without its audit
-   * trail.
-   *
-   * `redirectUrl` rides along on an allowed decision: a redirected country passes here even
-   * when blacklisted, because its players are meant to reach the platform through the mirror.
-   * The decision only sees the address, so holding such a player to the mirror is the
-   * consumer's job, with `redirectUrl` from `GEO_CHECK_COMMANDS.checkAccess`; letting a
-   * blacklisted country in this way is audited as `compliance.geo.access_redirected`.
-   */
   async geoCheck(ipAddress: string | null) {
     const { isBlacklistAdmittedByMirror, ...decision } = await this.decideCountryAccess(ipAddress);
     if (!decision.allowed) {
@@ -453,12 +428,6 @@ export class ComplianceService {
     return decision;
   }
 
-  /**
-   * `GET /compliance/geo-check`: the same decision, but a consumer polls it on every page
-   * load, so a denial is audited once per address and country per window - the first row
-   * is the evidence, the rest would be noise. Best-effort: a cache outage audits every
-   * poll rather than none.
-   */
   async visitorGeoCheck(ipAddress: string | null) {
     const { isBlacklistAdmittedByMirror: _admittedByMirror, ...decision } =
       await this.decideCountryAccess(ipAddress);
@@ -519,8 +488,6 @@ export class ComplianceService {
       ipAddress ? (await this.geoIp.lookup(ipAddress)).countryCode : null,
     );
 
-    // Counts a redirected blacklisted country too, deliberately: without a country there is
-    // no mirror to send the visitor to, so an unresolved address stays denied.
     if (!countryCode) {
       const [blacklistedRule] = await this.drizzle.db
         .select({ countryCode: countryRule.countryCode })
@@ -546,7 +513,6 @@ export class ComplianceService {
       isBlacklistAdmittedByMirror: false,
     } as const;
 
-    // Deployment-level blocks are not the operator's to redirect around.
     if (this.igaming?.blockedCountries.includes(countryCode)) {
       return blocked;
     }
@@ -817,13 +783,6 @@ export class ComplianceService {
         };
   }
 
-  /**
-   * The effective KYC requirement for a player, combining the global switch with the
-   * per-country exemption list. Fail-closed on every "we don't actually know" branch:
-   * an unresolved country is treated as requiring KYC, and a country with no rule row
-   * defaults to `kycRequired: true` (the same default `countryRule.kycRequired` carries
-   * in the schema).
-   */
   async resolveKycRequirement(countryCode: string | null): Promise<{
     required: boolean;
     reason: 'global_disabled' | 'country_exempt' | 'required' | 'country_unknown';
@@ -930,8 +889,6 @@ export class ComplianceService {
         countryCode: input.countryCode,
         blacklisted,
         redirectIp: existing?.redirectIp ?? false,
-        // Blocking through this route means blocked: a stored mirror would otherwise keep
-        // the country open while the rule and its event both say `block`.
         ...(blacklisted ? { mirrorUrl: null } : {}),
         kycRequired: existing?.kycRequired ?? true,
         expectedUpdatedAt: existing?.updatedAt?.toISOString() ?? null,
@@ -1000,7 +957,6 @@ export class ComplianceService {
           .returning();
         return pairGeoRuleChanges(before, rows);
       });
-      // The audit trail for this change is the event's subscriber, so it commits with the rows.
       for (const { before, after } of paired) {
         await this.events.emitInTransaction(tx, 'compliance.game-geo-rule.upserted', {
           ruleId: after.id,
@@ -1066,7 +1022,6 @@ export class ComplianceService {
     let deleted = 0;
     const notFoundGameIds: string[] = [];
     for (const batch of chunk(rules, GEO_RULE_SYNC_GAMES_PER_TX)) {
-      // Serializes runs of one source: a run reads what the source owns before it locks countries.
       const outcome = await this.drizzle.db.transaction((tx) =>
         withAdvisoryXactLock(tx, gameGeoRuleSourceLockKey(source), () =>
           this.replaceGameGeoRuleBatch(tx, source, batch, reason),
@@ -1141,7 +1096,6 @@ export class ComplianceService {
       inArray(gameGeoRule.gameId, [...foundGameIds]),
     );
 
-    // Exclusive like the bulk writers: an admin edit of any touched country waits for the batch.
     const ownedCountries = await tx
       .selectDistinct({ countryCode: gameGeoRule.countryCode })
       .from(gameGeoRule)
@@ -1210,11 +1164,6 @@ export class ComplianceService {
     });
   }
 
-  /**
-   * Idempotent: a game that already has an admin rule keeps it, reason included, and counts
-   * as `unchanged`. A synced rule is taken over as admin and counts as `changed`. Never
-   * writes `provider_geo_rule`.
-   */
   async bulkRestrictGameGeoRules(
     input: BulkGameGeoRuleInput,
     actorId: User['id'],
@@ -1271,10 +1220,6 @@ export class ComplianceService {
     };
   }
 
-  /**
-   * Idempotent: a game without the rule counts as `unchanged`, not NOT_FOUND. Never deletes
-   * `provider_geo_rule`; games it keeps blocked are counted in `stillBlockedByProvider`.
-   */
   async bulkUnrestrictGameGeoRules(
     input: BulkGameGeoRuleInput,
     actorId: User['id'],
@@ -1365,7 +1310,6 @@ export class ComplianceService {
             action: 'compliance.game-geo-rules.bulk_updated',
             resourceType: 'game-geo-rule',
             resourceId: null,
-            // Unrestrict keeps what it deleted, so the licence history survives the removal.
             before:
               operation === 'unrestrict'
                 ? {

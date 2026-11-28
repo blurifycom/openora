@@ -1,8 +1,3 @@
-// Ledger API v1 (LEDGER_API_V1): the in-process implementation of the surface provider bridges
-// and the sportsbook move money through. Each keyed op owns its transaction: it locks its keys,
-// answers a stored key from `ledger_api_request`, or moves the money through WALLET_COMMANDS,
-// adds it to the round through GAMING_COMMANDS, writes the outbox events and stores its answer,
-// all in that one transaction. No money logic lives here; it only orders the ports' calls.
 import { createHash } from 'node:crypto';
 import {
   GamingRoundOwnerMismatchError,
@@ -70,15 +65,10 @@ export type LedgerApiDeps = {
   events: EventBus;
   walletCommands: WalletCommands;
   identityReader: IdentityReader;
-  /** Resolved per call: the gaming and sportsbook modules load after wallet, and are optional. */
   gamingCommands: () => GamingCommands;
   sportsbookLedger: () => SportsbookLedger;
 };
 
-/**
- * Thrown inside a transaction to roll its moves back and answer a refusal. `tombstoneRef` is the
- * bet a reverse found nowhere: stored as the refusal's target, so that bet is refused if it lands.
- */
 class LedgerRefusal extends Error {
   constructor(
     readonly reason: LedgerV1RefusalReason,
@@ -98,10 +88,6 @@ class LedgerRefusal extends Error {
   }
 }
 
-/**
- * The wallet already held the key from a move made outside this API (a bridge's direct call
- * before it moved here): rolled back, and answered as a replay with what the wallet reports.
- */
 class WalletLevelReplay extends Error {
   constructor(readonly move: LedgerV1Move) {
     super('ledger api: wallet replayed the key');
@@ -122,11 +108,6 @@ const REFUSAL_BY_ERROR: ReadonlyArray<
   [WalletCommandAmountError, 'invalid_amount'],
 ];
 
-/**
- * Whether a refusal is stored on its key. A refusal on the player's state is final, so a retry
- * never turns it into a move; one on the request's shape is not, so a corrected retry under the
- * same key (a provider's immutable rollback id) still applies.
- */
 const STORES_REFUSAL: Readonly<Record<LedgerV1RefusalReason, boolean>> = {
   fingerprint_mismatch: false,
   invalid_amount: false,
@@ -143,7 +124,6 @@ const STORES_REFUSAL: Readonly<Record<LedgerV1RefusalReason, boolean>> = {
   already_reversed: true,
 };
 
-/** A refusal, or a known port error as one; undefined for anything else. */
 function refusalOf(err: unknown): LedgerRefusal | undefined {
   if (err instanceof LedgerRefusal) {
     return err;
@@ -152,7 +132,6 @@ function refusalOf(err: unknown): LedgerRefusal | undefined {
   return mapped ? new LedgerRefusal(mapped[1]) : undefined;
 }
 
-/** A malformed amount refuses as `invalid_amount`; any other malformed field is the caller's bug. */
 export function parseArgs<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
   const parsed = schema.safeParse(input);
   if (parsed.success) {
@@ -167,12 +146,10 @@ export function parseArgs<S extends z.ZodType>(schema: S, input: unknown): z.out
 const canonicalDecimal = (value: string | undefined) =>
   value === undefined ? null : moneyFloorToScale(value, MONEY_SCALE);
 
-/** sha256 over the canonical request, so '10' and '10.00' are one request and '10' and '11' two. */
 export function fingerprint(parts: readonly unknown[]): string {
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 
-/** A UUID's case is not part of it, so `A1..` and `a1..` are one request. */
 const uuid = (id: string) => id.toLowerCase();
 
 export function reverseFingerprint(args: ReverseKey): string {
@@ -234,7 +211,6 @@ export class LedgerApiService implements LedgerApiV1 {
           args.reverseRef === undefined
             ? undefined
             : { providerName, providerRefId: args.reverseRef };
-        // A reverse already took this bet back, or refused it `bet_not_found` and left a tombstone.
         if (await this.isReversed(tx, providerName, providerRefId)) {
           throw new LedgerRefusal('already_reversed');
         }
@@ -295,8 +271,6 @@ export class LedgerApiService implements LedgerApiV1 {
           return { move, ...recorded };
         }
 
-        // The provider rolled this bet back before it arrived: return the stake in this same
-        // transaction, and answer the rollback's own key from now on.
         const reversal = await this.returnStake(tx, {
           userId,
           playerId,
@@ -442,13 +416,9 @@ export class LedgerApiService implements LedgerApiV1 {
             )
             .limit(1);
           if (!bet?.externalRoundId) {
-            // Tombstone only a key no wallet holds: a misrouted reverse must not block the real one.
             const held = await this.holdsProviderRef(tx, providerName, targetRefId);
             throw new LedgerRefusal('bet_not_found', undefined, held ? undefined : targetRefId);
           }
-          // A bet placed here keyed its round and its row with one id. Any other bet's round id
-          // may not be its round's key, so the caller may name the round, which must then be
-          // this player's existing round of this game and currency still holding the stake.
           const placedHere = await this.findRequest(tx, {
             providerName,
             providerRefId: targetRefId,
@@ -525,7 +495,6 @@ export class LedgerApiService implements LedgerApiV1 {
     };
   }
 
-  /** Turns a refusal, or a known port error, into a typed answer; anything else is thrown. */
   private async answer<T>(run: () => Promise<T>): Promise<T | LedgerV1Refused> {
     try {
       return await run();
@@ -574,8 +543,6 @@ export class LedgerApiService implements LedgerApiV1 {
               ? refused.data
               : { status: 'replayed', ...LedgerV1MoveSchema.parse(stored.response) };
           }
-          // A savepoint, so a refusal undoes the moves but a state refusal is still stored: a retry
-          // after the player's state changed gets the same refusal, never a second decision.
           let applied: Awaited<ReturnType<typeof move>>;
           try {
             applied = await tx.transaction((savepoint) => move(savepoint));
@@ -615,7 +582,6 @@ export class LedgerApiService implements LedgerApiV1 {
       });
   }
 
-  /** A reverse took `targetRefId`'s stake back, or found no bet and left a tombstone for it. */
   private async isReversed(
     tx: DrizzleTx,
     providerName: LedgerKey['providerName'],
@@ -634,7 +600,6 @@ export class LedgerApiService implements LedgerApiV1 {
     return reversal !== undefined;
   }
 
-  /** Any wallet already holds a move under this provider key. */
   private async holdsProviderRef(
     tx: DrizzleTx,
     providerName: LedgerKey['providerName'],
@@ -672,7 +637,6 @@ export class LedgerApiService implements LedgerApiV1 {
       fingerprint: string;
       targetRefId: string | null;
       response: LedgerV1Move | LedgerV1Refused;
-      /** What the request moved; a refusal moved nothing and leaves both null. */
       userId?: Uuid;
       amount?: string;
     },
@@ -682,10 +646,6 @@ export class LedgerApiService implements LedgerApiV1 {
       .values({ providerName: key.providerName, providerRefId: key.providerRefId, ...row });
   }
 
-  /**
-   * Credits a stake back as `bet_reversal`, on the bet's own round id so the wallet matches it to
-   * its bet, and takes it off `round`.
-   */
   private async returnStake(
     tx: DrizzleTx,
     args: {
@@ -734,7 +694,6 @@ export class LedgerApiService implements LedgerApiV1 {
     };
   }
 
-  /** Ends the round for readers once, and again whenever money moves on it after it ended. */
   private async announceRound(
     tx: DrizzleTx,
     round: Pick<GamingAccumulateExternalRoundOutcome, 'roundId' | 'announce'>,
@@ -783,7 +742,6 @@ export class LedgerApiService implements LedgerApiV1 {
     return readWalletBalance(tx, row.id, currency);
   }
 
-  /** The bet's own move and whatever wager tracking credited with it. */
   private async emitDebit(
     tx: DrizzleTx,
     userId: Uuid,
@@ -809,7 +767,6 @@ export class LedgerApiService implements LedgerApiV1 {
     }
   }
 
-  /** The providers whose bets this player staked on the round, as the wallet keyed them. */
   private async betProviders(
     tx: DrizzleTx,
     userId: Uuid,
@@ -831,7 +788,6 @@ export class LedgerApiService implements LedgerApiV1 {
     return rows.flatMap((row) => (row.providerName ? [row.providerName] : []));
   }
 
-  /** A round that ended with nothing paid still settles the bonus bets staked on it. */
   private async closeBonusRound(
     tx: DrizzleTx,
     userId: Uuid,

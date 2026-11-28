@@ -33,36 +33,24 @@ const ONLINE_STATUS_WINDOW_MS = 3 * 60 * 1000;
 
 type FriendshipRow = typeof friendship.$inferSelect;
 
-// The caller targeted themselves (SendFriendRequestInputSchema.targetUserId === callerId).
 export const SelfFriendRequestError = createDomainError(
   'SelfFriendRequestError',
   () => 'You cannot send a friend request to yourself',
 );
 
-// A genuinely nonexistent target only - never thrown for a target that exists but
-// can't be requested (moderated or blocking), so an API consumer can trust that a
-// NOT_FOUND means "no such player" and not have to guess.
 export const FriendRequestTargetNotFoundError = makeNotFoundError('FriendRequestTarget');
 
-// The target exists but can't receive requests right now - covers BOTH "suspended
-// or closed" and "target has blocked the caller" behind the SAME code/message so
-// callers still cannot distinguish a blocking account from a moderated one (the
-// block itself stays undisclosed); this only stops lying that the account is
-// missing entirely.
 export const FriendRequestUnavailableError = makeConflictError(
   'FRIEND_REQUEST_UNAVAILABLE',
   'This player cannot receive friend requests right now',
 );
 
-// The target turned friend requests off. Disclosed, unlike a block: it is a setting the
-// player chose to make known, and `data.code` lets a client explain it.
 export const FriendRequestsDisabledError = makeConflictError(
   'FriendRequestsDisabledError',
   'This player does not accept friend requests',
   { code: 'FRIEND_REQUESTS_DISABLED' },
 );
 
-// The caller's own chat block is disclosed because it is the caller's state.
 export const BlockedBySelfError = makeConflictError(
   'BLOCKED_BY_SELF',
   'You have blocked this player - unblock them first',
@@ -117,8 +105,6 @@ function acceptedPayload(row: FriendshipRow, accepterId: Uuid, accepterUsername:
   };
 }
 
-// Finds the single row for a pair regardless of who is requester/addressee - the
-// canonical-pair unique index guarantees at most one match.
 function pairCondition(userA: Uuid, userB: Uuid) {
   return or(
     and(eq(friendship.requesterId, userA), eq(friendship.addresseeId, userB)),
@@ -156,11 +142,6 @@ export class SocialService {
     return { rows, total: Number(countRows[0]?.n ?? 0) };
   }
 
-  /**
-   * Player profiles widened with the identity-owned handle; an id with no profile is left out.
-   * Read fresh: `closed`, `allowFriendRequests` and `showOnlineStatusToFriends` are privacy gates
-   * on every caller here.
-   */
   private async playersWithUsername(userIds: readonly Uuid[]) {
     const accounts = await this.accounts.getAccounts(userIds, { fresh: true });
     return [...accounts.values()].flatMap(({ userId, username, player }) =>
@@ -173,7 +154,6 @@ export class SocialService {
       throw new SelfFriendRequestError();
     }
 
-    // Batched: caller + target resolved in one query rather than two round trips.
     const players = await this.playersWithUsername([callerId, targetUserId]);
     const targetPlayer = players.find((p) => p.userId === targetUserId);
     const callerPlayer = players.find((p) => p.userId === callerId);
@@ -185,26 +165,19 @@ export class SocialService {
       throw new FriendRequestUnavailableError();
     }
     if (!callerPlayer) {
-      // Invariant: an authenticated caller always has a player row. Not a domain
-      // error (nothing the caller can act on) - fail loudly instead of masking it.
       throw new Error(`Player profile missing for authenticated caller: ${callerId}`);
     }
 
-    // Both directions checked in one query: at most the two rows for this pair exist.
     const blocks = await this.drizzle.db
       .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
       .where(and(isNull(chatUserBlock.removedAt), pairBlockCondition(callerId, targetUserId)));
     if (blocks.some((b) => b.blockerId === targetUserId && b.blockedId === callerId)) {
-      // Target has blocked the caller - never disclosed, same error as "suspended".
       throw new FriendRequestUnavailableError();
     }
     if (blocks.some((b) => b.blockerId === callerId && b.blockedId === targetUserId)) {
       throw new BlockedBySelfError();
     }
-    // Only a brand-new request is refused: when a row for the pair already exists the
-    // flow below still answers it - accepting the target's own pending request, or
-    // reporting "already friends" / "already pending".
     if (!targetPlayer.allowFriendRequests) {
       const [existing] = await this.drizzle.db
         .select({ id: friendship.id })
@@ -245,7 +218,6 @@ export class SocialService {
     );
   }
 
-  /** Accepts the target's pending request to the caller, announcing it on the same tx. */
   private async resolveExistingPair(
     callerId: Uuid,
     targetUserId: Uuid,
@@ -260,8 +232,6 @@ export class SocialService {
         .limit(1);
       const existing = rows[0];
       if (!existing) {
-        // The row that caused the violation is gone (eg concurrently removed) -
-        // safe to surface as "no longer pending", the caller can retry.
         throw new RequestAlreadyPendingError();
       }
       if (existing.refusedAt !== null) {
@@ -274,8 +244,6 @@ export class SocialService {
         throw new RequestAlreadyPendingError();
       }
 
-      // Mutual/simultaneous case: existing.requesterId === targetUserId - the
-      // pending row was already addressed TO the caller.
       const updatedRows = await tx
         .update(friendship)
         .set({ acceptedAt: new Date(), refusedAt: null })
@@ -294,11 +262,6 @@ export class SocialService {
     });
   }
 
-  /**
-   * Batch relationship lookup for a set of target users, from the caller's point
-   * of view. Reads are batched (one query per table, `IN (...)` over the target
-   * ids) rather than N+1 per target.
-   */
   async getRelationships(callerId: Uuid, targetUserIds: readonly Uuid[]): Promise<Relationship[]> {
     const uniqueTargetIds = [...new Set(targetUserIds)];
 
@@ -500,7 +463,6 @@ export class SocialService {
       if (targetPlayer.closed) {
         return [];
       }
-      // A hidden status blanks `lastSeenAt` too - the status is derivable from it.
       const lastSeenAt = targetPlayer.showOnlineStatusToFriends ? targetPlayer.lastSeenAt : null;
       const isOnline = lastSeenAt !== null && now - lastSeenAt.getTime() <= ONLINE_STATUS_WINDOW_MS;
       const status = targetPlayer.showOnlineStatusToFriends
@@ -555,8 +517,6 @@ export class SocialService {
 
     const [callerPlayer] = await this.playersWithUsername([callerId]);
     if (!callerPlayer) {
-      // Invariant: an authenticated caller always has a player row (see
-      // sendFriendRequest's same guard).
       throw new Error(`Player profile missing for authenticated caller: ${callerId}`);
     }
 
@@ -588,10 +548,6 @@ export class SocialService {
   }
 
   async declineFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<void> {
-    // removedAt (not refusedAt - the two are mutually exclusive, see the
-    // friendship_removed_excludes_refused_key check constraint) frees the pair's
-    // partial-unique slot, same as cancelFriendRequest - decline and cancel both
-    // let either side send a new request afterwards.
     return this.withdrawFriendRequest(
       friendshipId,
       eq(friendship.addresseeId, callerId),
@@ -607,7 +563,6 @@ export class SocialService {
     );
   }
 
-  /** Closes a pending request the caller is `party` to, then announces it as `event`. */
   private async withdrawFriendRequest(
     friendshipId: Uuid,
     party: SQL,
@@ -684,7 +639,6 @@ export class SocialService {
         : Promise.resolve([]),
     ]);
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
-    // Either direction hides the pair - a blocked player never appears in requests on both sides
     const blockedCounterpartIds = new Set(
       blocks.map((b) => (b.blockerId === callerId ? b.blockedId : b.blockerId)),
     );

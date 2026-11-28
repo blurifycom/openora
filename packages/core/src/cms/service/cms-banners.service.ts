@@ -13,10 +13,6 @@ const config = bannerConfiguration;
 const placementSchedule = alias(bannerSchedule, 'placement_schedule');
 const placementConfig = alias(bannerConfiguration, 'placement_config');
 
-/**
- * The banner configurations as an agent reads them, with what each placement shows now resolved
- * the way the public banner read resolves it: a schedule covering now wins over the default.
- */
 export class CmsBannersService {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -64,7 +60,6 @@ export class CmsBannersService {
     };
   }
 
-  /** How many images each configuration holds, and the locales they are in. */
   private async images(ids: readonly string[]) {
     const byConfiguration = new Map<string, { count: number; locales: string[] }>();
     if (ids.length === 0) {

@@ -118,15 +118,10 @@ import { OnRampService } from './service/on-ramp.service.js';
 
 const logger = createLogger('wallet');
 
-// Mirrors WalletConfigSchema's wallet.sweep.cron default - used only when the operator
-// hasn't configured platformConfig.wallet.sweep at all, so the job is still scheduled
-// (CustodySweepService.runCycle no-ops every tick until sweep policy is configured).
 const DEFAULT_SWEEP_CRON = '*/15 * * * *';
 
 const WALLET_RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 const WalletReconciliationJobSchema = z.object({ runId: UuidSchema.optional() });
-// Mirrors wallet.reconciliation.ledgerInvariantCron's default. The ledger check needs no
-// vendor, so it runs even where the vendor diff is not configured.
 const DEFAULT_LEDGER_INVARIANT_CRON = '30 3 * * *';
 
 function depositCompareRefusal(err: unknown): never {
@@ -147,10 +142,6 @@ function holdRefusalCode(err: unknown) {
 }
 
 export default {
-  // NOT dependsOn 'tag' or 'compliance': both depend on wallet, so that would cycle. Their ports
-  // are required instead - checked once every plugin has registered and resolved in the router
-  // factory - so a withdrawal can never skip the withdrawal_lock, PIN or KYC check because the
-  // module behind it is not loaded (ADR-0059).
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
   requiresPorts: [WITHDRAWAL_SECURITY, PLAYER_TAGS, KYC_WITHDRAWAL_POLICY],
@@ -170,18 +161,9 @@ export default {
     },
   ],
   register(ctx) {
-    // Set inside the router factory (container access); the job worker's handler
-    // closes over this ref, same shape as pam/tag's evalSvc - subscriptions/workers
-    // wire before router factories run, but are set before any real job arrives.
     let reconciliationRef: ReconciliationService | null = null;
 
-    // Set inside the router factory (container access); the balance-changed event
-    // handlers below close over this ref - same shape as compliance's kycStatusChannel
-    // publish. Subscriptions wire before router factories run, but are set before any
-    // real event arrives.
     let realtimeTransport: RealtimeTransport | null = null;
-    // One instance behind both play eligibility ports; the router factory constructs it, and runs
-    // in every process before any event is delivered.
     let playEligibility: LedgerPlayEligibilityService | null = null;
     const moneyPortsCallers = parseInternalCallers(process.env['MONEY_PORTS_CALLERS']);
     const remoteWriter = () => moneyPortsCallers.size > 0;
@@ -198,7 +180,6 @@ export default {
         staleMs,
         alertMs,
       }));
-    // Same for the limits gate and its projection writer (ADR-0057).
     let rgLimitsRef: LedgerRgLimitsService | null = null;
     const sharedRgLimits = (c: TypedContainer<CoreTokenCatalog>) =>
       (rgLimitsRef ??= new LedgerRgLimitsService(
@@ -207,12 +188,6 @@ export default {
         { remoteWriter, staleMs, alertMs },
       ));
 
-    // Publishes a change *signal*, never the balance itself - see the comment on
-    // WalletBalanceUpdateSchema. Only wired to events that actually move a settled
-    // balance (see the `ctx.events.on` calls below); `wallet.withdrawal.approved` and
-    // `wallet.withdrawal.completed` are deliberately absent - approval only flips a
-    // pending withdrawal to `processing` and completion just finalizes the PSP leg, the
-    // funds were already debited at `wallet.withdrawal.requested` time.
     const publishBalanceChanged = (
       userId: string,
       currency: string,
@@ -253,8 +228,6 @@ export default {
         envelope.eventId,
       );
     });
-    // The tag module's screening verdict is the only trigger for auto-approval (ADR-0059).
-    // Throws before the service exists, so the event is redelivered rather than recorded handled.
     ctx.events.on('tag.withdrawal.screened', async (payload) => {
       const parsed = domainEventSchemas['tag.withdrawal.screened'].safeParse(payload);
       if (!parsed.success) {
@@ -290,8 +263,6 @@ export default {
         envelope.eventId,
       );
     });
-    // Both sides of a swap moved, so both currencies get a signal - a client watching
-    // only its active currency would otherwise miss the leg it swapped out of.
     ctx.events.on('wallet.swap.completed', (payload, envelope) => {
       const parsed = domainEventSchemas['wallet.swap.completed'].safeParse(payload);
       if (!parsed.success || !envelope) {
@@ -319,8 +290,6 @@ export default {
         envelope.eventId,
       );
     });
-    // The stake gate's projection: identity writes it in its own transaction; this replays the
-    // committed state, keeping the newest version, for a split process and as the repair path.
     ctx.events.on('identity.play_eligibility.changed', async (payload) => {
       if (!playEligibility) {
         throw new Error('wallet: play eligibility projection not constructed yet');
@@ -328,9 +297,6 @@ export default {
       const snapshot = domainEventSchemas['identity.play_eligibility.changed'].parse(payload);
       await playEligibility.reconcile([snapshot]);
     });
-    // The limits gate's projection: compliance writes it in its own transaction; this replays the
-    // committed limits for a split process, writing only a strictly newer version. A malformed
-    // payload is logged and dropped, never retried: no retry can make it valid.
     ctx.events.on('compliance.rg_limits.changed', async (payload) => {
       if (!rgLimitsRef) {
         throw new Error('wallet: limits projection not constructed yet');
@@ -355,9 +321,6 @@ export default {
       );
     });
 
-    // One memoized instance backs the cron worker and the router factory below - lazily
-    // constructed (subscriptions/workers wire before router factories run), matching
-    // pam/tag's and compliance's job-worker shape.
     let sweepSvc: CustodySweepService | null = null;
     const custodySweepService = (c: TypedContainer<CoreTokenCatalog>) =>
       (sweepSvc ??= new CustodySweepService({
@@ -386,7 +349,6 @@ export default {
       }));
     };
 
-    // One instance backs the router and the agent tools; either factory may build it first.
     let walletSvc: WalletService | null = null;
     const walletService = (c: TypedContainer<CoreTokenCatalog>) =>
       (walletSvc ??= new WalletService({
@@ -439,7 +401,6 @@ export default {
       return (input) => wallet.withdrawalQueueOverview(input);
     });
 
-    // Its own reader over DRIZZLE alone: the kernel builds every tool's handler when it starts.
     ctx.mcp.tool(transactionsFindTool, (c) => {
       const transactions = new TransactionsFindService(c.get(DRIZZLE), c.get(IDENTITY_READER));
       return (input) => transactions.find(input);
@@ -566,12 +527,6 @@ export default {
         .parse(process.env.PAYMENT_WEBHOOK_SECRET || undefined);
       return new HmacPaymentWebhookVerifier(webhookSecret);
     });
-    // Wraps the single PAYMENT_ADAPTER/PAYMENT_WEBHOOK_VERIFIER tokens as the 'default'
-    // registry entry, so a one-vendor operator changes nothing. Core only looks a
-    // providerName up here - it never discovers vendors itself, because Container.register
-    // is last-wins: two overlays each rebinding the single tokens would clobber each
-    // other, so running more than one vendor at once needs an operator-composed map
-    // (rebind PAYMENT_PROVIDERS entirely) rather than a second core-discovered slot.
     ctx.provide(PAYMENT_PROVIDERS, (c) => ({
       get: (name: string) =>
         name === DEFAULT_PAYMENT_PROVIDER
@@ -579,15 +534,10 @@ export default {
           : null,
       names: () => [DEFAULT_PAYMENT_PROVIDER],
     }));
-    // What a stake is checked against: the ledger's own projection, not the identity tables.
     ctx.provideSealed(LEDGER_PLAY_ELIGIBILITY, sharedPlayEligibility);
-    // Its writer, for identity only: not part of the Ledger API a provider bridge sees.
     ctx.provideSealed(PLAY_ELIGIBILITY_PROJECTION, sharedPlayEligibility);
-    // The deposit and wager limit gate, over the ledger's own limits projection, and that
-    // projection's writer, for compliance only.
     ctx.provideSealed(RG_LIMITS, sharedRgLimits);
     ctx.provideSealed(RG_LIMIT_LEDGER, sharedRgLimits);
-    // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(
       WALLET_COMMANDS,
       (c) =>
@@ -601,8 +551,6 @@ export default {
           turnover: () => turnoverService(c),
         }),
     );
-    // The versioned surface provider bridges and the sportsbook move money through. Gaming and
-    // sportsbook load after wallet and are optional, so their ports resolve on each call.
     ctx.provide(
       LEDGER_API_V1,
       (c) =>
@@ -615,7 +563,6 @@ export default {
           sportsbookLedger: () => c.get(SPORTSBOOK_LEDGER),
         }),
     );
-    // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
     ctx.provide(
       WALLET_READER,
       (c) =>
@@ -633,8 +580,6 @@ export default {
     );
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
     ctx.provide(MONEY_REPORTING, (c) => new MoneyReportingService(c.get(DRIZZLE)));
-    // Operator-editable currency/network config, readable by a payment adapter without
-    // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
     ctx.routers.addInternal('money', (c) =>
       createInternalMoneyPortsRouter(
@@ -690,17 +635,13 @@ export default {
 
       const jobQueue = c.get(JOB_QUEUE);
 
-      custodySweepService(c); // ensure sweepSvc is constructed for the job worker above
+      custodySweepService(c);
       if (options?.mounted !== false) {
         const sweepCron = platformConfig?.wallet?.sweep?.cron ?? DEFAULT_SWEEP_CRON;
-        // Idempotent schedule (keyed by scheduleId). If platformConfig.wallet.sweep is
-        // absent, this still registers the tick - the handler just no-ops every time.
         void jobQueue
           .schedule(CUSTODY_SWEEP_QUEUE, 'wallet-custody-sweep.cron', {}, { cron: sweepCron })
           .catch((err) => logger.error({ err }, 'wallet-custody-sweep schedule failed'));
 
-        // Absent config means the cycle no-ops - see ReconciliationService.runCycle - but
-        // there is also nothing to schedule at all.
         if (platformConfig?.wallet?.reconciliation) {
           void jobQueue
             .schedule(
@@ -735,8 +676,6 @@ export default {
           .catch((err) => logger.error({ err }, 'wallet-turnover-pricing schedule failed'));
       }
 
-      // No SWAP_ADAPTER bound is the resting state (core binds none) - the swap routes
-      // then refuse rather than the module failing to load.
       const swapAdapter = c.has(SWAP_ADAPTER) ? c.get(SWAP_ADAPTER) : undefined;
       const swapVerifier = c.has(SWAP_WEBHOOK_VERIFIER) ? c.get(SWAP_WEBHOOK_VERIFIER) : undefined;
       const swap = swapAdapter
@@ -751,8 +690,6 @@ export default {
             turnover: turnoverService(c),
           })
         : undefined;
-      // A webhook needs BOTH: an adapter that parses the vendor's format and that same
-      // vendor's verifier. One without the other leaves the route refusing everything.
       const swapWebhook =
         swapAdapter?.parseWebhook && swapVerifier
           ? {
@@ -761,8 +698,6 @@ export default {
             }
           : undefined;
 
-      // Same resting state as swap: core binds no on-ramp vendor, and the routes then refuse.
-      // A vendor bound without the geo gate stays off rather than ungated.
       const onRampAdapter = c.has(ON_RAMP_ADAPTER) ? c.get(ON_RAMP_ADAPTER) : undefined;
       const onRampVerifier = c.has(ON_RAMP_WEBHOOK_VERIFIER)
         ? c.get(ON_RAMP_WEBHOOK_VERIFIER)

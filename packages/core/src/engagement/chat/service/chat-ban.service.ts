@@ -120,7 +120,6 @@ export class ChatBanService {
       }),
     );
     emitExpiredInvites(this.events, expired, { actorId, ip, userAgent });
-    // The ban is committed; failing to list its channels must not turn it into a 500 and a retry.
     await this.roomsToRevoke(userId, target)
       .then((roomIds) => this.revokeChannels(userId, roomIds))
       .catch((err: unknown) => {
@@ -129,7 +128,6 @@ export class ChatBanService {
     return { success: true } as const;
   }
 
-  // `null` is the global channel.
   private async roomsToRevoke(userId: Uuid, target: ModerationTarget): Promise<(Uuid | null)[]> {
     if (target.scope !== '__all_public' && target.scope !== '__all') {
       return [target.roomId];

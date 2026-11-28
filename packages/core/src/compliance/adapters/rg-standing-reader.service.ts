@@ -32,7 +32,6 @@ export type RgStandingReaderServiceDeps = {
   eligibility: PlayEligibilityPort;
   rates: ExchangeRateReader;
   walletReader: WalletReader;
-  /** The fx pivot every window is priced into (`resolveExchangeRatePivot`). */
   pivotCurrency: string;
 };
 
@@ -53,8 +52,6 @@ type StandingFacts = Omit<RgStanding, 'restricted' | 'pivotCurrency' | 'windows'
   money: WalletWindowTotals[];
 };
 
-// The wallet reads on the same snapshot, so its money and compliance's facts agree. A failed
-// wallet read rejects the whole standing: never a window that reads as no money.
 async function readStandingFacts(
   tx: DrizzleTx,
   walletReader: WalletReader,
@@ -74,10 +71,6 @@ async function readStandingFacts(
   };
 }
 
-/**
- * The compliance-owned `RG_STANDING_READER`. Reads only: a limit stored without a currency is
- * read in the player's currency and left as it is.
- */
 export class RgStandingReaderService implements RgStandingReader {
   constructor(private readonly deps: RgStandingReaderServiceDeps) {}
 
@@ -117,7 +110,6 @@ export class RgStandingReaderService implements RgStandingReader {
     return { deposits, bets, wins };
   }
 
-  // A currency with nothing in this window needs no rate, so it cannot make the window unknown.
   private priced(money: readonly WalletWindowTotals[], metric: WalletWindowMetric, index: number) {
     const rows = money
       .filter((row) => row.metric === metric)

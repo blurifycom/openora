@@ -1,28 +1,3 @@
-/**
- * Framework-agnostic typed client factory for the OSS platform.
- *
- * Wraps `@orpc/openapi-client` against a contract the CALLER supplies. The
- * platform is headless and modular: each consumer (or each `@openora/<domain>/react`
- * package) composes exactly the contract slices its edition enables and passes
- * it here - the SDK never aggregates domains itself (the no-core-to-domain
- * boundary). Returns a client whose method-and-argument types are inferred from
- * each route's Zod input/output schemas - no manual `client.get` strings.
- *
- * ```ts
- * import { createClient } from '@openora/core/react';
- * import { composeContract } from '../contracts/orpc/index.js';
- * import { gamingContract } from '@openora/core/casino/contracts/gaming';
- *
- * const contract = composeContract({ gaming: gamingContract });
- * const client = createClient(contract, { baseUrl: 'http://localhost:3001' });
- * const page = await client.gaming.listGames({ page: 1, limit: 10 });
- * const games = page.items;
- * ```
- *
- * Cookies are forwarded by default (`credentials: 'include'`), matching the
- * platform's cookie-based auth. Override `fetch` to customize.
- */
-
 import type { AnyContractRouter, ContractRouterClient } from '@orpc/contract';
 import type { JsonifiedClient } from '@orpc/openapi-client';
 import { createORPCClient } from '@orpc/client';
@@ -33,11 +8,8 @@ export type OssClient<TContract extends AnyContractRouter> = JsonifiedClient<
 >;
 
 export type CreateClientOptions = {
-  /** Base URL of the API (eg `http://localhost:3001`). No trailing slash. */
   baseUrl: string;
-  /** Extra headers applied to every request. May return a Promise. */
   headers?: () => Record<string, string> | Promise<Record<string, string>>;
-  /** Override `fetch`. Default forwards cookies via `credentials: 'include'`. */
   fetch?: typeof globalThis.fetch;
 };
 

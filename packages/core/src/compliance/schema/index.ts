@@ -43,8 +43,6 @@ export const rgFlagType = pgEnum('rg_flag_type', RG_FLAG_TYPES);
 export const rgFlagStatus = pgEnum('rg_flag_status', RG_FLAG_STATUSES);
 export const limitChangeKind = pgEnum('limit_change_kind', LIMIT_CHANGE_KINDS);
 
-// Postgres treats every NULL as distinct in a unique index, so a session-type row uses
-// this sentinel instead of NULL to stay covered by the unique index below.
 export const SESSION_LIMIT_CURRENCY = 'SESSION';
 
 export const userLimit = pgTable(
@@ -53,8 +51,6 @@ export const userLimit = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
     type: text({ enum: limitTypes }).notNull(),
-    // Exactly one of the two is set, discriminated by `type`: money-type limits
-    // (deposit/wager/loss) carry amount; the session-type limit carries minutes.
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
     minutes: integer(),
     currency: text(),
@@ -80,14 +76,10 @@ export const userLimit = pgTable(
     ),
     index('user_limit_user_id_idx').on(t.userId),
     index('user_limit_pending_expires_at_idx').on(t.pendingExpiresAt),
-    // The rg-monitor heal reads the limits changed in its window.
     index('user_limit_updated_at_idx').on(t.updatedAt),
   ],
 );
 
-// Each user's limits version: bumped under this row's lock by every writer of a deposit or wager
-// limit, before it re-reads the limits it projects into the ledger (ADR-0057). The row lock
-// orders concurrent writers of one user, so the later one always projects the later state.
 export const rgLimitVersion = pgTable('rg_limit_version', {
   userId: uuid().primaryKey(),
   version: integer().notNull(),
@@ -98,7 +90,6 @@ export const countryRule = pgTable('geo_rule', {
   countryCode: text().notNull().unique('geo_rule_country_code_unique'),
   action: text({ enum: geoRuleActions }).notNull(),
   redirectIp: boolean().notNull().default(false),
-  // Where `redirectIp` sends the country. Redirection is in force only with both set.
   mirrorUrl: text(),
   kycRequired: boolean().notNull().default(true),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -113,9 +104,6 @@ export const globalKycConfig = pgTable('global_kyc_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique('global_kyc_config_singleton_key_unique').default('global'),
   enabled: boolean().notNull().default(GLOBAL_KYC_ENABLED_DEFAULT),
-  // Both in the fx pivot. While KYC is enabled, a withdrawal needs an approved KYC status once
-  // the player's completed deposits exceed the cumulative threshold, or when the withdrawal
-  // itself exceeds the withdrawal threshold. A null withdrawal threshold never triggers.
   withdrawalThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }),
   cumulativeDepositThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
     .notNull()
@@ -129,7 +117,6 @@ export const gameGeoRule = pgTable(
   'game_geo_rule',
   {
     id: uuid().primaryKey().defaultRandom(),
-    // Gaming owns this identifier. Deliberately no cross-module foreign key.
     gameId: uuid().notNull(),
     countryCode: text().notNull(),
     reason: text().notNull(),
@@ -167,7 +154,6 @@ export const providerGeoRule = pgTable(
   ],
 );
 
-// Append-only history: the player's current verification is the latest row by createdAt.
 export const kycVerification = pgTable(
   'kyc_verification',
   {
@@ -179,9 +165,6 @@ export const kycVerification = pgTable(
     status: kycVerificationStatus().notNull(),
     documentTypes: jsonb().$type<(typeof KYC_DOCUMENT_TYPES)[number][]>().notNull().default([]),
     decisionReason: text(),
-    // severity 'error': an operator approves or rejects a player against these. A signal
-    // silently read as absent reads like a clean player, so drift here is reported, not
-    // just logged.
     riskSignals: zodJsonb(KycRiskSignalsSchema, 'kyc_verification.risk_signals', {
       severity: 'error',
     })(),
@@ -189,14 +172,7 @@ export const kycVerification = pgTable(
       severity: 'error',
     })(),
     triggeredBy: kycTriggeredBy().notNull(),
-    // High-water mark of deposits at the last reverify_threshold fire, so re-KYC triggers
-    // once per fresh threshold band rather than on every deposit.
     triggerDeposits: decimal({ precision: 18, scale: 2 }),
-    // The wall-clock time THIS decision was received (webhook arrival / submit time),
-    // never job-processing time - a job/webhook retry or out-of-order worker execution
-    // must not reorder this. `reconcile` refuses to apply an incoming decision older
-    // than this watermark, closing the window where two vendor decisions (eg
-    // approved then rejected) interleave out of order and leave the wrong one applied.
     decisionReceivedAt: timestamp({ withTimezone: true }),
     submittedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     decidedAt: timestamp({ withTimezone: true }),
@@ -216,9 +192,6 @@ export const kycVerification = pgTable(
   ],
 );
 
-// Cooling-off + self-exclusion. The partial-unique on (userId, kind) WHERE active
-// guarantees at most one open exclusion of each kind per player. Auto-expiry is by
-// the login gate comparing `now >= expiresAt`, not a background job.
 export const rgExclusion = pgTable(
   'rg_exclusion',
   {
@@ -249,8 +222,6 @@ export const rgExclusion = pgTable(
   ],
 );
 
-// Monitoring flags surfaced in the back-office. The worker dedupes app-side per
-// (userId, flagType, limitType) - no DB unique because limitType is nullable.
 export const rgFlag = pgTable(
   'rg_flag',
   {
@@ -258,8 +229,6 @@ export const rgFlag = pgTable(
     userId: uuid().notNull(),
     flagType: rgFlagType().notNull(),
     limitType: text(),
-    // Every insert path (raiseFlag) passes detail explicitly; the DB default is a bare
-    // '{}' safety net only, so it's raw SQL rather than a value typed as RgFlagDetail.
     detail: jsonb()
       .$type<RgFlagDetail>()
       .notNull()

@@ -45,8 +45,6 @@ import {
   type SortOrder,
   type User,
 } from '@openora/core/contracts';
-// Read-only cross-domain schema import (sanctioned): token lists show the owning admin, and
-// issuance locks the owner's row to check its standing and reads the session issuing it.
 import { session, user, type Session } from '@openora/core/pam/schema/identity';
 import { mcpToken, type McpToken } from '../schema/index.js';
 import { usersWithoutMcpAccess } from '../shared/admin-grants.js';
@@ -96,8 +94,6 @@ export class McpTokenReauthenticationRequiredError extends Error {
   }
 }
 
-// One refusal for a wrong password and a wrong code, so the answer does not say which was
-// right; `attemptsLeft` comes with a wrong code, which counts toward the second-factor lockout.
 export class McpTokenReauthenticationFailedError extends Error {
   readonly data: { reason: string; attemptsLeft?: number };
   constructor(attemptsLeft?: number) {
@@ -156,7 +152,6 @@ export type McpTokenServiceDeps = {
   now?: (() => Date) | undefined;
 };
 
-/** The issuing admin's role, when known, rides along so a refusal's audit row names it. */
 type IssuerMeta = ClientMeta & { role?: string | undefined };
 
 type RevocationActor = { actorId: User['id'] | null } & Partial<ClientMeta>;
@@ -197,7 +192,6 @@ function sqlState(err: unknown) {
   return err instanceof DatabaseError ? err.code : undefined;
 }
 
-/** What a failed issuance may log: a query error's message and cause carry the token hash. */
 export function failureSignature(err: unknown) {
   if (!(err instanceof Error)) {
     return { name: typeof err, code: null };
@@ -213,10 +207,6 @@ function sanitizeIssuanceFailure(err: unknown) {
   return new McpTokenIssueError();
 }
 
-/**
- * Issues, lists and revokes the bearer tokens an admin's MCP client authenticates with. Only a
- * token's SHA-256 hash is stored; the plaintext leaves this service once, from `create`.
- */
 export class McpTokenService implements McpTokenRevocation {
   private readonly drizzle: DrizzleService;
   private readonly audit: AuditWritePort;
@@ -244,20 +234,6 @@ export class McpTokenService implements McpTokenRevocation {
     this.now = now ?? (() => new Date());
   }
 
-  /**
-   * Refuses a disabled transport, a lifetime over the cap, an owner over the hourly issuance
-   * limit (a 429 carrying `retryAfterMs`), a caller who fails the fresh re-authentication, an
-   * owner who is missing, inactive, a player or without MCP access, a session that has ended,
-   * and an owner at the active-token cap. Any other failure surfaces as `McpTokenIssueError`.
-   *
-   * Every attempt that reaches the re-authentication counts toward the hourly limit, a wrong
-   * password included, so a stolen session cannot guess the password without bound.
-   *
-   * The owner's row is locked before the revocation lock, the order identity's deactivation
-   * takes them in. The MCP grant and the issuing session are read again under the revocation
-   * lock, so a grant change or a session revocation that committed while this issue waited
-   * refuses it.
-   */
   async create(
     {
       adminUserId,
@@ -371,10 +347,6 @@ export class McpTokenService implements McpTokenRevocation {
     };
   }
 
-  /**
-   * Another admin's token answers exactly like an unknown one, so the owner route cannot be used
-   * to probe which token ids exist.
-   */
   revokeMine(adminUserId: User['id'], tokenId: McpToken['id'], meta: ClientMeta) {
     return this.revokeOne({ tokenId, ownerId: adminUserId }, { ...meta, actorId: adminUserId });
   }
@@ -401,7 +373,6 @@ export class McpTokenService implements McpTokenRevocation {
     );
   }
 
-  /** Runs inside `tx` when one is given, so the revocation commits or rolls back with it. */
   async revokeAllForUsers({ userIds, reason, ...actor }: UsersRevocation, tx?: DrizzleTx) {
     if (userIds.length === 0) {
       return { revoked: 0 };
@@ -412,11 +383,6 @@ export class McpTokenService implements McpTokenRevocation {
     );
   }
 
-  /**
-   * Postgres' SHARE ROW EXCLUSIVE waits for every transaction that has inserted a token to
-   * commit, and conflicts with itself: a bulk revocation holding it sees every token issued
-   * before it, and concurrent bulk revocations run one after another.
-   */
   async lockForRevocation(tx: DrizzleTx) {
     await tx.execute(sql`LOCK TABLE ${mcpToken} IN SHARE ROW EXCLUSIVE MODE`);
   }
@@ -483,8 +449,6 @@ export class McpTokenService implements McpTokenRevocation {
     }
   }
 
-  // Compared with `statement_timestamp()`: `now()` is this transaction's start, which can
-  // predate the `now()` a revocation that committed while this issue waited wrote as the expiry.
   private async assertSessionLive(
     tx: DrizzleTx,
     {

@@ -1,9 +1,6 @@
 import 'dotenv/config';
 import { defineConfig } from 'drizzle-kit';
 
-// Own migration history + tracking table, co-located with the module's schema.
-// One DB shared with sibling modules, but one journal per module so a module can
-// be extracted to its own package without history surgery. See ADR-0020/0027.
 export default defineConfig({
   dialect: 'postgresql',
   casing: 'snake_case',

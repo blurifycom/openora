@@ -33,7 +33,6 @@ type RestrictionTable =
 
 type RoomRef = Pick<typeof chatRoom.$inferSelect, 'id' | 'slug' | 'isPublic'>;
 
-// UNION ALL pairs columns by position, so every branch selects these keys in this order.
 function restrictionFields<T extends RestrictionTable>(
   type: ChatRoomRestrictionType,
   source: ChatRoomRestrictionSource,
@@ -185,7 +184,6 @@ export class ChatRoomRestrictionService {
     return { items: await this.withNames(rows), total, page, limit };
   }
 
-  // A room moderator is a player and shows by username; staff show by account name.
   private async withNames(rows: RestrictionRow[]): Promise<ChatRoomRestriction[]> {
     const accounts = await this.accounts.getAccounts(
       rows.flatMap((row) => [row.userId, row.setById]),

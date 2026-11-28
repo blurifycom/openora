@@ -1,182 +1,48 @@
-/**
- * Realtime-transport seam. Client-facing push (live chat messages, PvP round
- * state, live odds, big-win/jackpot feeds) flows through this adapter, so the
- * transport is swappable: the default binding is a first-party in-process
- * fan-out (served to clients as oRPC event-iterators over SSE); a downstream
- * operator binds a managed transport (Ably / GetStream / PubNub) to
- * REALTIME_TRANSPORT without touching modules. This realizes ADR-0007's
- * `ChatTransportPort` as a generic primitive shared across modules - it is NOT
- * the inter-module MESSAGE_BROKER (ADR-0010 #4 keeps client push separate from
- * the event broker, which has delivery guarantees/acks). Money and moderation
- * stay first-party domain logic; they are never delegated to the transport.
- *
- * CHAT_REALTIME_TRANSPORT / CHAT_REALTIME_CLIENT_AUTHORIZER are the SAME two
- * port shapes, scoped to chat only. The chat module defaults them to whatever
- * REALTIME_TRANSPORT/REALTIME_CLIENT_AUTHORIZER resolve to (so out of the box
- * chat behaves identically to every other realtime consumer), but an operator
- * can rebind just the CHAT_-prefixed tokens to run chat on a managed vendor
- * (eg Ably) while KYC status updates and everything else stay first-party SSE
- * - the two seams are independently swappable. `chat-commands` shares the SAME
- * chat channels (gift claims, rain), so it consumes CHAT_REALTIME_TRANSPORT
- * too, never the generic token.
- */
 import { createToken, type Token } from './token.js';
 
-/**
- * Optional presence capability. A first-party transport can offer a simple
- * connected-member count; managed vendors provide richer presence. Kept optional
- * (a capability flag, per ADR-0007) so the base port is the common denominator.
- */
 export type RealtimePresence = {
-  /**
-   * `connectionId` distinguishes concurrent tabs for the same member. Counts remain
-   * per member, so one tab leaving never marks a user offline while another is active.
-   */
   join(channel: string, memberId: string, connectionId: string): void;
   leave(channel: string, memberId: string, connectionId: string): void;
   count(channel: string): number | Promise<number>;
 };
 
-/** A named control signal on a channel: "something here changed, refetch". */
 export type RealtimeSignal = { name: string; payload: unknown };
 
-/**
- * Name of the signal `revokeUserFromChannel` delivers to the user losing access, so a client
- * matches it by constant rather than by a hardcoded string. Exported here rather than from the
- * chat module because the transport that emits it is provider-agnostic; the chat-namespaced
- * name is historical, and any channel a transport revokes carries it.
- */
 export const ACCESS_REVOKED_SIGNAL = 'chat:access-revoked';
 
 export type RealtimeTransport = {
-  /**
-   * Fan a message out to every subscriber of `channel`. Best-effort, at-most-once
-   * for late joiners (the transport is not a system of record - persist first).
-   */
   publish<T>(channel: string, event: T): void | Promise<void>;
-  /**
-   * Fan out a deletion/tombstone event to the channel. The transport does not
-   * remove persisted data; callers must complete the database mutation first.
-   * SSE and managed transports deliver this through their normal live stream.
-   */
   remove<T>(channel: string, event: T): void | Promise<void>;
-  /**
-   * Subscribe a handler to a channel. Returns an unsubscribe fn the caller MUST
-   * invoke on teardown (eg an SSE handler on request abort).
-   */
   subscribe<T>(channel: string, handler: (event: T) => void, userId?: string): () => void;
-  /**
-   * Push a NAMED control signal to a channel - "something about this room changed, refetch"
-   * - as opposed to `publish`/`remove`, which carry the channel's payload stream itself (for
-   * chat, `ChatMessage`). A managed transport delivers it as its own named event, the way
-   * `revokeUserFromChannel` already surfaces `ACCESS_REVOKED_SIGNAL`, so a signal never
-   * reaches a payload subscriber and cannot corrupt that stream. The first-party Redis Pub/Sub
-   * transport implements it over a second Redis channel per chat channel, which the
-   * `/chat/room-stream` SSE route serves alongside the payload lane, so the default deployment
-   * carries signals too. Optional per ADR-0007 all the same: a transport that only fans out
-   * payloads is still a valid transport.
-   *
-   * `subscribeSignal` below is the server-side receiving half; on the client it is
-   * `RealtimeSubscribeHandlers.onSignal` in react/context/realtime-client, which a vendor
-   * adapter feeds from the vendor's own named events. Every half is optional on its own.
-   */
   signal?: (channel: string, name: string, payload: unknown) => void | Promise<void>;
-  /**
-   * Server-side receiving half of `signal`, and the reason the first-party path can carry one:
-   * the signal lane is separate from the payload lane, so subscribing here never sees a
-   * `ChatMessage` and subscribing to `subscribe` never sees a signal. The default SSE route
-   * reads this lane and streams it to browsers; a managed transport delivers its own named
-   * events to the client directly and need not implement this.
-   */
   subscribeSignal?: (
     channel: string,
     handler: (signal: RealtimeSignal) => void,
     userId?: string,
   ) => () => void;
-  /** Revoke managed-provider credentials for a client after access is removed. */
   revokeClient?: (clientId: string) => void | Promise<void>;
-  /**
-   * Revoke a user's access to one channel without affecting other chats. Keyed on the
-   * AUTHENTICATED user, not on a connection: `getConnection` lets a caller pick its own
-   * per-connection `clientId`, so revoking one of those would leave the same person's other
-   * tabs subscribed. Before cutting access, the transport delivers
-   * `{ name: ACCESS_REVOKED_SIGNAL, payload: { channel } }` to the signal subscriptions it
-   * holds for that user on the channel. It must not send the signal to other users or include
-   * `userId` in its payload. Message and signal lanes remain separate, and every connection on
-   * both lanes is removed even when a signal handler fails.
-   *
-   * Reach is every connection the deployment holds for that user on the channel.
-   * `RedisPubSubRealtimeTransport` revokes its own synchronously and fans out over Redis to
-   * sibling replicas sharing its `REALTIME_NAMESPACE` (default `SERVICE_NAME`). The fan-out is best-effort: when the revoking
-   * replica cannot publish, the call still resolves and only its own connections are cut, and a
-   * sibling disconnected from Redis at that moment misses it.
-   */
   revokeUserFromChannel?: (userId: string, channel: string) => void | Promise<void>;
   presence?: RealtimePresence;
-  /**
-   * Returns the set of authenticated user IDs currently online in `channel`.
-   * Anonymous connections (memberIds beginning with 'anonymous:') are excluded.
-   */
   getOnlineUserIds(channel: string): Promise<string[]>;
 };
 
 export const REALTIME_TRANSPORT: Token<RealtimeTransport> = createToken('REALTIME_TRANSPORT');
 
-/** Chat-scoped realtime transport - see the module header comment above. */
 export const CHAT_REALTIME_TRANSPORT: Token<RealtimeTransport> =
   createToken('CHAT_REALTIME_TRANSPORT');
 
-/**
- * Client connection provisioning - the complement to REALTIME_TRANSPORT.
- *
- * REALTIME_TRANSPORT is how the SERVER fans a message out. This seam is how a
- * CLIENT learns to CONNECT and receive. The two models differ by provider:
- *   - first-party (default): the client pulls from our own API over SSE, so the
- *     "grant" is just the stream path - no secret, the session cookie authorizes.
- *   - managed vendor (Ably/GetStream/PubNub): the client connects DIRECTLY to the
- *     vendor edge, so the backend must mint a per-player, capability-scoped token
- *     (never ship the vendor API key to the browser). The grant carries that token.
- * A downstream operator binds this token to its provider's authorizer without any
- * module change; the chat module just hands the grant to the caller. See ADR-0007.
- */
-
-/**
- * What the client needs to start receiving, tagged by `provider` so a pluggable
- * client-side adapter can pick the right transport. Open union - a new vendor adds
- * its own variant without editing core.
- */
 export type RealtimeConnectionGrant =
-  /** First-party SSE: subscribe by opening this event-iterator path on our API. */
   | { provider: 'sse'; streamPath: string; channels: string[] }
-  /**
-   * Ably: a signed TokenRequest the browser exchanges for a scoped token, plus the
-   * channels the player may subscribe to. `tokenRequest` is opaque here (the Ably
-   * SDK shape lives in the consumer, not in vendor-neutral core).
-   */
   | { provider: 'ably'; tokenRequest: unknown; channels: string[] }
-  /** Escape hatch for any other vendor (GetStream, PubNub, ...). */
   | { provider: string; channels: string[]; [key: string]: unknown };
 
 export type RealtimeClientAuthorizerInput = {
-  /**
-   * The authenticated caller; becomes the vendor `clientId` so presence/identity
-   * is bound server-side and cannot be spoofed by the browser.
-   */
   userId: string;
-  /** A stable per-connection id, namespaced under `userId` by the caller (defaults to userId). */
   clientId: string;
-  /**
-   * The channels the caller is allowed to subscribe to (the module computes these
-   * from the player's access - eg the global channel plus their rooms).
-   */
   channels: string[];
 };
 
 export type RealtimeClientAuthorizer = {
-  /**
-   * Mint a connection grant for an authenticated caller. Async because a managed
-   * vendor signs a token request over its SDK.
-   */
   issueGrant(
     input: RealtimeClientAuthorizerInput,
   ): RealtimeConnectionGrant | Promise<RealtimeConnectionGrant>;
@@ -186,7 +52,6 @@ export const REALTIME_CLIENT_AUTHORIZER: Token<RealtimeClientAuthorizer> = creat
   'REALTIME_CLIENT_AUTHORIZER',
 );
 
-/** Chat-scoped client authorizer - see the module header comment above. */
 export const CHAT_REALTIME_CLIENT_AUTHORIZER: Token<RealtimeClientAuthorizer> = createToken(
   'CHAT_REALTIME_CLIENT_AUTHORIZER',
 );

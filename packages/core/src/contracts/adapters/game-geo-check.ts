@@ -35,7 +35,6 @@ export type GameGeoDecision = z.infer<typeof GameGeoDecisionSchema>;
 
 export type GameGeoCheckPort = {
   checkGame(input: GameGeoCheckInput): Promise<GameGeoDecision>;
-  /** Sorted, deduped country codes blocked platform-wide (config + a global block rule). */
   listGloballyBlockedCountries(): Promise<string[]>;
   listGeoRulePairs?(filter?: {
     countries?: readonly string[];

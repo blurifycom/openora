@@ -13,7 +13,6 @@ export function createDomainError<T extends unknown[]>(
   };
 }
 
-/** Shared factories for recurrent domain-error shapes. `createDomainError` stays available for bespoke errors. */
 export const makeNotFoundError = (entity: string) =>
   createDomainError<[id: string]>(`${entity}NotFoundError`, (id) => `${entity} not found: ${id}`);
 

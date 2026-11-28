@@ -16,7 +16,6 @@ export const ReplaceGameGeoRulesInputSchema = z.object({
   rules: z
     .array(
       z.object({
-        // Postgres returns a uuid lowercase; an uppercase id would miss every comparison.
         gameId: UuidSchema.transform((id) => id.toLowerCase()),
         countryCodes: z.array(CountryCodeSchema).max(250),
       }),
@@ -34,12 +33,6 @@ export type ReplaceGameGeoRulesResult = {
 };
 
 export type GameGeoRuleCommands = {
-  /**
-   * Makes `source`'s rules for each listed game match its `countryCodes`, as the system actor.
-   * A rule another source owns is never touched, so an admin rule on the same game and
-   * country wins. A game left out keeps its rules; pass an empty list to clear one. Unknown
-   * game ids are skipped and reported.
-   */
   replaceGameGeoRules(input: ReplaceGameGeoRulesInput): Promise<ReplaceGameGeoRulesResult>;
 };
 

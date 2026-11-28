@@ -6,11 +6,6 @@ import { game, gameCategoryGame } from '../../schema/index.js';
 
 const ManualSortParamsSchema = z.object({});
 
-/**
- * Drag-and-drop order: the operator's own `position` on the category-game link, games
- * without one sorting last by name. `position` is set only by the reorder route, never by
- * this definition - `rank()` just reads what is already there.
- */
 export function createManualGameSort(
   drizzle: DrizzleService,
 ): GameSortDefinition<z.infer<typeof ManualSortParamsSchema>> {

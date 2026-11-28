@@ -3,11 +3,6 @@ import type { ExchangeRateQuote, ExchangeRateReader } from '@openora/core/contra
 
 type CurrencyTotal = { currency: string; total: string | null };
 
-/**
- * Per-currency totals summed in the pivot currency; null when a currency with a non-zero total
- * has no rate. A currency whose amounts cancel out needs no rate, so it cannot make the total
- * unknown.
- */
 export function pricedInPivot(
   rows: readonly CurrencyTotal[],
   pivotCurrency: string,
@@ -22,10 +17,6 @@ export function pricedInPivot(
   );
 }
 
-/**
- * `rates` answering each currency pair from the first quote it gave, so one read that prices
- * many players asks for a pair's rate once.
- */
 export function withQuoteCache(rates: ExchangeRateReader): ExchangeRateReader {
   const quotes = new Map<string, Promise<ExchangeRateQuote | null>>();
   const getRate = (from: string, to: string) => {

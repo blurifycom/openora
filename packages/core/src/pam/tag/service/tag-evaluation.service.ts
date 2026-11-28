@@ -65,7 +65,6 @@ export class TagEvaluationService {
     this.adminUserDirectory = deps.adminUserDirectory;
   }
 
-  /** Loads a rule; returns null when it does not exist or is disabled. Never throws for a missing row. */
   private async getEnabledRule(tagKey: TagKey): Promise<TagRule | null> {
     try {
       const rule = await this.rule.getTagRule(tagKey);
@@ -81,7 +80,6 @@ export class TagEvaluationService {
     }
   }
 
-  /** Idempotently assigns a tag; swallows TagAlreadyInUseError. */
   private async tryAssignTag(args: {
     userId: User['id'];
     tagKey: TagKey;
@@ -120,7 +118,6 @@ export class TagEvaluationService {
     }
   }
 
-  /** Idempotently removes a tag: no assignment, or no such tag at all, is nothing to remove. */
   private async tryRemoveTag(args: { userId: User['id']; tagKey: TagKey; reason: string }) {
     const { userId, ...removal } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
@@ -152,10 +149,6 @@ export class TagEvaluationService {
     }
   }
 
-  /**
-   * Evaluates high_roller, large_depositor and recent_depositor rules.
-   * Called on wallet.deposit.completed.
-   */
   async onDepositCompleted(payload: unknown) {
     const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
     if (!parsed.success) {
@@ -177,8 +170,6 @@ export class TagEvaluationService {
       });
     }
 
-    // Tag-threshold comparisons are evaluation decisions, not ledger writes -
-    // moneyToNumber is the documented single conversion point.
     if (
       largeDepositor &&
       largeDepositor.threshold !== null &&
@@ -194,8 +185,6 @@ export class TagEvaluationService {
     if (highRoller && highRoller.threshold !== null) {
       const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
       if (lifetimeDeposit === null) {
-        // Never tag (or untag - a sticky high_roller stays sticky) off a missing rate: a
-        // fabricated total can't be told apart from a real one once it's compared and assigned.
         logger.warn(
           { userId },
           'onDepositCompleted: could not price lifetime deposits, skipping high_roller evaluation',
@@ -216,7 +205,6 @@ export class TagEvaluationService {
     }
   }
 
-  /** True when the withdrawal_review rule is enabled and amount crosses its threshold. */
   private async _withdrawalReviewThresholdCrossed(amount: string): Promise<boolean> {
     const rule = await this.getEnabledRule('withdrawal_review');
     if (!rule || rule.threshold === null) {
@@ -225,13 +213,6 @@ export class TagEvaluationService {
     return moneyToNumber(amount) >= moneyToNumber(rule.threshold);
   }
 
-  /**
-   * Screens a requested withdrawal: assigns withdrawal_review when the attempt crosses its
-   * threshold, and commits the `tag.withdrawal.screened` verdict with it - the wallet waits on
-   * that verdict before it auto-approves (ADR-0059). Sticky - never auto-removed here or anywhere
-   * else. A review due for a player that cannot be resolved files no verdict, so the withdrawal
-   * stays for a human. A throw is redelivered; one that never succeeds leaves it there too.
-   */
   async onWithdrawalRequested(payload: unknown) {
     const parsed = domainEventSchemas['wallet.withdrawal.requested'].safeParse(payload);
     if (!parsed.success) {
@@ -287,15 +268,6 @@ export class TagEvaluationService {
     }
   }
 
-  /**
-   * Evaluates the high_risk rule based on withdrawal amount and frequency.
-   * Called on wallet.withdrawal.completed. Only assigns the tag when a threshold is
-   * crossed; removal is handled separately by the daily resweep in runDailyEvaluation
-   * (a rolling-window count/amount can drop back under threshold with no new
-   * withdrawal, so it can't be detected event-driven-only). Records which breach
-   * condition(s) fired in assignMetadata - the resweep uses this to know whether the
-   * amount dimension (never resweepable, see _runHighRiskResweep) was involved.
-   */
   async onWithdrawalCompleted(payload: unknown) {
     const parsed = domainEventSchemas['wallet.withdrawal.completed'].safeParse(payload);
     if (!parsed.success) {
@@ -335,11 +307,6 @@ export class TagEvaluationService {
     }
   }
 
-  /**
-   * Handles password login side effects:
-   *  - removes inactive/dormant_high_roller on activity
-   *  - assigns multi_account + bonus_abuser when another player has used this login IP
-   */
   async onUserLogin(payload: unknown) {
     const parsed = domainEventSchemas['identity.user.login'].safeParse(payload);
     if (!parsed.success) {
@@ -349,10 +316,6 @@ export class TagEvaluationService {
     await this.onAuthenticatedLogin({ userId, ip });
   }
 
-  /**
-   * Phone-login path mirrors password-login risk evaluation. The signal is the same
-   * authenticated session IP; the login method is intentionally not encoded in the tag.
-   */
   async onUserPhoneLogin(payload: unknown) {
     const { userId, ip } = domainEventSchemas['identity.user.phone_login'].parse(payload);
     await this.onAuthenticatedLogin({ userId, ip });
@@ -406,20 +369,12 @@ export class TagEvaluationService {
     });
   }
 
-  /**
-   * Applies kyc_pending on KYC submission only while the profile still has a pending-like
-   * status (Basic only - `player.kycStatus` is a Basic-only concept), and clears the
-   * submitting tier's own *_kyc_needed tag. Does not clear kyc_rejected: that sticky tag
-   * remains until a later approved state explicitly clears it.
-   */
   async onKycSubmitted(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.submitted'].safeParse(payload);
     if (!parsed.success) {
       return;
     }
     const { userId, tier } = parsed.data;
-    // Each tier clears only its own *_kyc_needed tag - completing one tier says nothing
-    // about the other's state.
     await this.removeKycNeededTag(userId, tier, 'kyc resubmitted');
     if (tier !== 'basic') {
       return;
@@ -453,8 +408,6 @@ export class TagEvaluationService {
       return;
     }
     const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
-    // null still means there was at least one deposit (just one this pricing pass couldn't
-    // total) - this rule only asks "any deposit on file", so an unpriced amount still assigns.
     if (lifetimeDeposit === null || moneyToNumber(lifetimeDeposit) > 0) {
       await this.tryAssignTag({
         userId,
@@ -464,22 +417,6 @@ export class TagEvaluationService {
     }
   }
 
-  /**
-   * Manages kyc_pending / kyc_rejected / basic_kyc_needed / advanced_kyc_needed lifecycle
-   * on KYC status changes. Called on compliance.kyc.updated. Assignment respects each tag
-   * rule's isEnabled flag; terminal cleanup still runs so disabled rules cannot strand old
-   * active rows.
-   *
-   * Transitions:
-   *   approved / manually_overridden -> remove the tier's own *_kyc_needed tag; Basic also
-   *                                      removes kyc_pending + kyc_rejected
-   *   rejected                       -> Basic only: remove kyc_pending, assign kyc_rejected,
-   *                                      evaluate basic_kyc_needed
-   *   resubmission_requested         -> Basic only: assign kyc_pending, keep kyc_rejected sticky
-   *
-   * kyc_pending/kyc_rejected track `player.kycStatus`, a Basic-only concept, so every
-   * branch below Basic-tier-only-clearing bails for Advanced.
-   */
   async onKycStatusUpdated(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
     if (!parsed.success) {
@@ -488,8 +425,6 @@ export class TagEvaluationService {
     const { userId, status, tier } = parsed.data;
 
     if (normalizeKycStatus(status) === 'approved' || status === 'manually_overridden') {
-      // Each tier clears only its own *_kyc_needed tag - an Advanced approval must be
-      // able to clear advanced_kyc_needed on its own, same as Basic clears its own.
       await this.removeKycNeededTag(userId, tier, 'kyc approved');
       if (tier !== 'basic') {
         return;
@@ -529,11 +464,6 @@ export class TagEvaluationService {
     }
   }
 
-  /**
-   * Assigns advanced_kyc_needed as a pure label over compliance's own re-KYC decision.
-   * Called on compliance.kyc.reverify_required. Respects the advanced_kyc_needed rule's
-   * isEnabled flag.
-   */
   async onKycReverifyRequired(payload: unknown) {
     const parsed = domainEventSchemas['compliance.kyc.reverify_required'].safeParse(payload);
     if (!parsed.success) {
@@ -551,11 +481,6 @@ export class TagEvaluationService {
     });
   }
 
-  /**
-   * Assigns high_risk as a pure label over compliance's own device/IP screening decision.
-   * Called on compliance.kyc.high_risk_signal_detected. Respects the high_risk rule's
-   * isEnabled flag; never auto-removes (risk designation requires an explicit admin clear).
-   */
   async onKycHighRiskSignalDetected(payload: unknown) {
     const parsed =
       domainEventSchemas['compliance.kyc.high_risk_signal_detected'].safeParse(payload);
@@ -574,10 +499,6 @@ export class TagEvaluationService {
     });
   }
 
-  /**
-   * Assigns the sticky age_verification_review on compliance.kyc.underage_detected. Never
-   * auto-removed: an admin clears it after reviewing the verified document.
-   */
   async onKycUnderageDetected(payload: unknown) {
     const { userId } = domainEventSchemas['compliance.kyc.underage_detected'].parse(payload);
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
@@ -591,7 +512,6 @@ export class TagEvaluationService {
     });
   }
 
-  /** Assigns the sticky kyc_dob_mismatch on compliance.kyc.dob_mismatch_detected. */
   async onKycDobMismatchDetected(payload: unknown) {
     const { userId } = domainEventSchemas['compliance.kyc.dob_mismatch_detected'].parse(payload);
     await this.tryAssignTag({
@@ -601,10 +521,6 @@ export class TagEvaluationService {
     });
   }
 
-  /**
-   * Assigns self_excluded when a player activates self-exclusion.
-   * Called on rg.self_exclusion.activated.
-   */
   async onSelfExclusionActivated(payload: unknown) {
     const { userId } = domainEventSchemas['rg.self_exclusion.activated'].parse(payload);
     await this.tryAssignTag({
@@ -614,26 +530,11 @@ export class TagEvaluationService {
     });
   }
 
-  /**
-   * Removes self_excluded when a player's self-exclusion is lifted.
-   * Called on rg.self_exclusion.lifted.
-   */
   async onSelfExclusionLifted(payload: unknown) {
     const { userId } = domainEventSchemas['rg.self_exclusion.lifted'].parse(payload);
     await this.tryRemoveTag({ userId, tagKey: 'self_excluded', reason: 'self-exclusion lifted' });
   }
 
-  /**
-   * Replaces the single mutable `level` tag with the player's new level.
-   * Called on player.level.changed (emitted by PlayerService.update() after commit).
-   * Not sticky - the level value lives only in assignReason text, never as a separate
-   * tag key per level. The swap goes through TagService.replacePlayerTag: removal of
-   * the prior active row (silent no-op when absent) + insert of the new one on ONE
-   * transaction, so a mid-swap failure can never strand the player with the old row
-   * removed and no new one committed. The loser of a concurrent replace throws
-   * TagAlreadyInUseError with nothing committed - swallowed here as the usual
-   * idempotent no-op (player.level itself stays the source of truth).
-   */
   async onPlayerLevelChanged(payload: unknown) {
     const { userId, newLevel } = domainEventSchemas['player.level.changed'].parse(payload);
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
@@ -657,35 +558,6 @@ export class TagEvaluationService {
     }
   }
 
-  /**
-   * Daily scheduled evaluation, four independent sweeps:
-   *  - inactive: assigns to players who have not logged in for rule.thresholdDays
-   *    days. Removal is handled by onUserLogin on next login.
-   *  - dormant_high_roller: a co-occurrence check, not a history lookup - high_roller
-   *    is only re-evaluated on deposit, so a player who goes quiet never loses it via
-   *    that path. Assigns to players who are both currently inactive (per this tag's
-   *    OWN thresholdDays, decoupled from the inactive rule's) and currently hold an
-   *    active high_roller tag. Removal is handled by onUserLogin on next login.
-   *  - high_risk resweep: removal-only, frequency dimension only. A rolling
-   *    withdrawal-count window can drop back under threshold with no new withdrawal
-   *    to trigger onWithdrawalCompleted, so current holders are rechecked here and
-   *    removed once the count falls below threshold. Deliberately does NOT recheck
-   *    the amount dimension - assignment's amount check has no time bound, so a
-   *    windowed recheck would silently de-designate a still-risky player once their
-   *    triggering withdrawal ages out of the window (an AML false negative). Now gated
-   *    on each holder's assignMetadata (recorded at assignment): a holder whose
-   *    metadata shows an amount breach is skipped regardless of their current count,
-   *    and a holder with null metadata (pre-migration/legacy row, or manually
-   *    assigned) is also skipped - "unknown why this was assigned" is treated as
-   *    "do not auto-remove". Skipped entirely when thresholdDays or thresholdCount is
-   *    null - an amount-only high_risk rule isn't resweepable by the cron; it stays
-   *    until an admin clears it or a future withdrawal re-triggers assignment.
-   *  - recent_depositor: removal-only. A deposit assigns it (onDepositCompleted), and no
-   *    event marks the day it stops being true, so a holder whose last completed deposit
-   *    reached the balance more than rule.thresholdDays days ago, or who has none, loses
-   *    it here. A wallet reader without getLastDepositAts cannot say who that is, so then the
-   *    tag is neither swept nor assigned: one nothing removes would outlive its window.
-   */
   async runDailyEvaluation() {
     await this._runInactiveSweep();
     await this._runDormantHighRollerSweep();
@@ -702,8 +574,6 @@ export class TagEvaluationService {
     const sinceDate = new Date(Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000);
     const userIds = await this.identityReader.getPlayerIdsInactiveSince(sinceDate);
 
-    // Capped fan-out: the inactive-player set is unbounded, so hold at most EVAL_CHUNK_SIZE
-    // assignments in flight rather than one giant Promise.all that would exhaust the pool.
     await mapConcurrent(userIds, EVAL_CHUNK_SIZE, (userId) =>
       this.tryAssignTag({
         userId,
@@ -736,22 +606,6 @@ export class TagEvaluationService {
     );
   }
 
-  /**
-   * Frequency-only removal. Assignment (onWithdrawalCompleted) checks a single
-   * withdrawal's amount with no time bound, so an amount-only breach from outside
-   * this rolling window is invisible to a windowed recheck - resweeping it would
-   * silently de-designate a still-risky player (an AML false negative). Only the
-   * count dimension, which IS windowed at assignment time, is safe to resweep. Each
-   * holder's assignMetadata (recorded at assignment) records which breach dimension(s)
-   * fired; a holder whose metadata shows an amount breach, or whose metadata is null
-   * (pre-migration/legacy row or manual assignment - unknown why it was assigned), is
-   * skipped regardless of their current windowed count - pinned until an admin
-   * manually clears the tag or a future onWithdrawalCompleted re-evaluation populates
-   * metadata. Skipped entirely when thresholdDays or thresholdCount is null - an
-   * amount-only rule has no frequency dimension to resweep against and is never
-   * auto-cleared by the cron, only by an admin or a future onWithdrawalCompleted
-   * re-evaluation.
-   */
   private async _runHighRiskResweep() {
     const rule = await this.getEnabledRule('high_risk');
     if (!rule || rule.thresholdDays === null || rule.thresholdCount === null) {
@@ -766,10 +620,6 @@ export class TagEvaluationService {
     const holderUserIds = holders.map((h) => h.userId);
     const metadataByUser = new Map(holders.map((h) => [h.userId, h.assignMetadata]));
 
-    // One set-based query for all holders' counts, then bound only the per-user
-    // removal writes - the reads are already batched, not per-row. The batched method
-    // is optional on the port (an external WalletReader may predate it), so fall back to
-    // bounded fan-out over the singular getWithdrawalCountInWindow when it's absent.
     const countsByUser = this.walletReader.getWithdrawalCountsInWindow
       ? await this.walletReader.getWithdrawalCountsInWindow(holderUserIds, thresholdDays)
       : new Map(
@@ -812,11 +662,6 @@ export class TagEvaluationService {
     }
   }
 
-  /**
-   * Removes the tag from each holder with no deposit since `cutoff`, then reads again and gives
-   * it back to anyone who deposited meanwhile: a deposit that landed between the first read and
-   * the removal found the tag still held, so its own assignment did nothing.
-   */
   private async sweepRecentDepositors(
     holders: readonly TagHolder[],
     cutoff: number,

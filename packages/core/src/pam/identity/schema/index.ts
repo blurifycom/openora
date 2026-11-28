@@ -27,8 +27,6 @@ export const user = pgTable(
     name: text().notNull(),
     username: text().notNull(),
     email: text().notNull().unique(),
-    // The login email the account was created with, set once by createAuth's user-create
-    // hook. Null on accounts created before it existed.
     registeredEmail: text(),
     emailVerified: boolean().notNull().default(false),
     image: text(),
@@ -36,68 +34,33 @@ export const user = pgTable(
     language: text().notNull().default('en'),
     role: text().notNull().default('player'),
     isActive: boolean().notNull().default(true),
-    // Required by the drizzle adapter when better-auth admin() plugin is enabled;
-    // omitting these causes "field banned does not exist" on user creation.
     banned: boolean().default(false),
     banReason: text(),
     banExpires: timestamp({ withTimezone: true }),
-    // The ledger's play eligibility projection keeps the highest version it has seen. Bumped
-    // under this row's lock by every writer of an eligibility input, so it orders their pushes.
     playEligibilityVersion: integer().notNull().default(0),
-    // Required by the drizzle adapter when better-auth twoFactor() plugin is enabled.
-    // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
-    // for SQL identifiers so migrations and runtime are consistent.
     twoFactorEnabled: boolean().default(false),
-    // Which delivery the account's single enrolment uses. Ours, not better-auth's: the
-    // plugin knows one secret and lets any of its verify endpoints spend it, so this
-    // column is what pins an account to `app`, `email` or `sms`. Null while unenrolled.
     twoFactorMethod: twoFactorMethodEnum(),
     phoneNumber: text().unique(),
     phoneVerified: boolean().notNull().default(false),
     phoneVerifiedAt: timestamp({ withTimezone: true }),
-    // A hash does not reveal a legacy password's length, so existing rows start false
-    // and each qualifying password write records the policy state explicitly.
     passwordMeetsPolicy: boolean().notNull().default(false),
     loginWithdrawalAlertsEnabled: boolean().notNull().default(false),
-    // How long a session may sit idle before it is cut. Existing rows adopt the 7-day
-    // default; they are not cut on deploy day, because a session with no activity on
-    // record yet is stamped rather than judged (see SessionIdleService).
     autoLogoutDuration: autoLogoutDurationEnum().notNull().default('7d'),
-    // Off by default: a trusted device may skip the second factor. On, every login is
-    // challenged regardless of which browser it comes from.
     requireTwoFactorOnLogin: boolean().notNull().default(false),
-    // A 4-digit withdrawal PIN, independent of the login credential. HMAC-SHA256'd with
-    // a dedicated secret (never the plaintext) - "is a PIN set" is derived as
-    // `withdrawalPinHash !== null`, no separate boolean column.
     withdrawalPinHash: text(),
     withdrawalPinSetAt: timestamp({ withTimezone: true }),
-    // Consecutive wrong PINs at withdrawal time, and the end of the lock the last of them
-    // set. Their own columns, like the second-factor ones: a PIN lock must not eat the
-    // login budget, and the lock stops withdrawals only - the player can still sign in.
     withdrawalPinFailedAttempts: integer().notNull().default(0),
     withdrawalPinLockedUntil: timestamp({ withTimezone: true }),
-    // Player-set, free-text, case-sensitive recognition phrase stamped into every outgoing
-    // platform email so the player can tell a genuine email from a phishing attempt. Plaintext
-    // (not hashed) - read back verbatim both to the owning player and into outgoing email.
     antiPhishingCode: text(),
     failedLoginAttempts: integer().notNull().default(0),
     lockoutUntil: timestamp({ withTimezone: true }),
-    // Second-factor lockout, counted separately from the password-login columns above:
-    // the two thresholds are configured independently and a 2FA lockout must not
-    // consume the password-login budget (or vice versa).
     failedTwoFactorAttempts: integer().notNull().default(0),
     twoFactorLockoutUntil: timestamp({ withTimezone: true }),
     twoFactorLockoutCount: integer().notNull().default(0),
     lastFailedTwoFactorAt: timestamp({ withTimezone: true }),
-    // Progressive lockout tiers: `lockoutCount` counts lockouts inside a rolling 24h
-    // window (reset once `lastLockoutAt` falls outside it), escalating the duration
-    // 1min -> 5min -> 15min. Shared by every login method.
     lockoutCount: integer().notNull().default(0),
     lastLockoutAt: timestamp({ withTimezone: true }),
     lastFailedLoginAt: timestamp({ withTimezone: true }),
-    // Responsible-Gambling login block (cooling-off / self-exclusion). Written only via
-    // the LOGIN_ENFORCEMENT port. `rgBlockedUntil` null while blocked = indefinite
-    // (self-exclusion); a Date is the cooling-off expiry the login gate auto-clears.
     rgBlocked: boolean().notNull().default(false),
     rgBlockedUntil: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -105,8 +68,6 @@ export const user = pgTable(
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
-  // Trigram GIN index so the back-office player search (`ILIKE '%term%'` on email)
-  // is index-backed instead of a seq scan. Requires the pg_trgm extension.
   (t) => [
     uniqueIndex('user_username_unique').on(sql`lower(${t.username})`),
     index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`),
@@ -130,11 +91,6 @@ export const session = pgTable(
       .$onUpdateFn(() => new Date()),
     ipAddress: text(),
     userAgent: text(),
-    // Written by the idle policy, throttled. better-auth owns `updatedAt` and
-    // ties it to its own updateAge bookkeeping, so touching that column to record
-    // activity would shift session expiry - this one is ours and better-auth ignores it.
-    // Defaults to the sign-in time, so a new session's idle clock starts at once; only rows
-    // that predate the default are null, and the idle policy handles those on their own.
     lastSeenAt: timestamp({ withTimezone: true }).defaultNow(),
     userId: uuid()
       .notNull()
@@ -182,7 +138,6 @@ export const verification = pgTable(
   (t) => [index('verification_identifier_idx').on(t.identifier)],
 );
 
-// Field shape mirrors better-auth twoFactor() plugin schema. See @openora/core/server createAuth().
 export const twoFactor = pgTable(
   'two_factor',
   {
@@ -193,8 +148,6 @@ export const twoFactor = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     verified: boolean().default(true),
-    // Counter and cooldown the plugin maintains itself; the adapter rejects
-    // every twoFactor write while they are missing from the table.
     failedVerificationCount: integer().notNull().default(0),
     lockedUntil: timestamp({ withTimezone: true }),
   },
@@ -204,9 +157,6 @@ export const twoFactor = pgTable(
   ],
 );
 
-// One active OTP per user: `requestOtp` upserts by `userId`, so a new code overwrites the previous one.
-// `codeHash` is SHA-256 of the 6-digit code - the plaintext OTP is never stored.
-// `failedAttempts` caps guessing at 5 per session.
 export const smsOtpSession = pgTable(
   'sms_otp_session',
   {
@@ -224,9 +174,6 @@ export const smsOtpSession = pgTable(
   (t) => [index('sms_otp_session_phone_idx').on(t.phone)],
 );
 
-// One live phone-binding challenge per user. This is deliberately separate from
-// smsOtpSession, which belongs to unauthenticated phone login and must never confer
-// authority to change a standing login credential.
 export const phoneVerificationSession = pgTable(
   'phone_verification_session',
   {
@@ -251,10 +198,6 @@ export const phoneVerificationSession = pgTable(
   ],
 );
 
-// Server-side trusted-device registry. better-auth issues its own opaque trust cookie,
-// which cannot be listed or revoked; a device only skips the second factor when BOTH
-// that cookie and an unrevoked row here are present, so revoking the row forces 2FA on
-// the very next request.
 export const adminTrustedDevice = pgTable(
   'admin_trusted_device',
   {

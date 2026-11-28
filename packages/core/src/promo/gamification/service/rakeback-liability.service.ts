@@ -12,7 +12,6 @@ import { promoRakebackAccrual, promoRankPeriodicReward } from '../schema/index.j
 const accrual = promoRakebackAccrual;
 const reward = promoRankPeriodicReward;
 
-/** An amount, how many accruals and how many players make it, over the accruals `where` holds. */
 const figures = (where: SQL) => ({
   amount: sumMoney(accrual.amount, where),
   accruals: sql<number>`count(*) filter (where ${where})`.mapWith(Number),
@@ -25,11 +24,6 @@ const rewardFigures = (where: SQL) => ({
   players: sql<number>`count(distinct ${reward.userId}) filter (where ${where})`.mapWith(Number),
 });
 
-/**
- * bonus.rakeback_liability: what rakeback the operator owes now and what accrued and was claimed
- * over a range, per currency, from the accruals alone - a reader over DRIZZLE, as the kernel builds
- * every tool's handler when it starts.
- */
 export class RakebackLiabilityService {
   constructor(private readonly drizzle: DrizzleService) {}
 
