@@ -373,25 +373,16 @@ export class GameCategoryMembershipService {
     });
   }
 
-  private async publishFailure(
-    tx: DrizzleTx,
-    { categoryId, trigger, actor }: EvaluateArgs,
-    err: unknown,
-  ) {
-    if (trigger !== 'admin') {
-      return;
-    }
-    await this.events.emitInTransaction(tx, 'gaming.category.membership_evaluation.failed', {
+  private failurePayload({ categoryId, actor }: EvaluateArgs, err: unknown) {
+    return {
       categoryId,
       actorId: actor?.actorId ?? SYSTEM_ACTOR_ID,
       reason: failureReason(err),
       ip: actor?.ip ?? null,
       userAgent: actor?.userAgent ?? null,
-    });
+    };
   }
 
-  // Best effort: a failure here is logged, not thrown, so the caller still sees the
-  // error that mattered.
   private async recordFailedAttempt(
     categoryId: GameCategory['id'],
     snapshot: EvaluationSnapshot,
@@ -415,8 +406,15 @@ export class GameCategoryMembershipService {
             ),
           )
           .returning({ id: gameCategory.id });
-        if (recorded.length > 0 || announce.announceWhenStale) {
-          await this.publishFailure(tx, announce.args, err);
+        if (
+          announce.args.trigger === 'admin' &&
+          (recorded.length > 0 || announce.announceWhenStale)
+        ) {
+          await this.events.emitInTransaction(
+            tx,
+            'gaming.category.membership_evaluation.failed',
+            this.failurePayload(announce.args, err),
+          );
         }
         return recorded.length > 0;
       });
@@ -425,6 +423,12 @@ export class GameCategoryMembershipService {
         { err: recordErr, categoryId },
         'gaming.category.membership: could not record a failed attempt',
       );
+      if (announce.args.trigger === 'admin') {
+        this.events.emit(
+          'gaming.category.membership_evaluation.failed',
+          this.failurePayload(announce.args, err),
+        );
+      }
       return true;
     }
   }

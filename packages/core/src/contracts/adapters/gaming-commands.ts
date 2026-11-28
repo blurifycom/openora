@@ -134,14 +134,15 @@ export type GamingCommands = {
   ): Promise<GamingAccumulateExternalRoundOutcome>;
   /**
    * With `setGameAvailabilityInTransaction`, the only writer of a game's vendor-unavailable
-   * flag; an unavailable game is unplayable. Runs in its own transaction and emits after it.
+   * flag; an unavailable game is unplayable.
    * `changed` is false when the game was already in that state. Throws when the game is unknown.
    */
   setGameAvailability(args: GamingSetGameAvailabilityArgs): Promise<{ changed: boolean }>;
   /**
    * `setGameAvailability` on the caller's own `tx`, so the flag flips atomically with the
    * caller's writes. It never emits: on `changed: true` the caller emits
-   * `gaming.game.availability_changed` with `event` once its transaction commits; the event
+   * `gaming.game.availability_changed` with `event` on that same transaction through
+   * `emitInTransaction`; the event
    * queues the re-rank and is the core audit record of the flip.
    * The game row stays locked until the caller commits, so flip one game per transaction and
    * keep it short. Throws when the game is unknown. Optional on the type for the same reason

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
-import { DRIZZLE, eventOutbox, processedEvents } from '@openora/core/server';
+import { DRIZZLE, EVENT_BUS, eventOutbox, processedEvents } from '@openora/core/server';
 import { auditLog } from '@openora/core/audit/schema';
-import { game, gameProvider } from '@openora/core/casino/schema/gaming';
+import { game, gameProvider, gameTag } from '@openora/core/casino/schema/gaming';
 import { asAdmin, bootE2e, closeE2e, flushAudit, type E2e, type TestClient } from '../index.js';
 
 type CatalogE2e = E2e & { admin: TestClient };
@@ -51,6 +51,9 @@ const auditRowsOf = async (eventId: string) => {
   await flushAudit(e2e.app);
   return db().select().from(auditLog).where(eq(auditLog.eventId, eventId));
 };
+
+const payloadTagId = (payload: unknown) =>
+  typeof payload === 'object' && payload !== null && 'tagId' in payload ? payload.tagId : undefined;
 
 async function newGame() {
   const [provider] = await db()
@@ -141,22 +144,29 @@ describe('catalogue mutations reach the outbox with the transaction that made th
     expect(rows).toHaveLength(1);
   });
 
-  it('leaves no outbox row behind a refused mutation', async () => {
-    const name = `outbox-dup-${randomUUID()}`;
-    await idOf(await e2e.admin.post('/backoffice/gaming/tags', { name }));
-    const before = await db()
-      .select()
-      .from(eventOutbox)
-      .where(eq(eventOutbox.topic, 'gaming.tag.created'));
+  it('rolls back the change, its outbox row and its audit record together', async () => {
+    const name = `outbox-rollback-${randomUUID()}`;
+    const tagId = await idOf(await e2e.admin.post('/backoffice/gaming/tags', { name }));
+    e2e.app.container.get(EVENT_BUS).tapTransactional(async (_tx, envelope) => {
+      if (envelope.topic === 'gaming.tag.updated' && payloadTagId(envelope.payload) === tagId) {
+        throw new Error('forced failure after the event was written');
+      }
+    });
 
-    const refused = await e2e.admin.post('/backoffice/gaming/tags', { name });
+    const renamed = await e2e.admin.patch(`/backoffice/gaming/tags/${tagId}`, {
+      name: `${name}-b`,
+    });
 
-    expect(refused.status).toBeGreaterThanOrEqual(400);
-    const after = await db()
+    expect(renamed.status).toBeGreaterThanOrEqual(500);
+    const [tag] = await db().select().from(gameTag).where(eq(gameTag.id, tagId));
+    expect(tag?.name).toBe(name);
+    expect(await outboxRows('gaming.tag.updated', 'tagId', tagId)).toHaveLength(0);
+    await flushAudit(e2e.app);
+    const audited = await db()
       .select()
-      .from(eventOutbox)
-      .where(eq(eventOutbox.topic, 'gaming.tag.created'));
-    expect(after).toHaveLength(before.length);
+      .from(auditLog)
+      .where(and(eq(auditLog.action, 'gaming.tag.updated'), eq(auditLog.resourceId, tagId)));
+    expect(audited).toHaveLength(0);
   });
 
   it('applies a redelivered event once', async () => {
