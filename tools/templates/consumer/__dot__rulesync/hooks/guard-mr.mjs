@@ -6,11 +6,7 @@
 // GraphQL) is denied unless that record matches the commit it sends: the named source branch
 // (`--source-branch`, `--head`), else HEAD of a clean tree. A promotion from a shared branch was
 // verified by that branch's pipeline and passes. Every create in a chain is checked, and one that
-// names two different source branches is denied. From a checkout of another repository (one
-// without this guard, so no stamp) only one plain `gh pr create`/`glab mr create` passes, left to that
-// repository's rules: no shell syntax, no `-R`/`--repo`, and no remote of that checkout pointing at
-// this repository. Anything else there is denied, since text cannot prove where it lands. Git errors
-// fail open, like every other guard.
+// names two different source branches is denied. Git errors fail open, like every other guard.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -51,6 +47,8 @@ const blankProse = (command) =>
 // `-R`/`--repo`. A quoted value that starts with `-` stays, so a quoted flag is never hidden.
 const PLAIN_CREATE =
   /^[ \t]*(?:gh[ \t]+pr|glab[ \t]+mr)[ \t]+(?:create|new)(?:[ \t]+[^\s;&|$`'"(){}[\]*?\\<>!~]+)*[ \t]*$/;
+const LEADING_CD =
+  /^[ \t]*cd[ \t]+(?:'(\/[^'\n]*)'|"(\/[^"$`\\!\n]*)"|((?:\/|~\/)[\w@%+=:,./-]*))[ \t]*&&/;
 const NAMES_REPO = /[ \t](?:-\w*R|--repo)/;
 const literals = (command) =>
   command.replace(
@@ -121,6 +119,14 @@ if (process.argv.includes('--stamp')) {
 
 const payload = readPayload();
 const raw = extractCommand(payload);
+const into = LEADING_CD.exec(raw);
+const bare = into?.[3];
+const cdPath =
+  into?.[1] ??
+  into?.[2] ??
+  (bare?.startsWith('~') ? process.env.HOME && process.env.HOME + bare.slice(1) : bare);
+const target = cdPath && !/(?:^|\/)\.\.?(?:\/|$)/.test(cdPath) ? cdPath : undefined;
+const rest = target ? raw.slice(into[0].length) : raw;
 // A command handed to a shell (`sh -c '...'`, `eval "..."`) runs its quoted text: read it unquoted.
 const command = /\b(?:\w*sh\s+-\w*c|eval)\b/.test(raw)
   ? raw.replace(/['"]/g, ' ')
@@ -149,7 +155,7 @@ const pending = sources.filter((source) => !source || !SHARED.test(source));
 if (pending.length === 0) {
   process.exit(0);
 }
-const state = checkout(payload.cwd ?? process.cwd());
+const state = checkout(target ?? payload.cwd ?? process.cwd());
 if (!state || !existsSync(join(state.root, '.rulesync', 'hooks', 'guard-mr.mjs'))) {
   // Not a checkout of this repository: it has no stamp, so its own rules apply to a plain create.
   // The guarded repository is the one this hook file lives in.
@@ -171,10 +177,10 @@ if (!state || !existsSync(join(state.root, '.rulesync', 'hooks', 'guard-mr.mjs')
   } catch {
     // no git here, no origin to compare, or no remote: nothing proves where it lands
   }
-  const flat = literals(raw);
+  const flat = literals(rest);
   if (!foreign || !PLAIN_CREATE.test(flat) || NAMES_REPO.test(flat)) {
     deny(
-      'Blocked: from a checkout of another repository only one plain `gh pr create`/`glab mr create` runs, with no shell syntax or `-R` (pass the body with `--body-file`), and none of its remotes may point here.',
+      'Blocked: from a checkout of another repository only one plain `gh pr create`/`glab mr create` runs, after at most a leading `cd <absolute path> &&`, with no other shell syntax or `-R` (pass the body with `--body-file`), and none of its remotes may point here.',
     );
   }
   process.exit(0);
