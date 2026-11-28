@@ -39,7 +39,7 @@ Fetch a set of rows with one batched query (`inArray` on the id column), never o
 
 - Select only the columns you use; do not read wide rows for one field.
 - Bound the fan-out - never `Promise.all(rows.map(fn))` when `rows` is a query result and `fn` touches the DB. Use `mapConcurrent(items, limit, fn)` (`@openora/core/server`). Lint: `oss-module-shape/no-unbounded-db-fanout`.
-- Critical mutations are transactional and idempotent - a DB guard inside the transaction, not just an `idempotencyKey`: inside the transaction, check whether the ledger row for the key exists and return if it does, otherwise insert it. See `insertIdempotentTransaction` in `packages/core/src/wallet/service/wallet.service.ts`.
+- Critical mutations are transactional and idempotent - a DB guard inside the transaction, not just an `idempotencyKey`: put a unique index on the namespaced key and insert with `onConflictDoNothing`; an empty result means another request won, so re-read its row and return it as a replay. A check before the insert races: two deliveries of the same key both pass it. See `insertIdempotentTransaction` in `packages/core/src/wallet/service/wallet.service.ts`.
 
 ## Migrations
 

@@ -13,5 +13,7 @@ Read this before adding an error class, a catch, or a money-handling path.
 - `ORPCError.message` is an English fallback for logs, not player-facing copy - UI copy keys off
   `.code` plus typed `.data` fields.
 - Money/critical paths are transactional AND idempotent: a DB guard inside the transaction, not
-  just an `idempotencyKey` (delivery is at-least-once). Inside the transaction, look for an
-  existing ledger row for the key and return early before inserting a new one.
+  just an `idempotencyKey` (delivery is at-least-once). Put a unique index on the namespaced key
+  and insert with `onConflictDoNothing`; an empty result means another request won, so re-read its
+  row and return it as a replay. A check before the insert races: two deliveries of the same key
+  both pass it.

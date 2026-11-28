@@ -77,7 +77,7 @@ The main API can drop chat. Of the modules it keeps, only `player-management` ne
 - `SERVICE_NAME` and `REALTIME_NAMESPACE`: both `monolith`.
 - `CHAT_SERVICE_URL`: the chat service's private origin.
 - `CHAT_SERVICE_NAME`: the chat service's `SERVICE_NAME`; the default is `chat`.
-- `INTERNAL_API_SECRETS`: the shared secret.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
 
 The main API then has no chat tables to migrate and serves no chat route. A manifest on the main API must not name a dropped module (that is an unknown id); it is not needed to leave chat out. It also fails in the other direction: the chat plugin refuses to boot while `CHAT_SERVICE_URL` is set, so one process never binds the ports twice. In production the URL must be https unless `CHAT_SERVICE_ALLOW_HTTP=true` (a mesh that encrypts the hop).
 
@@ -97,7 +97,7 @@ Chat service, on a database of its own and reaching identity over its internal A
 - `SERVICE_NAME`: `chat`.
 - `REALTIME_NAMESPACE`: `monolith`, the same as the main API.
 - `SERVICE_MANIFEST`: `chat`, `chat-commands`, `social`, plus `identity`, `iam` and `audit` as `:no-routes`; then add what the boot asks for.
-- `INTERNAL_API_SECRETS`: the shared secret.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
 - `IDENTITY_SERVICE_URL`: the origin of the service that serves identity and iam.
 - `CHAT_BLOCK_READER_CALLERS` and `CHAT_TRANSFER_CHECK_CALLERS`: `monolith`.
 
@@ -141,13 +141,13 @@ Platform service:
 - `SERVICE_NAME`: `platform`.
 - `MONEY_SERVICE_URL`: the money service's private origin.
 - `MONEY_SERVICE_NAME`: the money service's `SERVICE_NAME`; the default is `money`.
-- `INTERNAL_API_SECRETS`: the shared secret.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
 
 Money service:
 
 - `SERVICE_NAME`: `money`.
 - `MONEY_PORTS_CALLERS`: `platform`; it guards `POST /internal/v1/money/ports/call`.
-- `INTERNAL_API_SECRETS`: the shared secret.
+- `INTERNAL_API_SECRETS`: the shared secret, the same value on every service.
 
 `MONEY_PORTS_CALLERS` is a comma list of `SERVICE_NAME`s; unset refuses every caller. Every call goes through one route, naming the port and method; the money service answers from its own binding and refuses a port or method outside the table above. A required `tx` argument is never sent: the money service runs a write in a transaction of its own and a read on its own connection.
 

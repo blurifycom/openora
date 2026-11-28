@@ -40,8 +40,10 @@ any `*At`).
   payload; a source carrying columns the row must not receive (spread then omit them); or a
   null-vs-undefined boundary that won't coerce (`actorId: input.actorId ?? null`).
 - **Money / critical paths are transactional and idempotent** - a DB guard inside the transaction,
-  not just an `idempotencyKey` (delivery is at-least-once). Inside the transaction, look for an
-  existing ledger row for the key and return early before inserting a new one.
+  not just an `idempotencyKey` (delivery is at-least-once). Put a unique index on the namespaced key
+  and insert with `onConflictDoNothing`; an empty result means another request won, so re-read its
+  row and return it as a replay. A check before the insert races: two deliveries of the same key
+  both pass it.
 
 ## Migrations
 

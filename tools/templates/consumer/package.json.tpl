@@ -21,6 +21,7 @@
     "gen": "turbo gen"
   },
   "devDependencies": {
+    "@openora/core": "{{coreVersion}}",
     "@openora/create": "{{coreVersion}}",
     "@openora/mcp": "latest",
     "@turbo/gen": "{{turboVersion}}",

@@ -52,7 +52,7 @@ user `admin@oss.dev` with password `password1234`. Flags: `--players=<n>`,
 2. Copy `packages/core/.env.example` to `.env` at the repo root; the db tools read `DATABASE_URL` from it.
 3. `docker compose up -d` starts Postgres, Redis, RabbitMQ and the test databases.
 4. `pnpm regen` refreshes tsconfig paths, Drizzle migrations and the catalog.
-5. Build `@openora/testing` and everything it depends on by running the `build` script through `pnpm --filter`; the db tools import the built packages.
+5. Build `@openora/testing` and everything it depends on with `pnpm --filter "@openora/testing..." build`; the db tools import the built packages.
 6. `pnpm db:migrate`.
 7. `pnpm db:seed`.
 
