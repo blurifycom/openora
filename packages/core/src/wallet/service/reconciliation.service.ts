@@ -90,6 +90,7 @@ import {
   backfillBaselinePage,
   backfillMismatchKey,
   checkLedgerPage,
+  DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
   ledgerBreachKey,
   ledgerPairKey,
   ledgerUncheckedDetail,
@@ -566,6 +567,7 @@ export type ReconciliationServiceDeps = {
   projectionChecks?: readonly ProjectionDriftCheck[];
   /** Reads the dead letters when its driver can. */
   broker?: Pick<MessageBrokerAdapter, 'deadLetters'>;
+  ledgerBaselineGraceSeconds?: number;
 };
 
 /**
@@ -586,6 +588,7 @@ export class ReconciliationService {
   private readonly rgLimits?: RgLimitsPort;
   private readonly projectionChecks: readonly ProjectionDriftCheck[];
   private readonly broker?: Pick<MessageBrokerAdapter, 'deadLetters'>;
+  private readonly ledgerBaselineGraceSeconds: number;
 
   constructor({
     drizzle,
@@ -597,6 +600,7 @@ export class ReconciliationService {
     rgLimits,
     projectionChecks = [],
     broker,
+    ledgerBaselineGraceSeconds = DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
   }: ReconciliationServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -607,6 +611,7 @@ export class ReconciliationService {
     this.rgLimits = rgLimits;
     this.projectionChecks = projectionChecks;
     this.broker = broker;
+    this.ledgerBaselineGraceSeconds = ledgerBaselineGraceSeconds;
   }
 
   /** Whether a finding is one whose dismissal takes a super admin. */
@@ -1512,7 +1517,13 @@ export class ReconciliationService {
   ): Promise<void> {
     let afterId: string | null = null;
     for (;;) {
-      const page = await backfillBaselinePage(this.drizzle.db, afterId, batchSize, runId);
+      const page = await backfillBaselinePage(
+        this.drizzle.db,
+        afterId,
+        batchSize,
+        runId,
+        this.ledgerBaselineGraceSeconds,
+      );
       counts.baselinesInserted += page.inserted;
       counts.baselinesSkipped += page.skipped;
       // Unchecked, not a breach: `balance_after` is stamped as a row is written, and rows are
@@ -1548,7 +1559,13 @@ export class ReconciliationService {
   ): Promise<void> {
     let afterId: string | null = null;
     for (;;) {
-      const page = await checkLedgerPage(this.drizzle.db, afterId, batchSize, runId);
+      const page = await checkLedgerPage(
+        this.drizzle.db,
+        afterId,
+        batchSize,
+        runId,
+        this.ledgerBaselineGraceSeconds,
+      );
       await this.closeBaselinedUnchecked(
         runId,
         page.filter(

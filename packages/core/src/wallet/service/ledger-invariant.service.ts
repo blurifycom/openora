@@ -104,18 +104,21 @@ const latestBaseline = sql`(
   where bl.wallet_id = p.wallet_id and bl.currency = p.currency
   order by bl.as_of desc, bl.created_at desc limit 1)`;
 
-// ponytail: assumes no wallet transaction stays uncommitted longer than this. One that did,
-// started before the cut and committed after the snapshot, would land in neither the baseline
-// nor the rows after it. A commit-ordered sequence on the ledger would remove the assumption.
-const BASELINE_GRACE = sql.raw(`interval '1 hour'`);
+export const DEFAULT_LEDGER_BASELINE_GRACE_SECONDS = 60 * 60;
 
-// The latest point a baseline may sit at for the pair `p`: an hour back, and before its oldest
-// row still in a non-terminal status, so every row at or before it is final and never moves
-// money again.
-const cut = sql`least(now() - ${BASELINE_GRACE}, (
+// The latest point a baseline may sit at for the pair `p`: the grace back, before its oldest
+// row still in a non-terminal status, and before the oldest transaction still writing to this
+// database, so every row at or before it is committed, final and never moves money again.
+const baselineCut = (graceSeconds: number) => sql`least(
+  now() - make_interval(secs => ${graceSeconds}), (
   select min(o.created_at) - interval '1 microsecond' from wallet_transaction o
   where o.wallet_id = p.wallet_id and upper(o.currency) = p.currency
-    and o.status not in ${TERMINAL_STATUSES}))`;
+    and o.status not in ${TERMINAL_STATUSES}), (
+  select min(a.xact_start) - interval '1 microsecond' from pg_stat_activity a
+  where a.datname = current_database() and a.pid <> pg_backend_pid()
+    and a.backend_xid is not null))`;
+
+const cut = baselineCut(DEFAULT_LEDGER_BASELINE_GRACE_SECONDS);
 
 function balancePage(afterId: string | null, limit: number): SQL {
   return sql`select b.id, b.wallet_id, b.currency, b.amount from wallet_balance b
@@ -221,10 +224,10 @@ const breachKeyPrefix = sql`'wallet:' || c.wallet_id || ':' || c.currency || ':'
   || coalesce(c.baseline_id::text, 'none') || ':'`;
 
 /** Each pair of `pairs` beside its baseline in force and what its ledger adds up to from it. */
-function checkedPairs(pairs: SQL): SQL {
+function checkedPairs(pairs: SQL, pairCut: SQL = cut): SQL {
   return sql`select p.id, p.wallet_id, p.currency, p.amount as balance, bl.id as baseline_id,
       bl.as_of as base_as_of, coalesce(bl.amount, 0) + l.total as expected, l.unpriced,
-      ${cut} as cut
+      ${pairCut} as cut
     from (${pairs}) p
     left join lateral ${latestBaseline} bl on true
     cross join lateral ${ledgerAfter(sql`bl.as_of`)} l`;
@@ -255,6 +258,7 @@ export async function checkLedgerPage(
   afterId: string | null,
   limit: number,
   runId: WalletJobRun['runId'],
+  graceSeconds = DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
 ): Promise<LedgerPairCheck[]> {
   const { rows } = await db.execute<{
     id: string;
@@ -267,7 +271,7 @@ export async function checkLedgerPage(
     advanced_to: string | null;
   }>(sql`
     with p as (${balancePage(afterId, limit)}),
-    c as (${checkedPairs(sql`select * from p`)}),
+    c as (${checkedPairs(sql`select * from p`, baselineCut(graceSeconds))}),
     adv as (
       insert into wallet_balance_baseline (wallet_id, currency, amount, as_of, run_id)
       select c.wallet_id, c.currency, c.expected - a.total, c.cut, ${runId}
@@ -402,6 +406,7 @@ export async function backfillBaselinePage(
   afterId: string | null,
   limit: number,
   runId: WalletJobRun['runId'],
+  graceSeconds = DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
 ): Promise<{
   lastId: string | null;
   scanned: number;
@@ -420,7 +425,7 @@ export async function backfillBaselinePage(
   }>(sql`
     with p as (${balancePage(afterId, limit)}),
     needs as (
-      select p.*, ${cut} as as_of
+      select p.*, ${baselineCut(graceSeconds)} as as_of
       from p
       where not exists (
           select 1 from wallet_balance_baseline bl
