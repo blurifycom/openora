@@ -140,7 +140,6 @@
       ? { x: left + width / 2, y: top + height / 2 }
       : null;
   };
-  // ponytail: O(n^2) over line boxes, fine under MAX_TEXTS; bucket by row if pages outgrow it.
   for (let i = 0; i < texts.length; i++) {
     for (let j = i + 1; j < texts.length; j++) {
       const a = texts[i];

@@ -14,8 +14,10 @@ implements them. It never contains code.
 | What does this module own, and what breaks it?                     | `docs/modules/`                  |
 | What does a vendor have to provide, and how do the pieces move?    | `docs/adapters/`                 |
 
-The catalog is generated on every `pnpm regen`, so it is never stale. A name copied into prose is
-stale the moment someone renames it, and nothing fails when it happens.
+The catalog is generated on every `pnpm regen`, so it is never stale. A copied value (an enum
+spelling, a column, a route, a permission string) is stale the moment someone changes it, and
+nothing fails when it happens. A reference is different: a path or a function name used as a
+pointer breaks visibly on a rename, and the reader follows it to the source.
 
 ## Rules
 
@@ -29,7 +31,7 @@ stale the moment someone renames it, and nothing fails when it happens.
   state ("a withdrawal still waiting on the vendor"), not its spelling.
 - **No route tables.** The catalog has every route with its permission.
 - **No file-path inventories.** A table of "which file owns what" is a map of today's tree, and the
-  tree moves. Point at the directory.
+  tree moves. A single pointer where the prose needs it is fine; a listing is not.
 - **Describe the target, not only the present.** A doc may describe behaviour the code has not
   reached yet, as long as it says so plainly. The code is then adjusted to the doc, not the other
   way round. Mark anything unbuilt so nobody reads it as a description of what ships.

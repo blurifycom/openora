@@ -1,7 +1,7 @@
 const MACHINE_DIRECTIVES = [
-  /^\s*(oxlint|eslint)-(disable|enable)(-next-line|-line)?(\s|$)/,
-  /^\s*@ts-expect-error(\s|$)/,
-  /^\s*@vitest-environment\s/,
+  /^\s*(oxlint|eslint)-(disable|enable)(-next-line|-line)?\s+[\w@/-]+(\s*,\s*[\w@/-]+)*\s*$/,
+  /^\s*@ts-expect-error\s*$/,
+  /^\s*@vitest-environment\s+[\w-]+\s*$/,
   /^\s*\/\s*<reference\s/,
   /^\s*[@#]__(PURE|NO_SIDE_EFFECTS)__\s*$/,
 ];

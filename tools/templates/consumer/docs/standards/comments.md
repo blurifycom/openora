@@ -2,7 +2,7 @@
 
 Zero comments. The code is the only source of truth: a comment is a second copy that no test covers, it goes stale without failing anything, and it lets a known problem live on next to the code that has it.
 
-The `openora-comments/no-comments` lint rule in `packages/core/oxlint/no-comments-plugin.mjs` warns on every comment it does not recognise as a directive. It is a warning while the existing comments are removed; it does not fail `pnpm verify`.
+The `openora-comments/no-comments` lint rule, which arrives through the extended `@openora/core/oxlint/oxlintrc.json`, warns on every comment it does not recognise as a directive. It is a warning while the existing comments are removed; it does not fail `pnpm verify`.
 
 ## Rules
 
