@@ -47,7 +47,7 @@ Follow the request trace in `docs/standards/skills/review.md`: walk the seven ho
 - [ ] Services throw shared-factory domain errors (`makeNotFoundError` etc.), not HTTP exceptions; routers `mapErrors`.
 - [ ] No `any` outside tests, no `interface`, no `!` non-null assertions, no bare casts, no default exports, no inline `fetch`/`axios`.
 - [ ] No re-inferred/duplicated types outside the owning contract; id params typed via owning type.
-- [ ] TODOs/FIXMEs carry context; extension points, ports, and routes match the module contract and catalog.
+- [ ] No `TODO`/`FIXME` markers in the diff; extension points, ports, and routes match the module contract and catalog.
 - [ ] No frontend/UI code - headless repo.
 
 ### Tests + audit

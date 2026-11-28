@@ -1,6 +1,7 @@
 # Documentation
 
-A prose doc states the business rule, the flow, and the decision. It does not restate the code.
+A prose doc states the business rule, the flow, and the decision, and points at the code that
+implements them. It never contains code.
 
 ## What owns what
 
@@ -18,11 +19,12 @@ stale the moment someone renames it, and nothing fails when it happens.
 
 ## Rules
 
-- **Name the capability, not the symbol.** "the vendor reports its sweepable balances" survives a
-  rename; the method name does not. Where a reader needs the exact symbol, link the contract file
-  once and let them read it there.
-- **No code samples that duplicate a shipped file.** Link the real implementation or the template
-  the generator emits. A sample in prose is a second copy that no test covers.
+- **No code in a doc.** No fenced code blocks, no snippets, no example payloads, no config
+  excerpts, no copied signatures. A sample in prose is a second copy that no test covers and that
+  goes stale without failing anything.
+- **Reference the code instead.** Describe the behaviour in prose and point at where it lives: a
+  file path, a function or symbol name, a script name, each in backticks, or a link to the file.
+  The reader opens the reference; the doc never restates what it contains.
 - **No enum values, status strings, permission strings, or column names in prose.** Describe the
   state ("a withdrawal still waiting on the vendor"), not its spelling.
 - **No route tables.** The catalog has every route with its permission.

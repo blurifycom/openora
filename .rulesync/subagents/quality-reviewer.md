@@ -61,7 +61,9 @@ The orchestrator passes you the base ref and changed-file list - do not re-scope
 ### Conventions
 
 - [ ] `conventions.md` basics: kebab files, `<Name>Schema` + inferred type, predicate booleans, units in names, named-object params over positional.
-- [ ] Zero-value comments (restating the code, section dividers) flagged; missing WHY comments on genuinely surprising code flagged.
+- [ ] Every comment the diff adds or leaves in touched lines flagged (machine-read directives excepted); a comment explaining a workaround flagged as an unfixed root cause.
+- [ ] A fix that patches one call site, retries, sleeps, casts or swallows an error instead of fixing the shared cause flagged.
+- [ ] A doc the diff touches carries no code block or snippet, only references to files and functions.
 - [ ] `timestamptz` for timestamps, `UuidSchema` over ad-hoc `z.uuid()`.
 - [ ] New dependencies pinned exact; a helper the change adds that other modules need lives in the shared helpers, not file-local.
 

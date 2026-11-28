@@ -1,6 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/crates/oxc_linter/src/options/oxlintrc.json",
   "plugins": ["typescript", "import", "unicorn", "oxc"],
+  "jsPlugins": ["./no-comments-plugin.mjs"],
   "rules": {
     "no-unused-vars": "error",
     "no-console": "warn",
@@ -12,8 +13,14 @@
     "typescript/no-explicit-any": "error",
     "typescript/no-non-null-assertion": "error",
     "typescript/consistent-type-definitions": ["error", "type"],
-    "import/no-cycle": ["error", { "ignoreTypes": false }],
-    "import/no-duplicates": "error"
+    "import/no-cycle": [
+      "error",
+      {
+        "ignoreTypes": false
+      }
+    ],
+    "import/no-duplicates": "error",
+    "openora-comments/no-comments": "warn"
   },
   "ignorePatterns": ["node_modules", "dist", ".next", "coverage", "*.generated.ts"],
   "overrides": [

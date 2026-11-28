@@ -65,7 +65,9 @@ The orchestrator passes a focus. `conventions`: run Correctness, OSS boundaries,
 
 - [ ] Types inferred from schemas/contracts (`z.infer`, `$inferSelect`) - no hand-written duplicates; derive with `.pick/.omit/.extend`.
 - [ ] Single source of truth for enums (values + schema + type triple); `timestamptz` for datetimes; named-object params over 3+ positionals.
-- [ ] Zero-value comments flagged; missing WHY comments on genuinely surprising code flagged.
+- [ ] Every comment the diff adds or leaves in touched lines flagged (machine-read directives excepted); a comment explaining a workaround flagged as an unfixed root cause.
+- [ ] A fix that patches one call site, retries, sleeps, casts or swallows an error instead of fixing the shared cause, including a consumer-side patch for a core bug, flagged.
+- [ ] A doc the diff touches carries no code block or snippet, only references to files and functions.
 
 ### Frontend (`apps/web`, `apps/backoffice`, `packages/ui`)
 
