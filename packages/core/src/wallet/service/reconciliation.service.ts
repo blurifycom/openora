@@ -769,6 +769,10 @@ export class ReconciliationService {
             if (tx.walletId !== heldRow.walletId) {
               throw new ReconciliationCreditMismatchError();
             }
+            await txn
+              .update(walletTransaction)
+              .set({ reversedTransactionId: heldRow.id })
+              .where(eq(walletTransaction.id, tx.id));
             settledHeldRow = { id: heldRow.id, type: held.type };
           }
         }

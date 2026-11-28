@@ -14,16 +14,17 @@ does not repeat it.
   `wallet_transaction` row and rewriting what defines it (amount, type, currency, time, idempotency
   key, reference value); only the status, review, provider reference and `turnoverState` columns
   move, and `turnoverState` may go from unset to any state, then only from `deferred` to `counted`.
-  `balanceAfter`, `realShare` and `turnoverContribution` are filled once and then frozen.
-  `balanceAfter` is the player's balance in that currency after the row moved money, set in the same
-  transaction as the move; it is null on older rows, on a deposit that has not settled, and on a refund (which writes
-  no row of its own). A withdrawal request is stamped when it is made, since that is when the
-  balance is debited. For a stake partly funded by a bonus the ledger `amount` is the whole stake
-  while the balance moved by the real part only; a win or bet reversal on such a round likewise
-  writes the full `amount` but moves the balance by the real share. A row in a final status
-  (`completed`, `failed`, `rejected`, `cancelled`, `refunded`) cannot be reopened by the trigger.
-  Cleanup is TRUNCATE, which the trigger lets
-  through; a migration that has to repair rows disables the trigger itself.
+  `balanceAfter`, `realShare`, `reversedTransactionId` and `turnoverContribution` are filled once and
+  then frozen. `balanceAfter` is the player's balance in that currency after the row moved money,
+  set in the same transaction as the move. Older rows and unsettled deposits can have an empty
+  balance stamp. A withdrawal request is stamped when it debits the balance. A failed or rejected
+  withdrawal or a failed swap records a separate credit linked to the original debit, with its own
+  balance stamp. A withdrawal settled by an operator links the existing manual credit when its
+  reconciliation finding is resolved. Historical refunds remain reflected in the original debit's
+  terminal status. For a stake partly funded by a bonus, the ledger records the full stake, win or
+  bet reversal. Only the real share moves the balance. A row in a final status (`completed`,
+  `failed`, `rejected`, `cancelled`, `refunded`) cannot be reopened by the trigger. The trigger
+  allows TRUNCATE for cleanup. A migration that has to repair rows disables the trigger itself.
 - **The product on a history row.** A row whose provider name starts with a product and a colon,
   as `sportsbook:<provider>` does, reports that product; any other row reports `product: null`.
   The `products` filter matches those prefixes in SQL before paging, so `total` agrees with it. The
