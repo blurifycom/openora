@@ -90,6 +90,9 @@ import {
   backfillBaselinePage,
   backfillMismatchKey,
   checkLedgerPage,
+  DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
+  readOpenTransactionBound,
+  type LedgerCut,
   ledgerBreachKey,
   ledgerPairKey,
   ledgerUncheckedDetail,
@@ -430,6 +433,9 @@ const DEFAULT_UNKNOWN_AFTER_MINUTES = 60;
 // outruns a day. Approved and processing ones use `reconciliation.stuckAfterMinutes` (ADR-0059).
 const STUCK_WITHDRAWAL_REQUESTED_AFTER_MINUTES = 24 * 60;
 
+const stillReported = sql`(${walletReconciliationFinding.status} = 'open'
+  OR ${walletReconciliationFinding.resolvedBy} IS NOT NULL)`;
+
 // A swap leg carries no payment provider name, but a finding needs one to be filed under.
 const PROJECTION_FINDING_LABEL = 'ledger-projection';
 const EVENT_PIPELINE_FINDING_LABEL = 'event-pipeline';
@@ -563,6 +569,7 @@ export type ReconciliationServiceDeps = {
   projectionChecks?: readonly ProjectionDriftCheck[];
   /** Reads the dead letters when its driver can. */
   broker?: Pick<MessageBrokerAdapter, 'deadLetters'>;
+  ledgerBaselineGraceSeconds?: number;
 };
 
 /**
@@ -583,6 +590,7 @@ export class ReconciliationService {
   private readonly rgLimits?: RgLimitsPort;
   private readonly projectionChecks: readonly ProjectionDriftCheck[];
   private readonly broker?: Pick<MessageBrokerAdapter, 'deadLetters'>;
+  private readonly ledgerBaselineGraceSeconds: number;
 
   constructor({
     drizzle,
@@ -594,6 +602,7 @@ export class ReconciliationService {
     rgLimits,
     projectionChecks = [],
     broker,
+    ledgerBaselineGraceSeconds = DEFAULT_LEDGER_BASELINE_GRACE_SECONDS,
   }: ReconciliationServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -604,6 +613,33 @@ export class ReconciliationService {
     this.rgLimits = rgLimits;
     this.projectionChecks = projectionChecks;
     this.broker = broker;
+    if (!Number.isFinite(ledgerBaselineGraceSeconds) || ledgerBaselineGraceSeconds < 0) {
+      throw new RangeError(
+        `ledgerBaselineGraceSeconds must be a finite number of seconds, zero or more: got ${ledgerBaselineGraceSeconds}`,
+      );
+    }
+    this.ledgerBaselineGraceSeconds = ledgerBaselineGraceSeconds;
+  }
+
+  private async ledgerCut(
+    runId: WalletJobRun['runId'],
+    afterId: string | null,
+  ): Promise<LedgerCut> {
+    const { cutBefore, oldest } = await readOpenTransactionBound(this.drizzle.db);
+    const firstPage = afterId === null;
+    if (firstPage && oldest && oldest.ageSeconds > this.ledgerBaselineGraceSeconds) {
+      logger.warn(
+        {
+          runId,
+          pid: oldest.pid,
+          applicationName: oldest.applicationName,
+          ageSeconds: Math.round(oldest.ageSeconds),
+          graceSeconds: this.ledgerBaselineGraceSeconds,
+        },
+        'ledger invariant: an open transaction older than the grace holds the baseline cut back',
+      );
+    }
+    return { graceSeconds: this.ledgerBaselineGraceSeconds, cutBefore };
   }
 
   /** Whether a finding is one whose dismissal takes a super admin. */
@@ -1509,7 +1545,13 @@ export class ReconciliationService {
   ): Promise<void> {
     let afterId: string | null = null;
     for (;;) {
-      const page = await backfillBaselinePage(this.drizzle.db, afterId, batchSize, runId);
+      const page = await backfillBaselinePage(
+        this.drizzle.db,
+        afterId,
+        batchSize,
+        runId,
+        await this.ledgerCut(runId, afterId),
+      );
       counts.baselinesInserted += page.inserted;
       counts.baselinesSkipped += page.skipped;
       // Unchecked, not a breach: `balance_after` is stamped as a row is written, and rows are
@@ -1545,7 +1587,13 @@ export class ReconciliationService {
   ): Promise<void> {
     let afterId: string | null = null;
     for (;;) {
-      const page = await checkLedgerPage(this.drizzle.db, afterId, batchSize, runId);
+      const page = await checkLedgerPage(
+        this.drizzle.db,
+        afterId,
+        batchSize,
+        runId,
+        await this.ledgerCut(runId, afterId),
+      );
       await this.closeBaselinedUnchecked(
         runId,
         page.filter(
@@ -1937,9 +1985,6 @@ export class ReconciliationService {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
     // Mirrors the externalId this loop files below, which is the findings dedup key. A row never
     // handed to a vendor files only stuck_withdrawal_approved, so only that kind reports it.
-    // ponytail: a vendor-bound row counts as reported with either of its kinds, so once it holds
-    // an unknown_at_provider finding a later outage report for it waits for batch room; its open
-    // finding already flags it. Track the kind per row if that ever hides an outage.
     const alreadyReported = sql<boolean>`EXISTS (
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} IN
@@ -1950,6 +1995,7 @@ export class ReconciliationService {
             = coalesce(${walletTransaction.providerName}, ${DEFAULT_PAYMENT_PROVIDER})
         AND ${walletReconciliationFinding.externalId}
             = coalesce(${walletTransaction.providerRefId}, ${walletTransaction.id}::text)
+        AND ${stillReported}
     )`;
     const stuck = await this.drizzle.db
       .select()
@@ -2443,9 +2489,6 @@ export class ReconciliationService {
           )
       ).map((row) => row.userId),
     );
-    // ponytail: a fixed per-cycle cap of batchSize successful owner re-publishes, at most
-    // 2x batchSize attempts so a player who keeps failing cannot starve the rest; a config
-    // knob if a backlog needs one.
     let repairsLeft = batchSize;
     let attemptsLeft = 2 * batchSize;
     let deferred = 0;
@@ -2626,8 +2669,6 @@ export class ReconciliationService {
     return filed;
   }
 
-  // ponytail: findings dedupe on (kind, provider, external id) whatever their status, so a
-  // withdrawal that returns to a state it was already reported in is not reported again.
   private async resolveMovedOnWithdrawalFindings(): Promise<number> {
     const processing = sql`${walletTransaction.status} = 'processing'`;
     const stillIn = [
@@ -2726,6 +2767,7 @@ export class ReconciliationService {
       SELECT 1 FROM ${walletReconciliationFinding}
       WHERE ${walletReconciliationFinding.kind} = 'stuck_withdrawal_requested'
         AND ${walletReconciliationFinding.externalId} = ${walletTransaction.id}::text
+        AND ${stillReported}
     )`;
     const stuck = await this.drizzle.db
       .select()
@@ -2740,23 +2782,30 @@ export class ReconciliationService {
       .orderBy(asc(alreadyReported), asc(walletTransaction.createdAt))
       .limit(batchSize);
     for (const tx of stuck) {
-      const filed = await recordReconciliationFinding(
-        this.drizzle.db,
-        {
-          runId,
-          providerName: DEFAULT_PAYMENT_PROVIDER,
-          kind: 'stuck_withdrawal_requested',
-          currency: tx.currency,
-          network: tx.network,
-          amount: tx.amount,
-          transactionId: tx.id,
-          externalId: tx.id,
-          detail: `withdrawal requested ${tx.createdAt.toISOString()} and still undecided`,
-        },
-        this.audit,
-      );
-      if (filed) {
-        counts.stuckWithdrawals += 1;
+      try {
+        const filed = await recordReconciliationFinding(
+          this.drizzle.db,
+          {
+            runId,
+            providerName: DEFAULT_PAYMENT_PROVIDER,
+            kind: 'stuck_withdrawal_requested',
+            currency: tx.currency,
+            network: tx.network,
+            amount: tx.amount,
+            transactionId: tx.id,
+            externalId: tx.id,
+            detail: `withdrawal requested ${tx.createdAt.toISOString()} and still undecided`,
+          },
+          this.audit,
+        );
+        if (filed) {
+          counts.stuckWithdrawals += 1;
+        }
+      } catch (err) {
+        logger.error(
+          { err, transactionId: tx.id },
+          'reconciliation: stuck requested withdrawal not filed',
+        );
       }
     }
   }

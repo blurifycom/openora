@@ -82,7 +82,6 @@ export type RacePayoutDeps = {
  * `RankPayoutService`/`StreakPayoutService` apply to their own grants.
  */
 export class RacePayoutService {
-  // ponytail: per-process count, resets on restart; a shared counter if workers scale out.
   private readonly failures = new Map<Uuid, number>();
 
   constructor(private readonly deps: RacePayoutDeps) {}

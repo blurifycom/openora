@@ -134,12 +134,6 @@ export function isBusyGroupError(err: unknown): boolean {
  * `oss:dlq:<topic>` stream with its group, stream id, delivery count and last
  * error, then XACKed. The DLQ is never trimmed; an operator drains it.
  *
- * ponytail: retention is time-based (`MINID ~ now - EVENT_RETENTION_MS` on every
- * XADD), so a group that falls more than 7 days behind loses the entries it never
- * read, and stream memory is bounded by traffic x 7 days, not by a count. Alert on
- * consumer-group lag; move to a broker overlay with disk-backed retention if either
- * ceiling bites.
- *
  * At-least-once holds from group creation onward, NOT before it. A group is created
  * at `startId` (default `$`) on first subscribe and persists in Redis from then on,
  * so restarts and outages are covered: the group keeps its cursor, undelivered

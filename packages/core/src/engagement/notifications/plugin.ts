@@ -102,7 +102,7 @@ type NotificationParamsOf<T extends NotificationType> = [
       Partial<Record<ParamKeys<T>['optional'][number], string | null>>;
 
 // The previous release's dispatch worker still requires these strings on a queued job; they are
-// stripped on read here. ponytail: remove together with the title/body columns.
+// stripped on read here.
 const LEGACY_DISPATCH_TEXT = { title: '', body: '' } as const;
 
 function notification<T extends NotificationType>(input: {

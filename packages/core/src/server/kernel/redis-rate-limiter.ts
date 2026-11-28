@@ -12,10 +12,6 @@ const PREFIX = 'rl:';
 // only on the first hit (so the window runs from the first request, not each one),
 // return the count and remaining TTL together. Atomic under concurrency - two
 // replicas can't both read a stale count and slip past the limit.
-//
-// ponytail: fixed-window (not sliding), same ceiling as the in-process default - a
-// burst straddling a boundary can briefly allow up to 2x limit. Fine for
-// brute-force throttling; swap the script for a sliding window if exactness matters.
 const CONSUME_SCRIPT = `
 local count = redis.call('INCR', KEYS[1])
 if count == 1 then

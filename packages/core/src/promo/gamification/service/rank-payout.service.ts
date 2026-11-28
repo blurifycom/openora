@@ -129,7 +129,6 @@ export class RankPayoutService {
           granted.push(paid);
         }
       } catch (err) {
-        // ponytail: a row that keeps failing is retried every run; add a failure count if one ever sticks
         this.logger.error({ err, levelUpId: id }, 'rank level-up payout failed');
       }
     }
@@ -664,8 +663,6 @@ export class RankPayoutService {
         continue;
       }
       const before = new Date(new Date(settled).getTime() - SETTLED_COUNTER_AGE_MS);
-      // ponytail: one DELETE per kind, fine daily on a table that is pruned as it grows; delete in
-      // batches if a long backlog ever makes a single statement hold its locks too long.
       const deleted = await this.drizzle.db
         .delete(promoRankPeriodWager)
         .where(and(eq(promoRankPeriodWager.kind, kind), lt(promoRankPeriodWager.updatedAt, before)))
@@ -681,8 +678,6 @@ export class RankPayoutService {
    * watermark. A rollback of a pruned round takes no margin back.
    */
   async pruneRoundWagers(now: Date): Promise<number> {
-    // ponytail: one DELETE, fine daily on a table pruned as it grows; batch it if a long backlog
-    // ever makes a single statement hold its locks too long.
     const result = await this.drizzle.db
       .delete(promoRankRoundWager)
       .where(lt(promoRankRoundWager.createdAt, new Date(now.getTime() - SETTLED_COUNTER_AGE_MS)));

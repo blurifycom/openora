@@ -197,8 +197,6 @@ export class RaceService implements WagerTrackingCommands {
     }
     const amount = await this.rates.convert(args.realAmount, args.currency, race.currency, tx);
     if (amount === null) {
-      // ponytail: a wager with no rate is not counted toward the race; revisit if this shows
-      // up in logs the way the equivalent rank-side skip would.
       this.logger.warn(
         { userId: args.userId, raceId: race.id, from: args.currency, to: race.currency },
         'race wager skipped - no exchange rate',
@@ -300,7 +298,7 @@ export class RaceService implements WagerTrackingCommands {
     const race = toRace(row);
 
     // One capped query, ranked by wagered desc - a page size of 100 is enough for a paid/ranked
-    // leaderboard; add real pagination if a race ever needs more than that (ponytail).
+    // leaderboard.
     const [ranked, [counted]] = await Promise.all([
       this.drizzle.db
         .select({

@@ -69,8 +69,6 @@ export class AccountManagerService implements PlayerAccountManagerReader {
     accountManagerId: User['id'] | null,
     caller: AdminCaller,
   ): Promise<{ accountManager: AccountManager | null }> {
-    // ponytail: the player:view grant is checked before the transaction, so a role revoked in
-    // that gap still assigns; lock the grant rows inside it if that window ever matters.
     const holdsView = accountManagerId !== null && (await this.holdsPlayerView(accountManagerId));
     await this.deps.drizzle.db.transaction(async (tx) => {
       const locked = findOneOrThrow(
@@ -151,8 +149,6 @@ export class AccountManagerService implements PlayerAccountManagerReader {
    * left out.
    */
   async assigned(): Promise<AssignedAccountManager[]> {
-    // ponytail: unpaged, bounded by staff headcount; add an optional search/limit (non-breaking)
-    // if a deployment's manager list outgrows one response.
     const db = this.deps.drizzle.db;
     return db
       .select({ ...MANAGER_COLUMNS, email: user.email })

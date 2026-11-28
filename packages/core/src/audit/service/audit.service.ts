@@ -348,7 +348,6 @@ function latestChainHash(txn: DrizzleTx) {
 
 // The column types audit_log's snapshots as records, which every reader indexes by key, but the
 // jsonb stores an array snapshot (a role's permission list) as is, as it always has.
-// ponytail: widen the column type once its readers narrow arrays themselves.
 const snapshot = (value: OutboxEntry['before']) => (value ?? null) as AuditLog['before'];
 
 /** The row `entry` appends at `seq` after `prevHash`, hashed over what is persisted. */

@@ -46,7 +46,7 @@ export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 const SESSION_LIMIT = { type: 'session', period: 'session' } as const;
 
 // Cap in-flight flag writes per sweep so a large session-limit population can't exhaust the
-// shared pg pool. ponytail: fixed cap; raise only if a single sweep can't keep up.
+// shared pg pool.
 const SWEEP_CONCURRENCY = 10;
 
 export type RgMonitoringDeps = {

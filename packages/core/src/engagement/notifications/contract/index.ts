@@ -178,7 +178,7 @@ export const CreateNotificationInputSchema = NotificationInputObjectSchema.super
 export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
 
 // A dispatch job queued by the previous release carries no `params` at all, so only the job
-// boundary accepts it absent. ponytail: remove together with the title/body columns.
+// boundary accepts it absent.
 export const QueuedNotificationInputSchema = NotificationInputObjectSchema.superRefine(
   checkParams(false),
 );

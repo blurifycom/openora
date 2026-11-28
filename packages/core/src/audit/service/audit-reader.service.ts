@@ -12,9 +12,6 @@ const EMAIL_CHANGED = 'identity.email.changed';
 
 type Change = Omit<AuditEmailChange, 'queued'> & { eventId: string | null };
 
-// ponytail: seq scan of the outbox, fine while the shipper keeps it near empty; if a stalled
-// shipper makes these reads slow, add a partial index on (entry->>'resourceId') for email changes.
-// The key goes in as a literal so such an expression index can match.
 const queuedField = (key: 'action' | 'resourceType' | 'resourceId') =>
   sql`${auditOutbox.entry}->>${sql.raw(`'${key}'`)}`;
 const QUEUED_CHANGE = {

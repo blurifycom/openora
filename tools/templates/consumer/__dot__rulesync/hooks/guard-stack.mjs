@@ -3,8 +3,6 @@
 // native stacked PR (`gh stack`, the github/gh-stack extension), not as a plain PR whose base is
 // that branch. `gh pr create|new|edit --base <b>` is denied when <b> is not a
 // shared branch. Without `--base` the PR targets the default branch and passes.
-//
-// ponytail: shared branches are a fixed list; a repo with another trunk name adds it here.
 
 import { deny, extractCommand, readPayload } from './_shared.mjs';
 
